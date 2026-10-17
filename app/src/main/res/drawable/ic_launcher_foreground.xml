@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Gamepad Outer Body centered within safe zone (30,32 to 78,76) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M37,35 C32,35 27,39 27,47 L27,61 C27,69 33,74 39,73 L46,67 C48,65 51,64 54,64 C57,64 60,65 62,67 L69,73 C75,74 81,69 81,61 L81,47 C81,39 76,35 71,35 C64,35 60,37 54,37 C48,37 44,35 37,35 Z" />
+    
+    <!-- Inner Controller Faceplate Grip Accent -->
+    <path
+        android:fillColor="#FF0F3818"
+        android:pathData="M38,38 C34,38 30,41 30,48 L30,59 C30,64 34,68 38,68 L44,63 C47,61 50,60 54,60 C58,60 61,61 64,63 L70,68 C74,68 78,64 78,59 L78,48 C78,41 74,38 70,38 C64,38 59,40 54,40 C49,40 44,38 38,38 Z" />
+
+    <!-- Center Glowing Xbox/AI Emblem -->
+    <path
+        android:fillColor="#FF52E172"
+        android:pathData="M54,41 A5.5,5.5 0 1,0 54,52 A5.5,5.5 0 1,0 54,41 Z" />
+    <path
+        android:fillColor="#FF0F3818"
+        android:pathData="M51.5,43.5 L56.5,49.5 M56.5,43.5 L51.5,49.5"
+        android:strokeColor="#FF0F3818"
+        android:strokeWidth="1.2" />
+
+    <!-- Left Thumbstick -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M40,48 A4,4 0 1,0 40,56 A4,4 0 1,0 40,48 Z" />
+
+    <!-- D-Pad -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M45,55 L47,55 L47,57 L49,57 L49,59 L47,59 L47,61 L45,61 L45,59 L43,59 L43,57 L45,57 Z" />
+
+    <!-- Right Thumbstick -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M60,54 A4,4 0 1,0 60,62 A4,4 0 1,0 60,54 Z" />
+
+    <!-- ABXY Buttons (Diamonds) -->
+    <!-- Y (top) -->
+    <path android:fillColor="#FFECDE38" android:pathData="M68,43 A1.5,1.5 0 1,0 68,46 A1.5,1.5 0 1,0 68,43 Z" />
+    <!-- X (left) -->
+    <path android:fillColor="#FF38A2EC" android:pathData="M64.5,46.5 A1.5,1.5 0 1,0 64.5,49.5 A1.5,1.5 0 1,0 64.5,46.5 Z" />
+    <!-- B (right) -->
+    <path android:fillColor="#FFE74040" android:pathData="M71.5,46.5 A1.5,1.5 0 1,0 71.5,49.5 A1.5,1.5 0 1,0 71.5,46.5 Z" />
+    <!-- A (bottom) -->
+    <path android:fillColor="#FF52E172" android:pathData="M68,50 A1.5,1.5 0 1,0 68,53 A1.5,1.5 0 1,0 68,50 Z" />
+
+    <!-- AI Energy Spark Indicator at top center -->
+    <path
+        android:fillColor="#FF52E172"
+        android:pathData="M54,26 L56,31 L61,31 L57,34 L59,39 L54,36 L49,39 L51,34 L47,31 L52,31 Z" />
+</vector>
