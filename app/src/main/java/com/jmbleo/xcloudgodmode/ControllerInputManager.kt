@@ -6,11 +6,30 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.webkit.WebView
+import com.jmbleo.xcloudgodmode.config.GodModeConfigManager
+import com.jmbleo.xcloudgodmode.input.InputMath
 
-class ControllerInputManager(private val webView: WebView) {
+/**
+ * Gestor avanzado de periféricos y controladores físicos (Bluetooth / USB OTG).
+ * Implementa filtrado de zonas muertas radiales, remapeo de botones (A/B, X/Y),
+ * y detección del combo 'View + Menu' con cerrojo (latching) para invocar el menú rápido.
+ */
+class ControllerInputManager(
+    private val webView: WebView,
+    private val configManager: GodModeConfigManager = GodModeConfigManager.getInstance(webView.context)
+) {
+
+    // Callbacks para eventos de interfaz
+    var onComboTriggered: (() -> Unit)? = null
+    var onStickMovedListener: ((x: Float, y: Float) -> Unit)? = null
+
+    // Estado de botones para detección de combo simultáneo
+    private var isViewPressed = false
+    private var isMenuPressed = false
+    private var isComboLatched = false
 
     init {
-        // Capturar movimientos relativos del ratón físico en Android 8.0+ (API 26+)
+        // Capturar movimientos relativos de ratón físico en Android 8.0+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             webView.setOnCapturedPointerListener(View.OnCapturedPointerListener { _, event ->
                 if (event.action == MotionEvent.ACTION_MOVE) {
@@ -30,36 +49,100 @@ class ControllerInputManager(private val webView: WebView) {
     }
 
     /**
-     * Intercepta botones problemáticos en Android (Botón Atrás y Botón Guía Xbox/PlayStation)
-     * para que jamás te saquen de la aplicación mientras juegas.
+     * Procesa eventos de ejes analógicos de joysticks y gatillos con calibración radial.
      */
-    fun handleKeyEvent(event: KeyEvent): Boolean {
-        val isFromGamepad = (event.source and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||
-                            (event.source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
+    fun handleGenericMotionEvent(event: MotionEvent): Boolean {
+        if ((event.source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK ||
+            (event.source and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
+        ) {
+            val rawX = event.getAxisValue(MotionEvent.AXIS_X)
+            val rawY = event.getAxisValue(MotionEvent.AXIS_Y)
 
-        // 1. Botón Central Guía Xbox / PS (KEYCODE_BUTTON_MODE) -> Abre o cierra el panel de God Mode AI
-        if (event.keyCode == KeyEvent.KEYCODE_BUTTON_MODE) {
-            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            val config = configManager.getConfig()
+            val (calibratedX, calibratedY) = InputMath.applyRadialDeadzone(
+                x = rawX,
+                y = rawY,
+                innerDeadzone = config.innerDeadzone,
+                outerDeadzone = config.outerDeadzone,
+                curve = config.responseCurve
+            )
+
+            // Notificar al visualizador de calibración en tiempo real
+            onStickMovedListener?.invoke(calibratedX, calibratedY)
+
+            // Inyectar stick calibrado al emulador de Gamepad de God Mode en WebView
+            if (rawX != 0f || rawY != 0f) {
                 webView.evaluateJavascript(
-                    "(function(){ const ov = document.getElementById('bxc-overlay'); if(ov){ ov.style.display = (ov.style.display === 'flex' ? 'none' : 'flex'); } })();",
+                    "if(window.__injectNativeStick) window.__injectNativeStick(0, $calibratedX, $calibratedY);",
                     null
                 )
             }
             return true
         }
+        return false
+    }
 
-        // 2. Botón Atrás de Android o Botón Select/View mal mapeado como BACK
-        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+    /**
+     * Intercepta y remapa botones del mando físico, detectando el combo View + Menu.
+     */
+    fun handleKeyEvent(event: KeyEvent): Boolean {
+        val isFromGamepad = (event.source and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD ||
+                            (event.source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
+
+        val keyCode = event.keyCode
+        val action = event.action
+
+        // 1. Detección del combo View + Menu (Select + Start)
+        val config = configManager.getConfig()
+        if (config.comboMenuEnabled) {
+            val isViewKey = (keyCode == KeyEvent.KEYCODE_BUTTON_SELECT || keyCode == KeyEvent.KEYCODE_BACK)
+            val isMenuKey = (keyCode == KeyEvent.KEYCODE_BUTTON_START || keyCode == KeyEvent.KEYCODE_MENU)
+
+            if (isViewKey) {
+                isViewPressed = (action == KeyEvent.ACTION_DOWN)
+            }
+            if (isMenuKey) {
+                isMenuPressed = (action == KeyEvent.ACTION_DOWN)
+            }
+
+            if (isViewPressed && isMenuPressed) {
+                if (!isComboLatched) {
+                    isComboLatched = true
+                    onComboTriggered?.invoke()
+                }
+                return true
+            } else if (!isViewPressed && !isMenuPressed) {
+                isComboLatched = false
+            }
+        }
+
+        // 2. Botón Central Guía Xbox / PS (KEYCODE_BUTTON_MODE)
+        if (keyCode == KeyEvent.KEYCODE_BUTTON_MODE) {
+            if (action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                onComboTriggered?.invoke()
+            }
+            return true
+        }
+
+        // 3. Remapeo de botones físicos (A/B y X/Y)
+        val remappedCode = InputMath.applyButtonRemap(keyCode, config.swapAB, config.swapXY)
+        if (remappedCode != keyCode) {
+            // Re-inyectar código mapeado al WebView
+            val jsAction = if (action == KeyEvent.ACTION_DOWN) "down" else "up"
+            webView.evaluateJavascript(
+                "if(window.__injectNativeButton) window.__injectNativeButton($remappedCode, '$jsAction');",
+                null
+            )
+            return true
+        }
+
+        // 4. Botón Atrás: si no es mando físico, evitar salir de la actividad
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 if (isFromGamepad) {
-                    // En algunos mandos Bluetooth, el botón View/Select envía KEYCODE_BACK: lo dejamos pasar al WebView sin cerrar la Activity
                     return false
                 }
-                // Si fue el gesto "Atrás" de la pantalla de Android: cerrar el menú #bxc-overlay si está abierto
-                webView.evaluateJavascript(
-                    "(function(){ const ov = document.getElementById('bxc-overlay'); if(ov && ov.style.display === 'flex'){ ov.style.display = 'none'; } })();",
-                    null
-                )
+                onComboTriggered?.invoke()
             }
             return true
         }

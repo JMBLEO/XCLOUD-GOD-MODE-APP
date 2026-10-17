@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -23,6 +24,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -40,6 +42,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.jmbleo.xcloudgodmode.ui.AcrylicOverlayView
+import com.jmbleo.xcloudgodmode.ui.TelemetryData
 import kotlinx.coroutines.launch
 
 open class MainActivity : AppCompatActivity() {
@@ -55,9 +59,10 @@ open class MainActivity : AppCompatActivity() {
     }
 
     lateinit var webView: WebView
+    lateinit var acrylicOverlay: AcrylicOverlayView
     private lateinit var nativeBridge: GodModeNativeBridge
     private lateinit var controllerInputManager: ControllerInputManager
-    private var wifiLock: WifiManager.WifiLock? = null
+    private lateinit var performanceManager: StreamPerformanceManager
     private var activeAiDialog: AlertDialog? = null
 
     var isDocumentStartSupported: Boolean = false
@@ -116,10 +121,41 @@ open class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.BLACK)
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
         }
-        setContentView(webView)
+
+        acrylicOverlay = AcrylicOverlayView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        val rootContainer = FrameLayout(this).apply {
+            addView(webView, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            ))
+            addView(acrylicOverlay)
+        }
+        setContentView(rootContainer)
 
         nativeBridge = GodModeNativeBridge(this, webView)
         controllerInputManager = ControllerInputManager(webView)
+        performanceManager = StreamPerformanceManager(this, webView)
+        performanceManager.startMonitoring()
+
+        controllerInputManager.onComboTriggered = {
+            runOnUiThread { toggleGodModeOverlay() }
+        }
+        controllerInputManager.onStickMovedListener = { x, y ->
+            runOnUiThread { acrylicOverlay.updateLiveStickPosition(x, y) }
+        }
+        acrylicOverlay.onOpenCopilotListener = {
+            showAiCopilotDialog()
+        }
+        acrylicOverlay.onDetoxCacheListener = {
+            performCacheDetox()
+        }
+
         webView.addJavascriptInterface(nativeBridge, "GodModeAndroid")
 
         webView.settings.apply {
@@ -213,19 +249,7 @@ open class MainActivity : AppCompatActivity() {
 
     private fun acquireLowLatencyWifiLock() {
         try {
-            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            if (wifiManager != null) {
-                val lockType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    WifiManager.WIFI_MODE_FULL_LOW_LATENCY
-                } else {
-                    @Suppress("DEPRECATION")
-                    WifiManager.WIFI_MODE_FULL_HIGH_PERF
-                }
-                wifiLock = wifiManager.createWifiLock(lockType, "XCloudGodModeAI:LowLatencyWifiLock").apply {
-                    setReferenceCounted(false)
-                    acquire()
-                }
-            }
+            performanceManager.acquireLocks()
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -466,6 +490,38 @@ open class MainActivity : AppCompatActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        try {
+            if (controllerInputManager.handleGenericMotionEvent(event)) {
+                return true
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return super.dispatchGenericMotionEvent(event)
+    }
+
+    fun updateTelemetry(fps: Int, rttMs: Int, jitterMs: Int, packetLoss: Float, bitrate: Float, resolution: String?) {
+        acrylicOverlay.updateTelemetry(
+            TelemetryData(
+                fps = fps,
+                rttMs = rttMs,
+                jitterMs = jitterMs,
+                packetLossPercent = packetLoss,
+                bitrateMbps = bitrate,
+                resolution = resolution ?: "1080p HQ"
+            )
+        )
+    }
+
+    fun toggleGodModeOverlay() {
+        acrylicOverlay.toggleSettingsPanel()
+    }
+
+    fun performCacheDetox() {
+        performanceManager.performSelectiveCacheDetox()
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
@@ -477,7 +533,7 @@ open class MainActivity : AppCompatActivity() {
         super.onResume()
         setupImmersiveFullscreen()
         try {
-            wifiLock?.let { if (!it.isHeld) it.acquire() }
+            performanceManager.acquireLocks()
             webView.resumeTimers()
             webView.onResume()
         } catch (e: Exception) {
@@ -487,6 +543,7 @@ open class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         try {
+            performanceManager.releaseLocks()
             webView.onPause()
             webView.pauseTimers()
         } catch (e: Exception) {
@@ -500,7 +557,7 @@ open class MainActivity : AppCompatActivity() {
      * - Remueve el WebView dinámicamente de su ViewGroup padre.
      * - Detiene cargas activas y desregistra clientes.
      * - Destruye el WebView con seguridad.
-     * - Libera el WifiLock de forma segura.
+     * - Libera locks y listeners del performance manager.
      */
     override fun onDestroy() {
         try {
@@ -509,10 +566,7 @@ open class MainActivity : AppCompatActivity() {
         } catch (ignored: Exception) {}
 
         try {
-            if (wifiLock?.isHeld == true) {
-                wifiLock?.release()
-            }
-            wifiLock = null
+            performanceManager.onDestroy()
         } catch (e: Exception) {
             e.printStackTrace()
         }

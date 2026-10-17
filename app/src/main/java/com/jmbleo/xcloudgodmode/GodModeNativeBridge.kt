@@ -39,6 +39,22 @@ class GodModeNativeBridge(
         }
     }
 
+    @JavascriptInterface
+    fun updateTelemetry(fps: Int, rttMs: Int, jitterMs: Int, packetLoss: Float, bitrate: Float, resolution: String?) {
+        activity.runOnUiThread {
+            if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
+            activity.updateTelemetry(fps, rttMs, jitterMs, packetLoss, bitrate, resolution)
+        }
+    }
+
+    @JavascriptInterface
+    fun toggleGodModeOverlay() {
+        activity.runOnUiThread {
+            if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
+            activity.toggleGodModeOverlay()
+        }
+    }
+
     /**
      * Se ejecuta cuando termina runPostGameCacheDetox() en el script JS.
      * Limpia archivos multimedia temporales y caché de RAM/Disco de WebView en el hilo principal,
@@ -49,9 +65,7 @@ class GodModeNativeBridge(
         activity.runOnUiThread {
             if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
             try {
-                // Limpiar únicamente caché de memoria RAM sin eliminar archivos de Code Cache (JS bytecode) en disco
-                webView.clearCache(false)
-                Runtime.getRuntime().gc()
+                activity.performCacheDetox()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
