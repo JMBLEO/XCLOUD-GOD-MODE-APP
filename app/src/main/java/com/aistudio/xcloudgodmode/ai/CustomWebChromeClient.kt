@@ -45,8 +45,8 @@ open class CustomWebChromeClient(
      */
     fun applyHardwareAccelerationAndEglConfig() {
         try {
-            // Force hardware acceleration layer specifically on the WebView instance
-            webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            // Allow direct window GPU composition, avoiding unbacked Mesa DRM rendernodes
+            webView.setLayerType(View.LAYER_TYPE_NONE, null)
 
             // Ensure window surface format is standard 32-bit RGBA_8888
             activity.window.setFormat(PixelFormat.RGBA_8888)
@@ -91,7 +91,7 @@ open class CustomWebChromeClient(
 
             if (view != null) {
                 view.keepScreenOn = true
-                view.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                view.setLayerType(View.LAYER_TYPE_NONE, null)
                 (activity.window.decorView as? ViewGroup)?.addView(
                     view,
                     ViewGroup.LayoutParams(

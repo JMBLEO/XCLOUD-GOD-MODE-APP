@@ -30,6 +30,11 @@ class GodModeConfigManager(context: Context) {
         private const val KEY_SCALING_PROFILE = "scaling_profile"
         private const val KEY_LOW_LATENCY_WIFI = "low_latency_wifi"
         private const val KEY_THERMAL_WATCHDOG = "thermal_watchdog"
+        private const val KEY_CPU_WAKELOCK = "cpu_wakelock"
+        private const val KEY_REFRESH_RATE = "preferred_refresh_rate"
+        private const val KEY_RESOLUTION = "preferred_resolution"
+        private const val KEY_CODEC = "preferred_codec"
+        private const val KEY_AUDIO_LOW_LATENCY = "audio_low_latency"
 
         @Volatile
         private var instance: GodModeConfigManager? = null
@@ -89,6 +94,11 @@ class GodModeConfigManager(context: Context) {
             putString(prefix + KEY_SCALING_PROFILE, sanitized.scalingProfile.name)
             putBoolean(prefix + KEY_LOW_LATENCY_WIFI, sanitized.lowLatencyWifi)
             putBoolean(prefix + KEY_THERMAL_WATCHDOG, sanitized.thermalWatchdog)
+            putBoolean(prefix + KEY_CPU_WAKELOCK, sanitized.cpuWakeLock)
+            putFloat(prefix + KEY_REFRESH_RATE, sanitized.preferredRefreshRate)
+            putString(prefix + KEY_RESOLUTION, sanitized.preferredResolution)
+            putString(prefix + KEY_CODEC, sanitized.preferredCodec)
+            putBoolean(prefix + KEY_AUDIO_LOW_LATENCY, sanitized.audioLowLatency)
             apply()
         }
 
@@ -158,7 +168,12 @@ class GodModeConfigManager(context: Context) {
             sharpness = prefs.getInt(prefix + KEY_SHARPNESS, 0),
             scalingProfile = scaling,
             lowLatencyWifi = prefs.getBoolean(prefix + KEY_LOW_LATENCY_WIFI, true),
-            thermalWatchdog = prefs.getBoolean(prefix + KEY_THERMAL_WATCHDOG, true)
+            thermalWatchdog = prefs.getBoolean(prefix + KEY_THERMAL_WATCHDOG, true),
+            cpuWakeLock = prefs.getBoolean(prefix + KEY_CPU_WAKELOCK, true),
+            preferredRefreshRate = prefs.getFloat(prefix + KEY_REFRESH_RATE, 60.0f),
+            preferredResolution = prefs.getString(prefix + KEY_RESOLUTION, "1080p HQ") ?: "1080p HQ",
+            preferredCodec = prefs.getString(prefix + KEY_CODEC, "HEVC / H.265") ?: "HEVC / H.265",
+            audioLowLatency = prefs.getBoolean(prefix + KEY_AUDIO_LOW_LATENCY, true)
         ).sanitized()
     }
 }

@@ -34,8 +34,8 @@ class GodModeWebChromeClient(
     }
 
     init {
-        // Fuerza aceleración por hardware específicamente en la instancia del WebView
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        // Usa aceleración directa sobre la ventana sin capas intermedias que fallen en Mesa
+        webView.setLayerType(View.LAYER_TYPE_NONE, null)
         applyHardwareAccelerationAndEglConfig()
     }
 
@@ -46,7 +46,7 @@ class GodModeWebChromeClient(
      */
     fun applyHardwareAccelerationAndEglConfig() {
         try {
-            webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            webView.setLayerType(View.LAYER_TYPE_NONE, null)
             activity.window.setFormat(PixelFormat.RGBA_8888)
             activity.window.setFlags(
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
@@ -87,7 +87,7 @@ class GodModeWebChromeClient(
 
             if (view != null) {
                 view.keepScreenOn = true
-                view.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                view.setLayerType(View.LAYER_TYPE_NONE, null)
                 (activity.window.decorView as? ViewGroup)?.addView(
                     view,
                     ViewGroup.LayoutParams(

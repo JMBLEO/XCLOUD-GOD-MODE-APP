@@ -39,6 +39,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -60,13 +61,15 @@ open class MainActivity : AppCompatActivity() {
 
     lateinit var webView: WebView
     lateinit var acrylicOverlay: AcrylicOverlayView
+    lateinit var composeDashboard: androidx.compose.ui.platform.ComposeView
+    lateinit var streamContainer: FrameLayout
     private lateinit var nativeBridge: GodModeNativeBridge
     private lateinit var controllerInputManager: ControllerInputManager
     private lateinit var performanceManager: StreamPerformanceManager
-    private var activeAiDialog: AlertDialog? = null
 
     var isDocumentStartSupported: Boolean = false
     lateinit var godModeUserscriptCode: String
+    val triggerAccountWarningState = androidx.compose.runtime.mutableStateOf(false)
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,6 +88,7 @@ open class MainActivity : AppCompatActivity() {
         }
 
         super.onCreate(savedInstanceState)
+        com.aistudio.xcloudgodmode.ai.auth.XboxAuthManager.configureCookieStorage()
 
         // 1. Configurar Pantalla Completa Inmersiva (Incluyendo área de Notch/Cutout) y Mantener Pantalla Encendida
         setupImmersiveFullscreen()
@@ -118,8 +122,8 @@ open class MainActivity : AppCompatActivity() {
             isFocusable = true
             isFocusableInTouchMode = true
             keepScreenOn = true
-            setBackgroundColor(Color.BLACK)
-            setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            // Aceleración por GPU en la superficie de la ventana, evitando la asignación de capas off-screen de Mesa
+            setLayerType(View.LAYER_TYPE_NONE, null)
         }
 
         acrylicOverlay = AcrylicOverlayView(this).apply {
@@ -129,12 +133,52 @@ open class MainActivity : AppCompatActivity() {
             )
         }
 
-        val rootContainer = FrameLayout(this).apply {
+        streamContainer = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            visibility = View.GONE
             addView(webView, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             ))
             addView(acrylicOverlay)
+        }
+
+        composeDashboard = androidx.compose.ui.platform.ComposeView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            visibility = View.VISIBLE
+            setContent {
+                val triggerWarning by triggerAccountWarningState
+                com.jmbleo.xcloudgodmode.ui.compose.ConsoleDashboardScreen(
+                    onLaunchGame = { targetUrl ->
+                        startStreamSession(targetUrl)
+                    },
+                    onOpenSettings = {},
+                    onApplyRefreshRate = { hz ->
+                        applyDisplayRefreshRate(hz)
+                    },
+                    onDetoxCache = {
+                        performCacheDetox()
+                    },
+                    onTestRumble = {
+                        nativeBridge.vibrateController(300, 180, 220)
+                    },
+                    triggerAccountWarning = triggerWarning,
+                    onResetAccountWarning = {
+                        triggerAccountWarningState.value = false
+                    }
+                )
+            }
+        }
+
+        val rootContainer = FrameLayout(this).apply {
+            addView(streamContainer)
+            addView(composeDashboard)
         }
         setContentView(rootContainer)
 
@@ -147,10 +191,12 @@ open class MainActivity : AppCompatActivity() {
             runOnUiThread { toggleGodModeOverlay() }
         }
         controllerInputManager.onStickMovedListener = { x, y ->
-            runOnUiThread { acrylicOverlay.updateLiveStickPosition(x, y) }
+            runOnUiThread {
+                acrylicOverlay.updateLiveStickPosition(x, y)
+            }
         }
-        acrylicOverlay.onOpenCopilotListener = {
-            showAiCopilotDialog()
+        acrylicOverlay.onExitStreamListener = {
+            exitStreamSession()
         }
         acrylicOverlay.onDetoxCacheListener = {
             performCacheDetox()
@@ -199,10 +245,6 @@ open class MainActivity : AppCompatActivity() {
                 isDocumentStartSupported = false
             }
         }
-
-        // 8. Cargar el portal de Xbox Cloud Gaming / Remote Play
-        webView.loadUrl("https://www.xbox.com/play")
-        webView.requestFocus()
     }
 
     private fun checkBluetoothPermissions() {
@@ -279,208 +321,67 @@ open class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Diálogo de Copiloto IA con soporte para:
-     * 1. Low-Latency Responses (gemini-3.1-flash-lite)
-     * 2. High Thinking (gemini-4-argon con thinkingLevel = high)
+     * Notifica que se requiere iniciar sesión en Xbox Live, retornando de inmediato al Home
+     * de la nueva interfaz y desplegando la advertencia de problemas con la cuenta.
      */
-    fun showAiCopilotDialog() {
-        if (isFinishing || isDestroyed) return
+    fun notifySessionRequired() {
+        runOnUiThread {
+            exitStreamSession()
+            triggerAccountWarningState.value = true
+        }
+    }
 
-        try {
-            activeAiDialog?.dismiss()
-        } catch (ignored: Exception) {}
+    /**
+     * Inicia una sesión inmersiva de streaming con aceleración por GPU e inyección de script God Mode.
+     * Adquiere WifiLock y WakeLock para garantizar latencia mínima y evitar suspensión.
+     */
+    fun startStreamSession(targetUrl: String = "https://www.xbox.com/play/launch/9NKX70BBC2TN") {
+        runOnUiThread {
+            if (isFinishing || isDestroyed) return@runOnUiThread
 
-        val rootLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(32, 28, 32, 24)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#E6121D15"))
-                cornerRadius = 24f
-                setStroke(2, Color.parseColor("#4D52E172"))
+            // Validar sesión antes de cargar el stream; si no hay sesión, volver al Home y advertir
+            if (!com.aistudio.xcloudgodmode.ai.auth.XboxAuthManager.hasActiveSession(this)) {
+                notifySessionRequired()
+                return@runOnUiThread
             }
-        }
 
-        val headerText = TextView(this).apply {
-            text = "⚡ God Mode AI Copilot"
-            textSize = 18f
-            setTextColor(Color.WHITE)
-            setTypeface(null, android.graphics.Typeface.BOLD)
-        }
-        rootLayout.addView(headerText)
-
-        val subText = TextView(this).apply {
-            text = "Asistente de optimización de stream, baja latencia y tácticas de juego"
-            textSize = 12f
-            setTextColor(Color.parseColor("#B3FFFFFF"))
-            setPadding(0, 4, 0, 16)
-        }
-        rootLayout.addView(subText)
-
-        // Selector de modo: Baja Latencia (gemini-3.1-flash-lite) vs Pensamiento Alto (gemini-4-argon)
-        val modeGroup = RadioGroup(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 0, 0, 12)
-        }
-        val rbLowLatency = RadioButton(this).apply {
-            id = View.generateViewId()
-            text = "⚡ Baja Latencia (Flash Lite)"
-            setTextColor(Color.WHITE)
-            isChecked = true
-        }
-        val rbThinking = RadioButton(this).apply {
-            id = View.generateViewId()
-            text = "🧠 Pensamiento Alto (Argon)"
-            setTextColor(Color.WHITE)
-        }
-        modeGroup.addView(rbLowLatency)
-        modeGroup.addView(rbThinking)
-        rootLayout.addView(modeGroup)
-
-        // Chips de sugerencia rápida
-        val chipsScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            setPadding(0, 0, 0, 12)
-        }
-        val chipsLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        val promptInput = EditText(this).apply {
-            hint = "Escribe tu duda de juego o consulta de red..."
-            setHintTextColor(Color.parseColor("#80FFFFFF"))
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#66000000"))
-                cornerRadius = 12f
-                setStroke(1, Color.parseColor("#33FFFFFF"))
+            composeDashboard.visibility = View.GONE
+            streamContainer.visibility = View.VISIBLE
+            setupImmersiveFullscreen()
+            performanceManager.acquireLocks()
+            if (webView.url.isNullOrBlank() || targetUrl != webView.url) {
+                webView.loadUrl(targetUrl)
             }
-            setPadding(20, 16, 20, 16)
+            webView.requestFocus()
         }
+    }
 
-        val suggestions = listOf(
-            "Diagnosticar latencia y jitter de mi stream",
-            "¿Qué shader conviene: Real-ESRGAN o SeedVR2?",
-            "Optimizar controles y deadzone para FPS competitivo",
-            "Estrategia para vencer al boss actual"
-        )
-        for (s in suggestions) {
-            val chip = Button(this).apply {
-                text = s
-                textSize = 11f
-                setTextColor(Color.WHITE)
-                background = GradientDrawable().apply {
-                    setColor(Color.parseColor("#33FFFFFF"))
-                    cornerRadius = 20f
-                    setStroke(1, Color.parseColor("#26FFFFFF"))
-                }
-                setPadding(20, 8, 20, 8)
-                val params = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    marginEnd = 12
-                }
-                layoutParams = params
-                setOnClickListener {
-                    promptInput.setText(s)
-                }
-            }
-            chipsLayout.addView(chip)
+    /**
+     * Sale de la sesión de streaming activa y regresa instantáneamente al Launcher Nativo en Compose.
+     * Detiene el render de WebRTC, libera los bloqueos de hardware y ejecuta la limpieza de caché temporal.
+     */
+    fun exitStreamSession() {
+        runOnUiThread {
+            if (isFinishing || isDestroyed) return@runOnUiThread
+            performanceManager.releaseLocks()
+            webView.stopLoading()
+            webView.loadUrl("about:blank")
+            streamContainer.visibility = View.GONE
+            composeDashboard.visibility = View.VISIBLE
+            acrylicOverlay.toggleSettingsPanel(false)
+            setupImmersiveFullscreen()
+            performCacheDetox()
         }
-        chipsScroll.addView(chipsLayout)
-        rootLayout.addView(chipsScroll)
-
-        rootLayout.addView(promptInput)
-
-        val progress = ProgressBar(this).apply {
-            visibility = View.GONE
-            setPadding(0, 16, 0, 16)
-        }
-        rootLayout.addView(progress)
-
-        val responseScroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                380
-            )
-            setPadding(0, 12, 0, 12)
-        }
-        val responseText = TextView(this).apply {
-            text = "El copiloto está listo. Puedes seleccionar 'Baja Latencia' para respuestas ultra-rápidas en tiempo real, o 'Pensamiento Alto' para análisis estratégico profundo."
-            textSize = 13f
-            setTextColor(Color.parseColor("#E6FFFFFF"))
-            setLineSpacing(4f, 1.15f)
-        }
-        responseScroll.addView(responseText)
-        rootLayout.addView(responseScroll)
-
-        val buttonsLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END
-            setPadding(0, 8, 0, 0)
-        }
-
-        val dialog = AlertDialog.Builder(this)
-            .setView(rootLayout)
-            .create()
-
-        val btnAsk = Button(this).apply {
-            text = "Consultar"
-            setTextColor(Color.BLACK)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#52E172"))
-                cornerRadius = 12f
-            }
-            setOnClickListener {
-                val prompt = promptInput.text.toString().trim()
-                if (prompt.isEmpty()) return@setOnClickListener
-
-                val mode = if (rbThinking.isChecked) "thinking" else "low_latency"
-                progress.visibility = View.VISIBLE
-                responseText.text = if (mode == "thinking") {
-                    "Razonando a profundidad con Gemini 4 Argon (Thinking Mode)..."
-                } else {
-                    "Generando respuesta de baja latencia con Gemini 3.1 Flash Lite..."
-                }
-
-                lifecycleScope.launch {
-                    val result = GeminiAiAssistant.query(prompt, mode)
-                    if (!isFinishing && !isDestroyed) {
-                        progress.visibility = View.GONE
-                        responseText.text = result
-                    }
-                }
-            }
-        }
-
-        val btnClose = Button(this).apply {
-            text = "Cerrar"
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#33000000"))
-                cornerRadius = 12f
-            }
-            setOnClickListener {
-                dialog.dismiss()
-                setupImmersiveFullscreen()
-            }
-        }
-
-        buttonsLayout.addView(btnClose)
-        val space = View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(16, 1)
-        }
-        buttonsLayout.addView(space)
-        buttonsLayout.addView(btnAsk)
-        rootLayout.addView(buttonsLayout)
-
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        activeAiDialog = dialog
-        dialog.show()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         try {
+            if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_DOWN) {
+                if (streamContainer.visibility == View.VISIBLE) {
+                    exitStreamSession()
+                    return true
+                }
+            }
             if (controllerInputManager.handleKeyEvent(event)) {
                 return true
             }
@@ -560,11 +461,6 @@ open class MainActivity : AppCompatActivity() {
      * - Libera locks y listeners del performance manager.
      */
     override fun onDestroy() {
-        try {
-            activeAiDialog?.dismiss()
-            activeAiDialog = null
-        } catch (ignored: Exception) {}
-
         try {
             performanceManager.onDestroy()
         } catch (e: Exception) {

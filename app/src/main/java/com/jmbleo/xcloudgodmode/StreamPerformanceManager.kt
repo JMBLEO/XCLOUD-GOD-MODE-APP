@@ -116,7 +116,17 @@ class StreamPerformanceManager(
         if (dir == null || !dir.exists() || !dir.isDirectory) return
         val files = dir.listFiles() ?: return
         for (f in files) {
-            if (preserveAuth && f.name.contains("cookie", ignoreCase = true)) {
+            val name = f.name.lowercase()
+            // Proteger Cookies de autenticación y estructuras internas de Chromium Simple Cache
+            if (preserveAuth && (
+                    name.contains("cookie") ||
+                    name.contains("chromium") ||
+                    name.contains("webview") ||
+                    name.contains("org.chromium") ||
+                    name.contains("cache_") ||
+                    name.contains("index")
+                )
+            ) {
                 continue
             }
             if (f.isDirectory) {

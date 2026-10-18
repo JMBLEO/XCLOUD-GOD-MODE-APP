@@ -55,7 +55,12 @@ data class GodModeConfig(
 
     // Red y Rendimiento
     val lowLatencyWifi: Boolean = true,
-    val thermalWatchdog: Boolean = true
+    val thermalWatchdog: Boolean = true,
+    val cpuWakeLock: Boolean = true,
+    val preferredRefreshRate: Float = 60.0f,
+    val preferredResolution: String = "1080p HQ",
+    val preferredCodec: String = "HEVC / H.265",
+    val audioLowLatency: Boolean = true
 ) {
     /**
      * Sanitiza los valores numéricos para prevenir estados inválidos o NaN.

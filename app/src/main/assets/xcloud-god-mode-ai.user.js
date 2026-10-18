@@ -929,12 +929,6 @@
 
                 <!-- TABS 4: HUD Y SISTEMA -->
                 <div class="bxc-content" id="t-hud">
-                    <div class="bxc-section-title">🤖 Copiloto IA (Gemini 3.1 Flash / Argon)</div>
-                    <div class="bxc-row">
-                        <label class="title">🤖 Asistente de Streaming y Estrategia IA ${q('Abre el asistente nativo de IA para diagnóstico de latencia en tiempo real, recomendaciones de shaders o tácticas complejas.', 'Opens native Gemini AI Assistant for stream diagnostics and game strategy.')}</label>
-                        <button class="bxc-btn btn-ai" id="btn-open-ai" style="flex:0 0 auto; padding: 8px 16px; font-size: 12px;">⚡ Abrir Copiloto IA</button>
-                    </div>
-
                     <div class="bxc-section-title">🧹 Detox Post-Juego y Optimización de Memoria</div>
                     <div class="bxc-row">
                         <label class="title">🧹 Auto-Detox de Caché al Cerrar un Juego ${q('Limpia automáticamente imágenes, videos, fuentes y buffers pesados al salir de un juego, manteniendo intacta tu sesión de Xbox y tus configuraciones.', 'Automatically purges heavy media/font caches on game exit without touching sessions or settings.')}</label>
@@ -1000,7 +994,6 @@
                 </div>
 
                 <div class="bxc-footer">
-                    <button class="bxc-btn btn-ai" id="btn-copilot-footer">⚡ COPILOTO IA</button>
                     <button class="bxc-btn btn-save" id="btn-save">💾 GUARDAR Y APLICAR</button>
                     <button class="bxc-btn btn-close" id="btn-close">❌ CERRAR</button>
                 </div>
@@ -1012,15 +1005,6 @@
             e.preventDefault();
             runPostGameCacheDetox(true);
         });
-
-        const openAiHandler = (e) => {
-            e.preventDefault();
-            GodModeNativeBridge.openAiCopilot();
-        };
-        const btnOpenAi = document.getElementById('btn-open-ai');
-        if (btnOpenAi) btnOpenAi.addEventListener('click', openAiHandler);
-        const btnCopilotFooter = document.getElementById('btn-copilot-footer');
-        if (btnCopilotFooter) btnCopilotFooter.addEventListener('click', openAiHandler);
 
         const selResProfile = document.getElementById('i-resprofile');
         const chkUltra = document.getElementById('i-ultra');

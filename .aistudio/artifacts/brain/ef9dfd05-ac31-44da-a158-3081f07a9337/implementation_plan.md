@@ -10,7 +10,8 @@ Plan arquitectónico integral y modular para el desarrollo del ecosistema **God 
 > **Estrategia de Ejecución Modular (20 Fases)**: La arquitectura se organiza en un núcleo desacoplado de contratos y lógica matemática (`@matrix/*` y adaptadores nativos en Kotlin/Java/C++), permitiendo validar paridad entre plataformas mientras se ejecutan las optimizaciones nativas de hardware directamente en el dispositivo móvil y consola portátil.
 
 - **Confirmado por el usuario**: Hoja de ruta completa de 20 fases que abarca desde la capa base de configuración y mandos hasta perfiles gráficos Vulkan/LSFG, escritorios de consola y canal de distribución.
-- **Enfoque de Desarrollo**: Incremental y paso a paso. Cada fase se valida mediante pruebas de compilación y paridad matemática antes de progresar a la siguiente.
+- **Eliminación de Copiloto IA**: Removido por completo el servicio `GeminiAiAssistant` y los diálogos de IA asociados, prescindiendo de claves de API externas no requeridas.
+- **Lanzador Nativo de Consola (Estilo XStreaming / XFly)**: La interfaz principal ya no carga la web directa de xCloud al arrancar. Presenta un dashboard de consola (`ConsoleLauncherDashboard`) con catálogo de juegos, modo Remote Play y calibración gráfica, reservando el motor de render con inyección de script `xcloud-god-mode-ai.user.js` al iniciar la sesión de streaming.
 - **Aislamiento de Seguridad**: Exclusión estricta de manipulaciones riesgosas del stream o suplantación arbitraria de identidades/IPs, priorizando la aceleración por hardware legítima y el blindaje de la conexión local.
 
 ---

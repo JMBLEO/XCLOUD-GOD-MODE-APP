@@ -54,7 +54,7 @@ class AcrylicOverlayView @JvmOverloads constructor(
     private val joystickVisualizer: JoystickCalibrationView
 
     // Eventos externos
-    var onOpenCopilotListener: (() -> Unit)? = null
+    var onExitStreamListener: (() -> Unit)? = null
     var onDetoxCacheListener: (() -> Unit)? = null
 
     private var currentTelemetry = TelemetryData()
@@ -324,7 +324,7 @@ class AcrylicOverlayView @JvmOverloads constructor(
         buttonsLayout.addView(btnSwapXY)
         settingsContentLayout.addView(buttonsLayout)
 
-        // Fila 4: Acciones rápidas (Copiloto IA y Limpieza de Caché)
+        // Fila 4: Acciones rápidas (Detox de Caché y Salida al Launcher Nativo)
         val actionsLayout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
@@ -339,8 +339,8 @@ class AcrylicOverlayView @JvmOverloads constructor(
                 onDetoxCacheListener?.invoke()
             }
         }
-        val btnCopilot = Button(context).apply {
-            text = "🤖 Copiloto IA"
+        val btnExitStream = Button(context).apply {
+            text = "🏠 Salir al Launcher"
             setTextColor(Color.BLACK)
             background = createGlassDrawable("#52E172", "#00000000", 12f)
             layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
@@ -348,11 +348,11 @@ class AcrylicOverlayView @JvmOverloads constructor(
             }
             setOnClickListener {
                 toggleSettingsPanel(false)
-                onOpenCopilotListener?.invoke()
+                onExitStreamListener?.invoke()
             }
         }
         actionsLayout.addView(btnDetox)
-        actionsLayout.addView(btnCopilot)
+        actionsLayout.addView(btnExitStream)
         settingsContentLayout.addView(actionsLayout)
     }
 
@@ -410,78 +410,6 @@ class AcrylicOverlayView @JvmOverloads constructor(
             if (strokeHex.isNotBlank() && strokeHex != "#00000000") {
                 setStroke(2, Color.parseColor(strokeHex))
             }
-        }
-    }
-
-    /**
-     * Canvas 2D interactivo para visualizar los círculos concéntricos de zona muerta y el vector del stick.
-     */
-    inner class JoystickCalibrationView(context: Context) : View(context) {
-
-        var innerDeadzone: Float = 0.08f
-        var outerDeadzone: Float = 0.95f
-        private var currentStickX: Float = 0.0f
-        private var currentStickY: Float = 0.0f
-
-        private val paintBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#33000000")
-            style = Paint.Style.FILL
-        }
-        private val paintOuterBound = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#4D52E172")
-            style = Paint.Style.STROKE
-            strokeWidth = 3f
-        }
-        private val paintInnerBound = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#80E74040")
-            style = Paint.Style.STROKE
-            strokeWidth = 3f
-        }
-        private val paintAxis = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#26FFFFFF")
-            style = Paint.Style.STROKE
-            strokeWidth = 2f
-        }
-        private val paintStickDot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#52E172")
-            style = Paint.Style.FILL
-        }
-
-        fun updateDeadzones(inner: Float, outer: Float) {
-            innerDeadzone = inner
-            outerDeadzone = outer
-            invalidate()
-        }
-
-        fun updateLivePosition(x: Float, y: Float) {
-            currentStickX = x.coerceIn(-1.0f, 1.0f)
-            currentStickY = y.coerceIn(-1.0f, 1.0f)
-            invalidate()
-        }
-
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-            val cx = width / 2f
-            val cy = height / 2f
-            val maxRadius = (minOf(width, height) / 2f) - 12f
-
-            // Fondo circular
-            canvas.drawCircle(cx, cy, maxRadius, paintBg)
-
-            // Ejes cartesianos
-            canvas.drawLine(cx - maxRadius, cy, cx + maxRadius, cy, paintAxis)
-            canvas.drawLine(cx, cy - maxRadius, cx, cy + maxRadius, paintAxis)
-
-            // Límite exterior (Outer deadzone)
-            canvas.drawCircle(cx, cy, maxRadius * outerDeadzone, paintOuterBound)
-
-            // Límite interior (Inner deadzone)
-            canvas.drawCircle(cx, cy, maxRadius * innerDeadzone, paintInnerBound)
-
-            // Posición del Stick
-            val dotX = cx + (currentStickX * maxRadius)
-            val dotY = cy + (currentStickY * maxRadius)
-            canvas.drawCircle(dotX, dotY, 12f, paintStickDot)
         }
     }
 }

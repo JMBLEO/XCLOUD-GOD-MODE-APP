@@ -18,7 +18,7 @@ class ExampleRobolectricTest {
   fun `read string from context`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val appName = context.getString(R.string.app_name)
-    assertEquals("XCloud God Mode AI", appName)
+    assertEquals("XCloud God Mode", appName)
   }
 
   @Test
@@ -29,5 +29,20 @@ class ExampleRobolectricTest {
       .use { it.readText() }
     assertTrue(scriptContent.contains("GodModeNativeBridge"))
     assertTrue(scriptContent.contains("XCloud (God Mode AI)"))
+    // Copilot IA removed as requested
+    assertTrue(!scriptContent.contains("btn-copilot-footer"))
+    assertTrue(!scriptContent.contains("btn-open-ai"))
+  }
+
+  @Test
+  fun `verify script injector loads and creates isolated sandbox`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val injector = com.jmbleo.xcloudgodmode.stream.ScriptInjector(context)
+    val code = injector.getScriptCode()
+    assertTrue(code.isNotEmpty())
+    val wrapped = injector.wrapInIsolatedSandbox("console.log('test');")
+    assertTrue(wrapped.contains("(function()"))
+    assertTrue(wrapped.contains("'use strict';"))
+    assertTrue(wrapped.contains("console.log('test');"))
   }
 }

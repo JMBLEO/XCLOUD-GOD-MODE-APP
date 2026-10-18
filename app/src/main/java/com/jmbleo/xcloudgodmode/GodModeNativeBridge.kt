@@ -221,14 +221,14 @@ class GodModeNativeBridge(
     }
 
     /**
-     * Abre el Copiloto IA nativo (Gemini 3.1 Flash Lite / Gemini 4 Argon) de forma segura en UI thread.
+     * Abre el panel de God Mode Native de forma segura en UI thread.
      */
     @JavascriptInterface
     fun openAiCopilot() {
         activity.runOnUiThread {
             if (activity.isFinishing || activity.isDestroyed) return@runOnUiThread
             try {
-                activity.showAiCopilotDialog()
+                activity.toggleGodModeOverlay()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
