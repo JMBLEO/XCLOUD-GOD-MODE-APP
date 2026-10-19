@@ -11,7 +11,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.xcloudgodmode.ai"
+    applicationId = "com.aistudio.xcloudgodmode.ai.mzlqpx"
     minSdk = 26
     targetSdk = 36
     versionCode = 1
@@ -98,18 +98,20 @@ dependencies {
   implementation(libs.androidx.core.ktx)
   implementation("androidx.appcompat:appcompat:1.7.0")
   implementation("androidx.webkit:webkit:1.12.1")
+  implementation("androidx.activity:activity-ktx:1.10.0")
   // implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
-  // implementation(libs.androidx.navigation.compose)
+  implementation(libs.androidx.navigation.compose)
   // implementation(libs.androidx.room.ktx)
   // implementation(libs.androidx.room.runtime)
-  // implementation(libs.coil.compose)
+  implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)
+  implementation(libs.google.webrtc)
 
   // Uncomment ALL FOUR of the following dependencies together to use Firebase Auth and Google
   // Sign-In via Credential Manager:

@@ -90,6 +90,34 @@
                     window.GodModeAndroid.openAiCopilot();
                 }
             } catch (e) {}
+        },
+        openXboxLogin: function () {
+            try {
+                if (typeof window.GodModeAndroid !== 'undefined' && window.GodModeAndroid.openXboxLogin) {
+                    window.GodModeAndroid.openXboxLogin();
+                }
+            } catch (e) {}
+        },
+        updatePerformanceMetrics: function (fps, lat, jit, loss, btr, dt) {
+            try {
+                if (typeof window.GodModeAndroid !== 'undefined' && window.GodModeAndroid.updatePerformanceMetrics) {
+                    window.GodModeAndroid.updatePerformanceMetrics(fps, lat, jit, loss, btr, dt);
+                }
+            } catch (e) {}
+        },
+        setCurrentGame: function (title) {
+            try {
+                if (typeof window.GodModeAndroid !== 'undefined' && window.GodModeAndroid.setCurrentGame) {
+                    window.GodModeAndroid.setCurrentGame(title);
+                }
+            } catch (e) {}
+        },
+        openOptimizationSettings: function () {
+            try {
+                if (typeof window.GodModeAndroid !== 'undefined' && window.GodModeAndroid.openOptimizationSettings) {
+                    window.GodModeAndroid.openOptimizationSettings();
+                }
+            } catch (e) {}
         }
     };
     window.GodModeNativeBridge = GodModeNativeBridge;
@@ -929,6 +957,18 @@
 
                 <!-- TABS 4: HUD Y SISTEMA -->
                 <div class="bxc-content" id="t-hud">
+                    <div class="bxc-section-title">🔐 Solución de Inicio de Sesión (XAL Fix)</div>
+                    <div class="bxc-row">
+                        <label class="title">🔐 Iniciar Sesión Segura (Evitar Error 403) ${q('Si ves un error 403 al intentar loguearte, usa este botón para iniciar sesión mediante el motor nativo XAL con firmas ECDSA.', 'Fixes 403 login errors using native XAL engine.')}</label>
+                        <button class="bxc-btn btn-save" id="btn-fix-login" style="flex:0 0 auto; padding: 8px 16px; font-size: 12px; background: #107C10 !important; color: white !important;">🔐 Login Seguro XAL</button>
+                    </div>
+
+                    <div class="bxc-section-title">🤖 Copiloto IA (Gemini 3.1 Flash / Argon)</div>
+                    <div class="bxc-row">
+                        <label class="title">🤖 Asistente de Streaming y Estrategia IA ${q('Abre el asistente nativo de IA para diagnóstico de latencia en tiempo real, recomendaciones de shaders o tácticas complejas.', 'Opens native Gemini AI Assistant for stream diagnostics and game strategy.')}</label>
+                        <button class="bxc-btn btn-ai" id="btn-open-ai" style="flex:0 0 auto; padding: 8px 16px; font-size: 12px;">⚡ Abrir Copiloto IA</button>
+                    </div>
+
                     <div class="bxc-section-title">🧹 Detox Post-Juego y Optimización de Memoria</div>
                     <div class="bxc-row">
                         <label class="title">🧹 Auto-Detox de Caché al Cerrar un Juego ${q('Limpia automáticamente imágenes, videos, fuentes y buffers pesados al salir de un juego, manteniendo intacta tu sesión de Xbox y tus configuraciones.', 'Automatically purges heavy media/font caches on game exit without touching sessions or settings.')}</label>
@@ -994,6 +1034,8 @@
                 </div>
 
                 <div class="bxc-footer">
+                    <button class="bxc-btn btn-ai" id="btn-copilot-footer">⚡ COPILOTO IA</button>
+                    <button class="bxc-btn btn-ai" id="btn-opt-footer" style="background: #1565C0; border-color: #1E88E5;">🚀 OPTIMIZAR JUEGO</button>
                     <button class="bxc-btn btn-save" id="btn-save">💾 GUARDAR Y APLICAR</button>
                     <button class="bxc-btn btn-close" id="btn-close">❌ CERRAR</button>
                 </div>
@@ -1005,6 +1047,31 @@
             e.preventDefault();
             runPostGameCacheDetox(true);
         });
+
+        const openAiHandler = (e) => {
+            e.preventDefault();
+            GodModeNativeBridge.openAiCopilot();
+        };
+        const btnOpenAi = document.getElementById('btn-open-ai');
+        if (btnOpenAi) btnOpenAi.addEventListener('click', openAiHandler);
+        const btnCopilotFooter = document.getElementById('btn-copilot-footer');
+        if (btnCopilotFooter) btnCopilotFooter.addEventListener('click', openAiHandler);
+
+        const btnOptFooter = document.getElementById('btn-opt-footer');
+        if (btnOptFooter) {
+            btnOptFooter.addEventListener('click', (e) => {
+                e.preventDefault();
+                GodModeNativeBridge.openOptimizationSettings();
+            });
+        }
+
+        const btnFixLogin = document.getElementById('btn-fix-login');
+        if (btnFixLogin) {
+            btnFixLogin.addEventListener('click', (e) => {
+                e.preventDefault();
+                GodModeNativeBridge.openXboxLogin();
+            });
+        }
 
         const selResProfile = document.getElementById('i-resprofile');
         const chkUltra = document.getElementById('i-ultra');
@@ -2037,6 +2104,16 @@
             addRow(config.osdNet, '🌐 Red', netType);
 
             currentHud.innerHTML = html;
+
+            // ⚡ Sincronizar métricas con el Monitor de Rendimiento Nativo para el Copiloto IA
+            GodModeNativeBridge.updatePerformanceMetrics(
+                Math.round(fps),
+                Math.round(rtt),
+                Math.round(jit * 1000),
+                parseFloat(pl),
+                Math.round(bitrate * 1000),
+                parseFloat(dt)
+            );
         }, 1000);
     }
 
@@ -2053,12 +2130,25 @@
 
                 if (wasInGameSession) {
                     const streamVideo = document.querySelector('video.game-stream-video') || document.querySelector('#game-stream video') || document.querySelector('div[data-testid="media-container"] video');
+                    
+                    // Detect game title while in session
+                    const streamTitle = document.querySelector('div[class*="StreamHeader-module__gameTitle"]');
+                    if (streamTitle && streamTitle.innerText) {
+                        GodModeNativeBridge.setCurrentGame(streamTitle.innerText.trim());
+                    }
+
                     if (!streamVideo && (!peerConnection || peerConnection.connectionState !== 'connected')) {
                         wasInGameSession = false;
                         GodModeNativeBridge.setPointerCapture(false);
                         const hud = document.getElementById('bxc-hud');
                         if (hud) hud.style.display = 'none';
                         runPostGameCacheDetox(false);
+                    }
+                } else {
+                    // Detect game title in the library/details page
+                    const titleEl = document.querySelector('h1[class*="GameDetails-module__title"], div[class*="GameDetails-module__title"]');
+                    if (titleEl && titleEl.innerText) {
+                        GodModeNativeBridge.setCurrentGame(titleEl.innerText.trim());
                     }
                 }
 

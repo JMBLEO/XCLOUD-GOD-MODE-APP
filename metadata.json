@@ -1,6 +1,6 @@
 {
-  "name": "XCloud God Mode",
-  "description": "Native suite for Xbox Cloud Gaming & Remote Play inspired by XStreaming, XFly and Better xCloud with custom console dashboard, zero-latency controller polling, and WebRTC streaming optimizations.",
+  "name": "God Mode",
+  "description": "Native suite for Xbox Cloud Gaming & Remote Play with AI shaders, 4K/1440p resolution unlocking, zero-latency controller polling, and Gemini AI game optimization copilot.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

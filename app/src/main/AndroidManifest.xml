@@ -53,14 +53,10 @@
             </intent-filter>
         </activity>
 
-        <activity-alias
-            android:name="com.jmbleo.xcloudgodmode.MainActivity"
-            android:targetActivity=".MainActivity"
-            android:exported="true" />
-
-        <activity-alias
-            android:name="com.example.MainActivity"
-            android:targetActivity=".MainActivity"
-            android:exported="true" />
+        <activity
+            android:name=".OptimizationActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@style/Theme.XCloudGodMode" />
     </application>
 </manifest>
