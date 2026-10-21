@@ -1,18 +1,16 @@
 package com.aistudio.xcloudgodmode.ai
 
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -21,6 +19,7 @@ import com.aistudio.xcloudgodmode.ai.services.GeminiService
 import com.aistudio.xcloudgodmode.ai.services.NetworkClient
 import com.aistudio.xcloudgodmode.ai.services.WebRTCStreamManager
 import com.aistudio.xcloudgodmode.ai.services.XboxFullAuthManager
+import com.aistudio.xcloudgodmode.ai.ui.screens.HomeScreen
 import com.aistudio.xcloudgodmode.ai.ui.screens.OptimizationSettingsScreen
 import com.aistudio.xcloudgodmode.ai.ui.screens.StreamScreen
 import com.aistudio.xcloudgodmode.ai.ui.viewmodels.OptimizationViewModel
@@ -39,6 +38,9 @@ class MainActivity : ComponentActivity() {
         xboxAuthManager = XboxFullAuthManager(networkClient)
         streamManager = WebRTCStreamManager(this, networkClient)
         geminiService = GeminiService()
+
+        // Initialize God Mode Native Sound Engine
+        com.aistudio.xcloudgodmode.ai.audio.PlayStaxBoxNativeSoundEngine.init(this)
 
         setContent {
             XCloudGodModeTheme {
@@ -60,19 +62,27 @@ fun MainNavigation(
     geminiService: GeminiService
 ) {
     val navController = rememberNavController()
-    
-    var activeGsToken by remember { mutableStateOf("") }
-    var activeSessionPath by remember { mutableStateOf("") }
 
-    NavHost(navController = navController, startDestination = "catalog") {
-        composable("catalog") {
-            CatalogPlaceholder(
-                onStartStream = { token, path ->
-                    activeGsToken = token
+    var activeGsToken by remember { mutableStateOf("demo_token") }
+    var activeSessionPath by remember { mutableStateOf("https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user") }
+
+    NavHost(navController = navController, startDestination = "home") {
+        composable("home") {
+            HomeScreen(
+                authManager = authManager,
+                onLaunchGame = { titleId, path ->
+                    activeGsToken = "demo_token"
                     activeSessionPath = path
                     navController.navigate("stream")
                 },
-                onOpenSettings = { navController.navigate("settings") }
+                onLaunchConsole = { consoleId ->
+                    activeGsToken = "demo_console_token"
+                    activeSessionPath = "https://ukw.core.gssv-play-prod.xboxlive.com/v2/login/user"
+                    navController.navigate("stream")
+                },
+                onOpenOptimization = {
+                    navController.navigate("settings")
+                }
             )
         }
         composable("stream") {
@@ -85,13 +95,21 @@ fun MainNavigation(
             )
         }
         composable("settings") {
-            val factory = object : androidx.lifecycle.ViewModelProvider.Factory {
-                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                    return OptimizationViewModel(geminiService) as T
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val app = context.applicationContext as? android.app.Application
+            val optimizationViewModel: OptimizationViewModel = viewModel(
+                factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                        @Suppress("UNCHECKED_CAST")
+                        return if (app != null) {
+                            OptimizationViewModel(app, geminiService) as T
+                        } else {
+                            OptimizationViewModel(geminiService) as T
+                        }
+                    }
                 }
-            }
-            val optimizationViewModel: OptimizationViewModel = viewModel(factory = factory)
-            
+            )
+
             OptimizationSettingsScreen(
                 viewModel = optimizationViewModel,
                 onBack = { navController.popBackStack() }
@@ -101,33 +119,18 @@ fun MainNavigation(
 }
 
 @Composable
-fun CatalogPlaceholder(
-    onStartStream: (String, String) -> Unit,
-    onOpenSettings: () -> Unit
-) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text("Xbox Cloud Gaming - Native Client", style = MaterialTheme.typography.headlineMedium)
-        Spacer(modifier = Modifier.height(32.dp))
-        Button(onClick = { 
-            onStartStream("demo_token", "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user")
-        }) {
-            Text("Launch Demo Stream (Forza Horizon 5)")
-        }
-        Spacer(modifier = Modifier.height(16.dp))
-        OutlinedButton(onClick = onOpenSettings) {
-            Text("Optimization Settings")
-        }
-    }
-}
-
-@Composable
 fun XCloudGodModeTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = androidx.compose.material3.darkColorScheme(),
+        colorScheme = darkColorScheme(
+            primary = Color(0xFF107C10),
+            secondary = Color(0xFF4ADE80),
+            background = Color(0xFF0C0E10),
+            surface = Color(0xFF14171A),
+            surfaceVariant = Color(0xFF1C2024),
+            onPrimary = Color.White,
+            onBackground = Color.White,
+            onSurface = Color.White
+        ),
         content = content
     )
 }

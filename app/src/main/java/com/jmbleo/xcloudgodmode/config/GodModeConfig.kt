@@ -1,80 +1,65 @@
 package com.jmbleo.xcloudgodmode.config
 
-/**
- * Curvas de sensibilidad aplicables a las palancas analógicas.
- */
+import android.content.Context
+import java.util.concurrent.CopyOnWriteArrayList
+
 enum class ResponseCurve {
     LINEAR,
-    ENHANCED,
-    AGGRESSIVE,
-    EXPONENTIAL
+    EXPONENTIAL,
+    AGGRESSIVE
 }
 
-/**
- * Esquinas de anclaje para el HUD flotante de telemetría.
- */
-enum class HudPosition {
-    TOP_LEFT,
-    TOP_RIGHT,
-    BOTTOM_LEFT,
-    BOTTOM_RIGHT
-}
-
-/**
- * Perfiles de post-procesado y escalado de vídeo local.
- */
-enum class ScalingProfile {
-    OFF,
-    CAS,
-    FSR_1
-}
-
-/**
- * Modelo de datos inmutable para la configuración de God Mode Native.
- */
 data class GodModeConfig(
-    // Controles y Zonas Muertas
-    val innerDeadzone: Float = 0.08f,       // 8% de zona muerta interior
-    val outerDeadzone: Float = 0.95f,       // 95% de límite exterior (saturación al 100%)
+    val innerDeadzone: Float = 0.08f,
+    val outerDeadzone: Float = 0.95f,
+    val brightness: Int = 100,
+    val contrast: Int = 100,
+    val saturation: Int = 100,
+    val sharpness: Int = 50,
     val responseCurve: ResponseCurve = ResponseCurve.LINEAR,
-    val swapAB: Boolean = false,            // Mapeo estilo Nintendo Switch
-    val swapXY: Boolean = false,
-    val comboMenuEnabled: Boolean = true,   // Atajo View + Menu simultáneos
-
-    // Telemetría & HUD
-    val hudEnabled: Boolean = true,
-    val hudPosition: HudPosition = HudPosition.TOP_RIGHT,
-    val showDetailedStats: Boolean = false,
-
-    // Post-procesado de Imagen
-    val brightness: Int = 100,              // 50% a 150% (100 = neutro)
-    val contrast: Int = 100,                // 50% a 150% (100 = neutro)
-    val saturation: Int = 100,              // 50% a 150% (100 = neutro)
-    val sharpness: Int = 0,                 // 0 a 100 (filtro CAS/FSR)
-    val scalingProfile: ScalingProfile = ScalingProfile.CAS,
-
-    // Red y Rendimiento
-    val lowLatencyWifi: Boolean = true,
-    val thermalWatchdog: Boolean = true,
-    val cpuWakeLock: Boolean = true,
-    val preferredRefreshRate: Float = 60.0f,
-    val preferredResolution: String = "1080p HQ",
-    val preferredCodec: String = "HEVC / H.265",
-    val audioLowLatency: Boolean = true
+    val swapAB: Boolean = false,
+    val swapXY: Boolean = false
 ) {
-    /**
-     * Sanitiza los valores numéricos para prevenir estados inválidos o NaN.
-     */
     fun sanitized(): GodModeConfig {
-        val safeInner = innerDeadzone.coerceIn(0.0f, 0.35f)
-        val safeOuter = outerDeadzone.coerceIn(safeInner + 0.10f, 1.0f)
         return copy(
-            innerDeadzone = safeInner,
-            outerDeadzone = safeOuter,
+            innerDeadzone = innerDeadzone.coerceIn(0.0f, 0.4f),
+            outerDeadzone = outerDeadzone.coerceIn(0.6f, 1.0f),
             brightness = brightness.coerceIn(50, 150),
             contrast = contrast.coerceIn(50, 150),
             saturation = saturation.coerceIn(50, 150),
             sharpness = sharpness.coerceIn(0, 100)
         )
+    }
+}
+
+class GodModeConfigManager private constructor(private val context: Context) {
+    private var currentConfig = GodModeConfig()
+    private val listeners = CopyOnWriteArrayList<(GodModeConfig) -> Unit>()
+
+    fun getConfig(): GodModeConfig = currentConfig
+
+    fun updateConfig(config: GodModeConfig) {
+        val sanitized = config.sanitized()
+        currentConfig = sanitized
+        listeners.forEach { it(sanitized) }
+    }
+
+    fun addListener(listener: (GodModeConfig) -> Unit) {
+        listeners.add(listener)
+    }
+
+    fun removeListener(listener: (GodModeConfig) -> Unit) {
+        listeners.remove(listener)
+    }
+
+    companion object {
+        @Volatile
+        private var instance: GodModeConfigManager? = null
+
+        fun getInstance(context: Context): GodModeConfigManager {
+            return instance ?: synchronized(this) {
+                instance ?: GodModeConfigManager(context.applicationContext).also { instance = it }
+            }
+        }
     }
 }

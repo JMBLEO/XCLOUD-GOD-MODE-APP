@@ -47,6 +47,101 @@ class WebRTCStreamManager(
         eglBase.release()
     }
 
+    /**
+     * Detecta si el hardware del dispositivo (SoC / MediaCodec) soporta decodificación
+     * acelerada por GPU para el códec especificado.
+     */
+    fun isHardwareDecoderSupported(mimeType: String): Boolean {
+        return try {
+            val codecList = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
+            codecList.codecInfos.any { info ->
+                if (info.isEncoder) return@any false
+                val supportsType = info.supportedTypes.any { it.equals(mimeType, ignoreCase = true) }
+                if (!supportsType) return@any false
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    info.isHardwareAccelerated
+                } else {
+                    !info.name.startsWith("omx.google.", ignoreCase = true) &&
+                    !info.name.startsWith("c2.android.", ignoreCase = true)
+                }
+            }
+        } catch (e: Exception) {
+            true // Fallback permisivo
+        }
+    }
+
+    /**
+     * Motor de reescritura de SDP (inspirado en better-xcloud sdp.ts).
+     * Reordena los códecs de video priorizando AV1, HEVC, VP9 o H264,
+     * inyecta límites de tasa de bits x-google-max-bitrate y optimiza Opus a 510kbps / minptime=10.
+     */
+    fun rewriteSdp(originalSdp: String, settings: com.aistudio.xcloudgodmode.ai.models.SettingsModel): String {
+        val lines = originalSdp.lines().toMutableList()
+        val rtpMap = mutableMapOf<String, String>() // PayloadType -> Codec Name
+
+        for (line in lines) {
+            if (line.startsWith("a=rtpmap:")) {
+                val parts = line.substring(9).split(" ")
+                if (parts.size >= 2) {
+                    val pt = parts[0]
+                    val codecInfo = parts[1].split("/")[0]
+                    rtpMap[pt] = codecInfo.uppercase()
+                }
+            }
+        }
+
+        val targetCodecName = when (settings.videoCodec) {
+            "AV1" -> "AV1"
+            "HEVC / H.265" -> "H265"
+            "VP9" -> "VP9"
+            "H.264 Baseline" -> "H264"
+            else -> "H264"
+        }
+
+        val prioritizedPts = rtpMap.filter { it.value.contains(targetCodecName) }.keys.toList()
+
+        val modifiedLines = mutableListOf<String>()
+        val maxBitrateKbps = settings.maxBitrateMbps * 1000
+
+        for (line in lines) {
+            if (line.startsWith("m=video ")) {
+                val parts = line.split(" ").toMutableList()
+                if (parts.size > 3 && prioritizedPts.isNotEmpty()) {
+                    val prefix = parts.subList(0, 3)
+                    val currentPts = parts.subList(3, parts.size).filter { !prioritizedPts.contains(it) }
+                    val reordered = prefix + prioritizedPts + currentPts
+                    modifiedLines.add(reordered.joinToString(" "))
+                    // Inyectar b=AS de bitrate inmediatamente tras m=video
+                    modifiedLines.add("b=AS:$maxBitrateKbps")
+                    continue
+                }
+            }
+
+            // Inyectar / modificar fmtp de Opus (Audio)
+            if (line.startsWith("a=fmtp:111 ")) {
+                val audioConfig = when (settings.audioCodecProfile) {
+                    "Opus Hi-Fi (510 kbps)" -> ";stereo=1;sprop-stereo=1;maxaveragebitrate=510000;cbr=1"
+                    "Opus Ultra-Low Latency" -> ";minptime=10;useinbandfec=1;stereo=1"
+                    else -> ";stereo=1"
+                }
+                val channelMode = if (settings.audioChannelMode == "Mono Mix") ";stereo=0;sprop-stereo=0" else ""
+                modifiedLines.add(line + audioConfig + channelMode)
+                continue
+            }
+
+            // Inyectar bitrate máximo en los fmtp del códec de video priorizado
+            if (prioritizedPts.any { line.startsWith("a=fmtp:$it ") }) {
+                val bitrateFlags = ";x-google-max-bitrate=$maxBitrateKbps;x-google-min-bitrate=5000;x-google-start-bitrate=${maxBitrateKbps * 8 / 10}"
+                modifiedLines.add(line + bitrateFlags)
+                continue
+            }
+
+            modifiedLines.add(line)
+        }
+
+        return modifiedLines.joinToString("\r\n")
+    }
+
     private fun initWebRTC() {
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(context)
