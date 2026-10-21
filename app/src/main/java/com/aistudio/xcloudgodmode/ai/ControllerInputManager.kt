@@ -41,7 +41,7 @@ class ControllerInputManager(private val webView: WebView) {
         if (event.keyCode == KeyEvent.KEYCODE_BUTTON_MODE) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 webView.evaluateJavascript(
-                    "(function(){ const ov = document.getElementById('bxc-overlay'); if(ov){ ov.style.display = (ov.style.display === 'flex' ? 'none' : 'flex'); } })();",
+                    "(function(){ const ov = document.getElementById('gm-overlay'); if(ov){ ov.style.display = (ov.style.display === 'flex' ? 'none' : 'flex'); } })();",
                     null
                 )
             }
@@ -55,9 +55,9 @@ class ControllerInputManager(private val webView: WebView) {
                     // En algunos mandos Bluetooth, el botón View/Select envía KEYCODE_BACK: lo dejamos pasar al WebView sin cerrar la Activity
                     return false
                 }
-                // Si fue el gesto "Atrás" de la pantalla de Android: cerrar el menú #bxc-overlay si está abierto
+                // Si fue el gesto "Atrás" de la pantalla de Android: cerrar el menú #gm-overlay si está abierto
                 webView.evaluateJavascript(
-                    "(function(){ const ov = document.getElementById('bxc-overlay'); if(ov && ov.style.display === 'flex'){ ov.style.display = 'none'; } })();",
+                    "(function(){ const ov = document.getElementById('gm-overlay'); if(ov && ov.style.display === 'flex'){ ov.style.display = 'none'; } })();",
                     null
                 )
             }

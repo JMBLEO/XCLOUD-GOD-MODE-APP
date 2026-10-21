@@ -142,7 +142,7 @@ class GodModeAndroidBridge(private val activity: Activity, private val webView: 
 fun GameStreamWebView(
     launchUrl: String,
     modifier: Modifier = Modifier,
-    settings: com.aistudio.xcloudgodmode.ai.models.SettingsModel = com.aistudio.xcloudgodmode.ai.models.SettingsModel(),
+    appSettings: com.aistudio.xcloudgodmode.ai.models.SettingsModel = com.aistudio.xcloudgodmode.ai.models.SettingsModel(),
     scriptInjector: ScriptInjector? = null,
     onWebViewCreated: ((WebView) -> Unit)? = null
 ) {
@@ -167,16 +167,18 @@ fun GameStreamWebView(
                 keepScreenOn = true
                 setBackgroundColor(Color.BLACK)
 
-                setLayerType(View.LAYER_TYPE_NONE, null)
-
-                isVerticalScrollBarEnabled = false
-                isHorizontalScrollBarEnabled = false
-                overScrollMode = View.OVER_SCROLL_NEVER
-
                 // Native Bridge Injection
                 if (activity != null) {
                     addJavascriptInterface(GodModeAndroidBridge(activity, this), "GodModeAndroidBridge")
                 }
+
+                // Apply Engine Flags (GPU, Dark Mode, TLS 1.3)
+                com.aistudio.xcloudgodmode.ai.engine.GodModeEngineUtils.applyWebViewFlags(
+                    webView = this,
+                    enableGpu = appSettings.enableGpuRasterization,
+                    enableDark = appSettings.autoDarkModeWebContents,
+                    enforceTls13 = appSettings.enforceTls13Strict
+                )
 
                 this.settings.apply {
                     javaScriptEnabled = true
@@ -190,7 +192,7 @@ fun GameStreamWebView(
                     loadWithOverviewMode = true
                     
                     // User Agent Profile Selection
-                    userAgentString = when (settings.userAgentProfile) {
+                    userAgentString = when (appSettings.userAgentProfile) {
                         "Xbox Windows 11 App" -> "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
                         "Samsung Tizen TV" -> "Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.0) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/4.0 Chrome/131.0.0.0 TV Safari/537.36"
                         else -> "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
@@ -201,7 +203,7 @@ fun GameStreamWebView(
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
                         if (view != null) {
-                            effectiveInjector.injectGodModeScript(view, settings)
+                            effectiveInjector.injectGodModeScript(view, appSettings)
                         }
                     }
 

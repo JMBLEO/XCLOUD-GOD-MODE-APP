@@ -146,8 +146,53 @@ class CatalogRepository(private val client: OkHttpClient = OkHttpClient.Builder(
         }
     }
 
-    suspend fun fetchLiveCatalog(): List<GameModel> = withContext(Dispatchers.IO) {
+    suspend fun fetchLiveCatalog(
+        authManager: XboxFullAuthManager? = null,
+        gsToken: String? = null,
+        regionUri: String? = null
+    ): List<GameModel> = withContext(Dispatchers.IO) {
         try {
+            // Case 1: Authenticated fetching (Directly from Xbox GSSV Titles API)
+            if (authManager != null && !gsToken.isNullOrBlank() && !regionUri.isNullOrBlank()) {
+                val titlesJson = authManager.getCloudTitles(gsToken, regionUri)
+                val results = titlesJson.optJSONArray("results") ?: JSONArray()
+                
+                val productIds = mutableListOf<String>()
+                for (i in 0 until results.length()) {
+                    val title = results.optJSONObject(i) ?: continue
+                    val productId = title.optJSONObject("details")?.optString("productId") ?: ""
+                    if (productId.isNotBlank()) productIds.add(productId)
+                }
+
+                // Batch hydrate details from GamePass Catalog
+                if (productIds.isNotEmpty()) {
+                    val chunks = productIds.chunked(25)
+                    val hydratedList = mutableListOf<GameModel>()
+                    
+                    for (chunk in chunks) {
+                        try {
+                            val detailsJson = authManager.getCloudTitleDetails(chunk)
+                            for (pid in chunk) {
+                                val prod = detailsJson.optJSONObject(pid) ?: continue
+                                hydratedList.add(parseGamePassProduct(prod))
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Chunk hydration error: ${e.message}")
+                        }
+                    }
+                    
+                    if (hydratedList.isNotEmpty()) {
+                        // Merge with verified defaults to ensure critical games are always there
+                        val final = hydratedList.toMutableList()
+                        for (def in verifiedDefaultGames) {
+                            if (final.none { it.id == def.id }) final.add(def)
+                        }
+                        return@withContext final
+                    }
+                }
+            }
+
+            // Case 2: Public fetching (GamePass SIGL)
             val siglUrl = "https://catalog.gamepass.com/sigls/v2?id=29a81209-df6f-41fd-a528-2ae6b91f719c&language=es-CL&market=CL"
             val req = Request.Builder().url(siglUrl).build()
             val resp = client.newCall(req).execute()
@@ -155,7 +200,7 @@ class CatalogRepository(private val client: OkHttpClient = OkHttpClient.Builder(
 
             val siglArray = JSONArray(resp.body?.string() ?: "[]")
             val ids = mutableListOf<String>()
-            for (i in 0 until minOf(siglArray.length(), 25)) {
+            for (i in 0 until minOf(siglArray.length(), 30)) {
                 val item = siglArray.optJSONObject(i)
                 val id = item?.optString("id")
                 if (!id.isNullOrBlank()) ids.add(id)
@@ -163,7 +208,8 @@ class CatalogRepository(private val client: OkHttpClient = OkHttpClient.Builder(
 
             if (ids.isEmpty()) return@withContext verifiedDefaultGames
 
-            val displayCatalogUrl = "https://displaycatalog.mp.microsoft.com/v7.0/products?bigIds=${ids.joinToString(",")}&market=CL&languages=es-CL&MS-CV=DGU1mcuYo0WMMp+F.1"
+            // Public display catalog fallback
+            val displayCatalogUrl = "https://displaycatalog.mp.microsoft.com/v7.0/products?bigIds=${ids.joinToString(",")}&market=CL&languages=es-CL"
             val catReq = Request.Builder().url(displayCatalogUrl).build()
             val catResp = client.newCall(catReq).execute()
             if (!catResp.isSuccessful) return@withContext verifiedDefaultGames
@@ -221,20 +267,43 @@ class CatalogRepository(private val client: OkHttpClient = OkHttpClient.Builder(
                 )
             }
 
-            if (hydratedGames.isNotEmpty()) {
-                val combined = hydratedGames.toMutableList()
-                for (def in verifiedDefaultGames) {
-                    if (combined.none { it.title.equals(def.title, ignoreCase = true) }) {
-                        combined.add(def)
-                    }
-                }
-                return@withContext combined
-            }
-            return@withContext verifiedDefaultGames
+            return@withContext if (hydratedGames.isNotEmpty()) hydratedGames else verifiedDefaultGames
         } catch (e: Exception) {
             Log.w(TAG, "Error fetching live catalog: ${e.message}")
             return@withContext verifiedDefaultGames
         }
+    }
+
+    private fun parseGamePassProduct(json: JSONObject): GameModel {
+        val prodId = json.optString("StoreId")
+        val title = json.optString("ProductTitle", "Unknown Game")
+        val publisher = json.optString("PublisherName", "Xbox Game Studios")
+        val desc = json.optString("ProductDescription", "")
+        
+        val poster = json.optJSONObject("Image_Poster")?.optString("URL", "")?.let { if (it.startsWith("//")) "https:$it" else it } ?: ""
+        val hero = json.optJSONObject("Image_Hero")?.optString("URL", "")?.let { if (it.startsWith("//")) "https:$it" else it } ?: ""
+        val tile = json.optJSONObject("Image_Tile")?.optString("URL", "")?.let { if (it.startsWith("//")) "https:$it" else it } ?: ""
+        
+        val screenshots = mutableListOf<String>()
+        val ssArray = json.optJSONArray("Screenshots")
+        if (ssArray != null) {
+            for (i in 0 until ssArray.length()) {
+                val ss = ssArray.optJSONObject(i)?.optString("URL")
+                if (ss != null) screenshots.add(if (ss.startsWith("//")) "https:$ss" else ss)
+            }
+        }
+
+        return GameModel(
+            id = prodId,
+            title = title,
+            publisher = publisher,
+            description = desc,
+            posterUrl = if (poster.isNotBlank()) poster else tile,
+            heroUrl = hero,
+            superHeroUrl = hero,
+            screenshots = screenshots,
+            chameleonRgb = deriveColorFromTitle(title)
+        )
     }
 
     private fun deriveColorFromTitle(title: String): Triple<Int, Int, Int> {

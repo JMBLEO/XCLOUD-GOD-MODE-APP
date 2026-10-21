@@ -25,8 +25,7 @@ import com.aistudio.xcloudgodmode.ai.models.SettingsModel
 @Composable
 fun AdvancedSettingsTab(
     settings: SettingsModel,
-    onSettingsChanged: (SettingsModel) -> Unit,
-    onOpenOptimizationCenter: (() -> Unit)? = null
+    onSettingsChanged: (SettingsModel) -> Unit
 ) {
     var activeTab by remember { mutableStateOf("Red") } // Red, Controles, Sistema
     var serverSearch by remember { mutableStateOf("") }
@@ -34,12 +33,12 @@ fun AdvancedSettingsTab(
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).testTag("advanced_settings_tab")) {
         Text(
-            text = "Configuración de Infraestructura",
+            text = "Infraestructura",
             style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
             color = Color.White
         )
         Text(
-            text = "Ajustes de red y sistema negociados antes del apretón de manos WebRTC.",
+            text = "Configuración base del motor God Mode.",
             style = MaterialTheme.typography.bodySmall,
             color = Color.Gray
         )
@@ -77,8 +76,8 @@ fun AdvancedSettingsTab(
                                 colors = CheckboxDefaults.colors(checkedColor = Color(0xFF107C10))
                             )
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Forzar Servidor Físico Azure", color = Color.White)
-                                Text("Server Unlock: ${settings.forceServer}", color = Color(0xFF4ADE80), style = MaterialTheme.typography.labelSmall)
+                                Text("Servidor Azure", color = Color.White)
+                                Text("ID: ${settings.forceServer}", color = Color(0xFF4ADE80), style = MaterialTheme.typography.labelSmall)
                             }
                         }
 
@@ -121,8 +120,8 @@ fun AdvancedSettingsTab(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
-                                Text("Bypass IP (X-Forwarded-For)", color = Color.White)
-                                Text("IP Activa: ${settings.bypassIp}", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                                Text("Bypass IP", color = Color.White)
+                                Text("IP: ${settings.bypassIp}", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
                             }
                         }
 
@@ -170,11 +169,11 @@ fun AdvancedSettingsTab(
                         
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = settings.unlock120Fps, onCheckedChange = { onSettingsChanged(settings.copy(unlock120Fps = it)) }, colors = CheckboxDefaults.colors(checkedColor = Color(0xFF107C10)))
-                            Text("Desbloquear 120 FPS (SDP Rewrite)", color = Color.White)
+                            Text("Unlock 120 FPS", color = Color.White)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = settings.infiniteBitrate, onCheckedChange = { onSettingsChanged(settings.copy(infiniteBitrate = it)) }, colors = CheckboxDefaults.colors(checkedColor = Color(0xFF107C10)))
-                            Text("Bitrate Ilimitado (2 Gbps Cap)", color = Color.White)
+                            Text("Bitrate Ilimitado", color = Color.White)
                         }
                     }
                 }
@@ -195,11 +194,11 @@ fun AdvancedSettingsTab(
                         
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = settings.swapABXY, onCheckedChange = { onSettingsChanged(settings.copy(swapABXY = it)) }, colors = CheckboxDefaults.colors(checkedColor = Color(0xFF107C10)))
-                            Text("Invertir botones Nintendo (A/B, X/Y)", color = Color.White)
+                            Text("Nintendo Layout (A/B, X/Y)", color = Color.White)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = settings.safeNativeModeOnly, onCheckedChange = { onSettingsChanged(settings.copy(safeNativeModeOnly = it)) }, colors = CheckboxDefaults.colors(checkedColor = Color(0xFF107C10)))
-                            Text("Solo M&K Nativo (Anti-Baneo)", color = Color.White)
+                            Text("Safe M&K Mode", color = Color.White)
                         }
                     }
                 }
@@ -208,31 +207,92 @@ fun AdvancedSettingsTab(
                     SettingsCategoryCard(icon = Icons.Default.Settings, title = "QoL & Pantalla") {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = settings.antiKick, onCheckedChange = { onSettingsChanged(settings.copy(antiKick = it)) }, colors = CheckboxDefaults.colors(checkedColor = Color(0xFF107C10)))
-                            Text("Anti-Kick Automático", color = Color.White)
+                            Text("Anti-Kick", color = Color.White)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = settings.skipSplash, onCheckedChange = { onSettingsChanged(settings.copy(skipSplash = it)) }, colors = CheckboxDefaults.colors(checkedColor = Color(0xFF107C10)))
-                            Text("Omitir Video Inicial Splash", color = Color.White)
+                            Text("Omitir Splash", color = Color.White)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = settings.blockAnalytics, onCheckedChange = { onSettingsChanged(settings.copy(blockAnalytics = it)) }, colors = CheckboxDefaults.colors(checkedColor = Color(0xFF107C10)))
-                            Text("Bloquear Telemetría y Analíticas", color = Color.White)
+                            Text("Bloquear Analíticas", color = Color.White)
                         }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Sonido de Interfaz", color = Color(0xFF107C10), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                        
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Switch(
+                                checked = settings.enableUiSounds,
+                                onCheckedChange = { onSettingsChanged(settings.copy(enableUiSounds = it)) },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF107C10))
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text("Efectos PlayStaxBox", color = Color.White)
+                        }
+
+                        if (settings.enableUiSounds) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                listOf("HYBRID", "PS5", "360", "PS3").forEach { theme ->
+                                    val fullTheme = when(theme) {
+                                        "HYBRID" -> "PLAYSTAX_HYBRID"
+                                        "PS5" -> "PS5_CRYSTALLINE"
+                                        "360" -> "XBOX_BLADES_360"
+                                        else -> "PS3_XMB_CLICK"
+                                    }
+                                    Box(
+                                        modifier = Modifier.weight(1f).height(32.dp)
+                                            .background(if (settings.uiSoundTheme == fullTheme) Color(0xFF107C10) else Color(0xFF14171A), RoundedCornerShape(4.dp))
+                                            .border(1.dp, if (settings.uiSoundTheme == fullTheme) Color(0xFF4ADE80) else Color.DarkGray, RoundedCornerShape(4.dp))
+                                            .clickable { onSettingsChanged(settings.copy(uiSoundTheme = fullTheme)) },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(theme, color = Color.White, style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("Escala de Interfaz", color = Color(0xFF107C10), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                        
+                        // Text Scale
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Tamaño de Texto", modifier = Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            Text("${settings.textScalePercent}%", color = Color(0xFF4ADE80), style = MaterialTheme.typography.labelSmall)
+                        }
+                        Slider(
+                            value = settings.textScalePercent.toFloat(),
+                            onValueChange = { onSettingsChanged(settings.copy(textScalePercent = it.toInt())) },
+                            valueRange = 85f..160f,
+                            colors = SliderDefaults.colors(thumbColor = Color(0xFF107C10), activeTrackColor = Color(0xFF107C10))
+                        )
+
+                        // Icon Scale
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Tamaño de Iconos", modifier = Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            Text("${settings.iconScalePercent}%", color = Color(0xFF4ADE80), style = MaterialTheme.typography.labelSmall)
+                        }
+                        Slider(
+                            value = settings.iconScalePercent.toFloat(),
+                            onValueChange = { onSettingsChanged(settings.copy(iconScalePercent = it.toInt())) },
+                            valueRange = 80f..140f,
+                            colors = SliderDefaults.colors(thumbColor = Color(0xFF107C10), activeTrackColor = Color(0xFF107C10))
+                        )
+
+                        // Poster Scale
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Tamaño de Carátulas", modifier = Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            Text("${settings.posterScalePercent}%", color = Color(0xFF4ADE80), style = MaterialTheme.typography.labelSmall)
+                        }
+                        Slider(
+                            value = settings.posterScalePercent.toFloat(),
+                            onValueChange = { onSettingsChanged(settings.copy(posterScalePercent = it.toInt())) },
+                            valueRange = 80f..130f,
+                            colors = SliderDefaults.colors(thumbColor = Color(0xFF107C10), activeTrackColor = Color(0xFF107C10))
+                        )
                     }
                 }
-            }
-        }
-
-        if (onOpenOptimizationCenter != null) {
-            Button(
-                onClick = onOpenOptimizationCenter,
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Icon(Icons.Default.Bolt, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Abrir Game Optimizer (En Vivo)", fontWeight = FontWeight.Bold)
             }
         }
     }

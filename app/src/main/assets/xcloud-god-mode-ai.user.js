@@ -515,7 +515,7 @@
         };
     }
 
-    class XFlyInputEngine {
+    class GodModeInputEngine {
         constructor() { this.peerConnection = null; this.isStreaming = false; }
         initStreamEngine(pcInstance) {
             this.peerConnection = pcInstance;
@@ -528,7 +528,7 @@
             this.isStreaming = true;
         }
     }
-    const xflyEngine = new XFlyInputEngine();
+    const gmEngine = new GodModeInputEngine();
 
     if (config.disableNetworkCheck) {
         try { Object.defineProperty(navigator, 'connection', { get: () => undefined }); } catch (e) {}
@@ -554,11 +554,11 @@
     // 4. POSICIONAMIENTO SUPREMO DEL HUD EN EL STREAM (INMUNE A REESCALADO)
     // ==========================================
     function ensureHudOnTopOfStream() {
-        let hud = document.getElementById('bxc-hud');
+        let hud = document.getElementById('gm-hud');
         if (!hud) {
             if (!document.body) return null;
             hud = document.createElement('div');
-            hud.id = 'bxc-hud';
+            hud.id = 'gm-hud';
             hud.className = `hud-${config.statsPosition} hud-layout-${config.osdLayout}`;
             document.body.appendChild(hud);
         }
@@ -584,13 +584,13 @@
     // 5. INTERFAZ GRÁFICA MAESTRA (GLASSMORPHISM WIN 11)
     // ==========================================
     function createUI() {
-        if (document.getElementById('bxc-panel')) return;
+        if (document.getElementById('gm-panel')) return;
 
         const style = document.createElement('style');
         style.innerHTML = `
-            #bxc-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 2147483646; justify-content: center; align-items: center; font-family: 'Segoe UI', Tahoma, Geneva, sans-serif; pointer-events: auto;}
+            #gm-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 2147483646; justify-content: center; align-items: center; font-family: 'Segoe UI', Tahoma, Geneva, sans-serif; pointer-events: auto;}
             
-            #bxc-panel { 
+            #gm-panel { 
                 position: absolute; top: 5%; left: 50%; transform: translateX(-50%); 
                 background: rgba(20, 20, 20, 0.55) !important; 
                 backdrop-filter: blur(24px) saturate(180%) !important; 
@@ -599,31 +599,31 @@
                 box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.2); 
                 color: #fff; width: 90vw; max-width: 950px; height: 85vh; max-height: 850px; min-width: 320px; min-height: 400px; border-radius: 12px; display: flex; flex-direction: column; opacity: ${config.menuOpacity / 100}; transition: opacity 0.2s; resize: both; overflow: hidden; container-type: inline-size; 
             }
-            #bxc-panel:hover { opacity: 1; }
+            #gm-panel:hover { opacity: 1; }
             
-            #bxc-drag-handle { background: rgba(255, 255, 255, 0.06) !important; border-bottom: 1px solid rgba(255,255,255,0.12); color: #ddd; text-align: center; font-size: 11px; padding: 7px; cursor: move; user-select: none; font-weight: bold; letter-spacing: 1px; display: flex; justify-content: center; align-items: center;}
-            #bxc-drag-handle:hover { color: #fff; background: rgba(255, 255, 255, 0.12) !important; }
+            #gm-drag-handle { background: rgba(255, 255, 255, 0.06) !important; border-bottom: 1px solid rgba(255,255,255,0.12); color: #ddd; text-align: center; font-size: 11px; padding: 7px; cursor: move; user-select: none; font-weight: bold; letter-spacing: 1px; display: flex; justify-content: center; align-items: center;}
+            #gm-drag-handle:hover { color: #fff; background: rgba(255, 255, 255, 0.12) !important; }
 
-            .bxc-tabs { display: flex; background: rgba(0, 0, 0, 0.25) !important; border-radius: 0; flex-wrap: wrap; border-bottom: 1px solid rgba(255,255,255,0.1);}
-            .bxc-tab { flex: 1; padding: 12px 5px; background: none; border: none; color: #cfcfcf; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s; text-align: center; border-bottom: 3px solid transparent;}
-            .bxc-tab:hover { color: #fff; background: rgba(255,255,255,0.08); }
-            .bxc-tab.active { color: #fff; background: rgba(255, 255, 255, 0.12) !important; border-bottom: 3px solid rgba(255,255,255,0.85); }
+            .gm-tabs { display: flex; background: rgba(0, 0, 0, 0.25) !important; border-radius: 0; flex-wrap: wrap; border-bottom: 1px solid rgba(255,255,255,0.1);}
+            .gm-tab { flex: 1; padding: 12px 5px; background: none; border: none; color: #cfcfcf; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s; text-align: center; border-bottom: 3px solid transparent;}
+            .gm-tab:hover { color: #fff; background: rgba(255,255,255,0.08); }
+            .gm-tab.active { color: #fff; background: rgba(255, 255, 255, 0.12) !important; border-bottom: 3px solid rgba(255,255,255,0.85); }
             
-            .bxc-content { flex: 1; overflow-y: auto; padding: 20px; display: none; }
-            .bxc-content.active { display: flex; flex-direction: column; gap: 12px; }
-            .bxc-section-title { color: #fff; font-size: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.2); padding-bottom: 5px; margin-top: 10px; margin-bottom: 5px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.6); }
+            .gm-content { flex: 1; overflow-y: auto; padding: 20px; display: none; }
+            .gm-content.active { display: flex; flex-direction: column; gap: 12px; }
+            .gm-section-title { color: #fff; font-size: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.2); padding-bottom: 5px; margin-top: 10px; margin-bottom: 5px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.6); }
             
-            .bxc-row { display: flex; justify-content: space-between; align-items: center; background: rgba(255, 255, 255, 0.05) !important; padding: 12px 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); transition: 0.2s; flex-wrap: wrap; gap: 8px;}
-            .bxc-row:hover, .bxc-row.nav-focused { background: rgba(255, 255, 255, 0.14) !important; border-color: rgba(255,255,255,0.65); }
-            .bxc-row label.title { font-size: 13px; font-weight: 500; color: #eee; flex-grow: 1; min-width: 200px; display: flex; align-items: center; text-shadow: 0 1px 2px rgba(0,0,0,0.8);}
+            .gm-row { display: flex; justify-content: space-between; align-items: center; background: rgba(255, 255, 255, 0.05) !important; padding: 12px 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); transition: 0.2s; flex-wrap: wrap; gap: 8px;}
+            .gm-row:hover, .gm-row.nav-focused { background: rgba(255, 255, 255, 0.14) !important; border-color: rgba(255,255,255,0.65); }
+            .gm-row label.title { font-size: 13px; font-weight: 500; color: #eee; flex-grow: 1; min-width: 200px; display: flex; align-items: center; text-shadow: 0 1px 2px rgba(0,0,0,0.8);}
             
             select, input[type="text"], input[type="number"] { background: rgba(0, 0, 0, 0.45) !important; color: #fff; border: 1px solid rgba(255, 255, 255, 0.2) !important; padding: 8px; border-radius: 6px; outline: none; min-width: 200px; width: 100%; cursor: pointer; transition: 0.2s;}
             select:hover, input[type="text"]:hover, input[type="number"]:hover { background: rgba(0, 0, 0, 0.65) !important; border-color: rgba(255, 255, 255, 0.4) !important; }
-            .bxc-search { background: rgba(0, 0, 0, 0.5) !important; font-style: italic; margin-bottom: 5px;}
-            .bxc-search:focus { border-color: #fff !important; }
+            .gm-search { background: rgba(0, 0, 0, 0.5) !important; font-style: italic; margin-bottom: 5px;}
+            .gm-search:focus { border-color: #fff !important; }
             
-            .bxc-row input[type="number"] { width: 80px; text-align: center; min-width: unset;}
-            .bxc-row input[type="range"] { accent-color: #fff; width: 200px; cursor: pointer; }
+            .gm-row input[type="number"] { width: 80px; text-align: center; min-width: unset;}
+            .gm-row input[type="range"] { accent-color: #fff; width: 200px; cursor: pointer; }
             
             .switch { position: relative; display: inline-block; width: 40px; height: 20px; margin-left: 15px; flex-shrink: 0;}
             .switch input { opacity: 0; width: 0; height: 0; }
@@ -632,28 +632,28 @@
             input:checked + .slider { background-color: rgba(255, 255, 255, 0.35); border-color: rgba(255,255,255,0.6);}
             input:checked + .slider:before { transform: translateX(18px); }
 
-            .btxcl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 10px; width: 100%; }
-            .btxcl-grid label { font-size: 12px; display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); cursor: pointer; transition: 0.2s;}
-            .btxcl-grid label:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.3); }
-            .btxcl-grid input[type="checkbox"] { accent-color: #fff; width: 16px; height: 16px; cursor: pointer; }
+            .gm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 10px; width: 100%; }
+            .gm-grid label { font-size: 12px; display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.05); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); cursor: pointer; transition: 0.2s;}
+            .gm-grid label:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.3); }
+            .gm-grid input[type="checkbox"] { accent-color: #fff; width: 16px; height: 16px; cursor: pointer; }
             
-            .bxc-footer { display: flex; padding: 15px; background: rgba(0, 0, 0, 0.35) !important; gap: 10px; border-top: 1px solid rgba(255,255,255,0.12); flex-wrap: wrap; }
-            .bxc-btn { flex: 1; padding: 12px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; color: white; transition: 0.2s; text-shadow: 0 1px 2px rgba(0,0,0,0.5); min-width: 140px;}
+            .gm-footer { display: flex; padding: 15px; background: rgba(0, 0, 0, 0.35) !important; gap: 10px; border-top: 1px solid rgba(255,255,255,0.12); flex-wrap: wrap; }
+            .gm-btn { flex: 1; padding: 12px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; color: white; transition: 0.2s; text-shadow: 0 1px 2px rgba(0,0,0,0.5); min-width: 140px;}
             .btn-save { background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255,255,255,0.35); box-shadow: inset 0 1px 0 rgba(255,255,255,0.2); } .btn-save:hover { background: rgba(255, 255, 255, 0.28); }
             .btn-close { background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255,255,255,0.2); } .btn-close:hover { background: rgba(255, 255, 255, 0.15); }
             .btn-ai { background: rgba(16, 124, 16, 0.45); border: 1px solid rgba(82, 225, 114, 0.5); } .btn-ai:hover { background: rgba(16, 124, 16, 0.7); }
 
             @container (max-width: 550px) {
-                .bxc-row { flex-direction: column; align-items: flex-start; }
-                .bxc-row select, .bxc-row input[type="text"] { width: 100%; margin-top: 5px; }
-                .bxc-tab { font-size: 10px; padding: 10px 2px; }
-                .bxc-row label.title { font-size: 11.5px; }
-                .bxc-section-title { font-size: 13px; }
-                .bxc-btn { font-size: 11px; }
+                .gm-row { flex-direction: column; align-items: flex-start; }
+                .gm-row select, .gm-row input[type="text"] { width: 100%; margin-top: 5px; }
+                .gm-tab { font-size: 10px; padding: 10px 2px; }
+                .gm-row label.title { font-size: 11.5px; }
+                .gm-section-title { font-size: 13px; }
+                .gm-btn { font-size: 11px; }
             }
 
             /* HUD en Capa de Hardware Suprema (Inmune a Reescalado, Shaders y Fullscreen) */
-            #bxc-hud { 
+            #gm-hud { 
                 position: fixed !important; 
                 background: rgba(15, 15, 15, 0.45) !important; 
                 backdrop-filter: blur(14px) saturate(160%) !important; 
@@ -679,7 +679,7 @@
             .osd-row { display: inline-flex; gap: 3px; align-items: center; }
             .osd-label { color: inherit; opacity: 0.75; font-weight: bold; font-size: 10px; }
 
-            #bxc-floating-gear { 
+            #gm-floating-gear { 
                 position: fixed; top: 30px; left: 10px; z-index: 2147483645; 
                 background: rgba(25, 25, 25, 0.45) !important; 
                 backdrop-filter: blur(12px) saturate(160%) !important; 
@@ -687,7 +687,7 @@
                 color: #fff; border: 1px solid rgba(255, 255, 255, 0.25) !important; 
                 width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.2); user-select: none; touch-action: none; transition: transform 0.1s; 
             }
-            #bxc-floating-gear:hover { transform: scale(1.1); background: rgba(255, 255, 255, 0.2) !important; }
+            #gm-floating-gear:hover { transform: scale(1.1); background: rgba(255, 255, 255, 0.2) !important; }
 
             .mjs-header-btn { display: flex; align-items: center; justify-content: center; background: transparent; border: none; color: #fff; font-weight: bold; font-size: 14px; cursor: pointer; padding: 0 16px; opacity: ${config.menuOpacity / 100}; transition: 0.2s; }
             .mjs-header-btn:hover { background: rgba(255, 255, 255, 0.1); opacity: 1; }
@@ -709,7 +709,7 @@
                 headerBtn.innerHTML = getHeaderButtonLabel();
                 headerBtn.onclick = (e) => {
                     e.preventDefault();
-                    const ov = document.getElementById('bxc-overlay');
+                    const ov = document.getElementById('gm-overlay');
                     if (ov) ov.style.display = 'flex';
                 };
                 headerRightSection.insertBefore(headerBtn, headerRightSection.firstChild);
@@ -729,7 +729,7 @@
         injectHeaderButton();
 
         const floatGear = document.createElement('div');
-        floatGear.id = 'bxc-floating-gear';
+        floatGear.id = 'gm-floating-gear';
         floatGear.innerHTML = '⚙️';
         floatGear.title = 'Arrastra para mover a cualquier costado o haz clic para abrir ajustes';
         document.body.appendChild(floatGear);
@@ -761,27 +761,27 @@
             }
         });
         floatGear.addEventListener('click', () => {
-            if (!hasMovedGear) document.getElementById('bxc-overlay').style.display = 'flex';
+            if (!hasMovedGear) document.getElementById('gm-overlay').style.display = 'flex';
         });
 
         const overlay = document.createElement('div');
-        overlay.id = 'bxc-overlay';
+        overlay.id = 'gm-overlay';
         overlay.innerHTML = `
-            <div id="bxc-panel">
-                <div id="bxc-drag-handle">
+            <div id="gm-panel">
+                <div id="gm-drag-handle">
                     <span>🤚 Arrastra desde aquí para mover el panel libremente</span>
                 </div>
-                <div class="bxc-tabs">
-                    <button class="bxc-tab active" data-target="t-red">🚀 ${t('RED & CALIDAD', 'NET & QUALITY')}</button>
-                    <button class="bxc-tab" data-target="t-in">🕹️ ${t('CONTROLES Y AUDIO', 'INPUT & AUDIO')}</button>
-                    <button class="bxc-tab" data-target="t-vid">📺 ${t('VIDEO & AI SHADERS', 'VIDEO & AI SHADERS')}</button>
-                    <button class="bxc-tab" data-target="t-hud">📊 ${t('HUD & SISTEMA', 'HUD & SYSTEM')}</button>
+                <div class="gm-tabs">
+                    <button class="gm-tab active" data-target="t-red">🚀 ${t('RED & CALIDAD', 'NET & QUALITY')}</button>
+                    <button class="gm-tab" data-target="t-in">🕹️ ${t('CONTROLES Y AUDIO', 'INPUT & AUDIO')}</button>
+                    <button class="gm-tab" data-target="t-vid">📺 ${t('VIDEO & AI SHADERS', 'VIDEO & AI SHADERS')}</button>
+                    <button class="gm-tab" data-target="t-hud">📊 ${t('HUD & SISTEMA', 'HUD & SYSTEM')}</button>
                 </div>
 
                 <!-- TABS 1: RED Y CALIDAD -->
-                <div class="bxc-content active" id="t-red">
-                    <div class="bxc-section-title">🚀 Ingeniería Inversa (HQ Streaming: Cloud & XRemote) ${q('Mejora resolución y bitrate tanto en Xbox Cloud Gaming como en Xbox Remote Play (XRemote).', 'Improves resolution and bitrate in Cloud Gaming & XRemote.')}</div>
-                    <div class="bxc-row" style="flex-direction: column; align-items: flex-start;">
+                <div class="gm-content active" id="t-red">
+                    <div class="gm-section-title">🚀 Ingeniería Inversa (HQ Streaming: Cloud & XRemote) ${q('Mejora resolución y bitrate tanto en Xbox Cloud Gaming como en Xbox Remote Play (XRemote).', 'Improves resolution and bitrate in Cloud Gaming & XRemote.')}</div>
+                    <div class="gm-row" style="flex-direction: column; align-items: flex-start;">
                         <div style="display:flex; width:100%; align-items:center; margin-bottom:5px;">
                             <label class="title">🎯 Perfil de Resolución Forzada (Selector Nativo + Stream) ${q('Fuerza el apartado Resolución de Cloud Gaming y XRemote a 1440p, 4K u 8K certificando soporte en MediaCapabilities.', 'Forces Cloud Gaming & XRemote resolution selector.')}</label>
                             ${screenBadge}
@@ -793,23 +793,23 @@
                             <option value="1080p" ${config.targetResProfile === '1080p' ? 'selected' : ''}>📺 Estándar 1080p FHD (1920×1080 - 7 GB/h)</option>
                         </select>
                     </div>
-                    <div class="bxc-row"><label class="title">📡 Aplicar 1440p/4K/8K también en Xbox Remote Play (XRemote) ${q('Inyecta los overrides en /sessions/home/ para juego remoto desde consola.', 'Applies resolution overrides to Console Remote Play.')}</label>${toggle('i-xremote', config.forceXRemoteRes)}</div>
-                    <div class="bxc-row"><label class="title">💎 Upscaling 1440p (HQ Assets) ${q('Texturas optimizadas en alta definición.', 'High-res textures.')}</label>${toggle('i-ultra', config.ultraResolution)}</div>
-                    <div class="bxc-row"><label class="title">🖥️ Forzar 4K Nativo (UHD Flag) ${q('Máxima calidad nativa disponible.', 'Maximum native UHD quality.')}</label>${toggle('i-force4k', config.force4K)}</div>
-                    <div class="bxc-row"><label class="title">🌌 Forzar 8K Nativo (Full UHD Flag) ${q('Activa banderas experimentales 8K (7680x4320) en el negociador de video.', 'Enables experimental 8K flags.')}</label>${toggle('i-force8k', config.force8K)}</div>
-                    <div class="bxc-row"><label class="title">🛡️ Prevenir Caídas de Resolución ${q('Impide que el servidor baje la resolución ante picos de red.', 'Prevents dynamic resolution drops.')}</label>${toggle('i-nodrop', config.preventResDrops)}</div>
-                    <div class="bxc-row"><label class="title">🚀 Bitrate Ilimitado (Zero Compresión) ${q('Ancho de banda máximo para nitidez perfecta.', 'Maximum bandwidth for clarity.')}</label>${toggle('i-infbit', config.infiniteBitrate)}</div>
-                    <div class="bxc-row"><label class="title">✨ AI Reframing & Scaling (Insider) ${q('Escalado inteligente por IA.', 'AI intelligent scaling.')}</label>${toggle('i-ai', config.aiReframing)}</div>
-                    <div class="bxc-row"><label class="title">🎞️ Desbloquear 120 FPS ${q('Soporte para altas tasas de refresco.', 'High refresh rate support.')}</label>${toggle('i-120fps', config.unlock120Fps)}</div>
-                    <div class="bxc-row"><label class="title">🎮 Forzar Hardware "Series X" Exclusivo ${q('Asigna blades de máxima potencia.', 'Assigns top-tier server blades.')}</label>${toggle('i-seriesx', config.forceSeriesX)}</div>
-                    <div class="bxc-row"><label class="title">🎧 Activar Audio 5.1 Surround ${q('Sonido espacial multicanal.', 'Multi-channel audio.')}</label>${toggle('i-51', config.enable51Audio)}</div>
+                    <div class="gm-row"><label class="title">📡 Aplicar 1440p/4K/8K también en Xbox Remote Play (XRemote) ${q('Inyecta los overrides en /sessions/home/ para juego remoto desde consola.', 'Applies resolution overrides to Console Remote Play.')}</label>${toggle('i-xremote', config.forceXRemoteRes)}</div>
+                    <div class="gm-row"><label class="title">💎 Upscaling 1440p (HQ Assets) ${q('Texturas optimizadas en alta definición.', 'High-res textures.')}</label>${toggle('i-ultra', config.ultraResolution)}</div>
+                    <div class="gm-row"><label class="title">🖥️ Forzar 4K Nativo (UHD Flag) ${q('Máxima calidad nativa disponible.', 'Maximum native UHD quality.')}</label>${toggle('i-force4k', config.force4K)}</div>
+                    <div class="gm-row"><label class="title">🌌 Forzar 8K Nativo (Full UHD Flag) ${q('Activa banderas experimentales 8K (7680x4320) en el negociador de video.', 'Enables experimental 8K flags.')}</label>${toggle('i-force8k', config.force8K)}</div>
+                    <div class="gm-row"><label class="title">🛡️ Prevenir Caídas de Resolución ${q('Impide que el servidor baje la resolución ante picos de red.', 'Prevents dynamic resolution drops.')}</label>${toggle('i-nodrop', config.preventResDrops)}</div>
+                    <div class="gm-row"><label class="title">🚀 Bitrate Ilimitado (Zero Compresión) ${q('Ancho de banda máximo para nitidez perfecta.', 'Maximum bandwidth for clarity.')}</label>${toggle('i-infbit', config.infiniteBitrate)}</div>
+                    <div class="gm-row"><label class="title">✨ AI Reframing & Scaling (Insider) ${q('Escalado inteligente por IA.', 'AI intelligent scaling.')}</label>${toggle('i-ai', config.aiReframing)}</div>
+                    <div class="gm-row"><label class="title">🎞️ Desbloquear 120 FPS ${q('Soporte para altas tasas de refresco.', 'High refresh rate support.')}</label>${toggle('i-120fps', config.unlock120Fps)}</div>
+                    <div class="gm-row"><label class="title">🎮 Forzar Hardware "Series X" Exclusivo ${q('Asigna blades de máxima potencia.', 'Assigns top-tier server blades.')}</label>${toggle('i-seriesx', config.forceSeriesX)}</div>
+                    <div class="gm-row"><label class="title">🎧 Activar Audio 5.1 Surround ${q('Sonido espacial multicanal.', 'Multi-channel audio.')}</label>${toggle('i-51', config.enable51Audio)}</div>
 
-                    <div class="bxc-section-title">🎥 Códecs Avanzados y HDR Universal</div>
-                    <div class="bxc-row" style="flex-direction: column; align-items: flex-start;">
+                    <div class="gm-section-title">🎥 Códecs Avanzados y HDR Universal</div>
+                    <div class="gm-row" style="flex-direction: column; align-items: flex-start;">
                         <label class="title" style="margin-bottom:5px;">🎞️ Forzar Códec de Video (VVC, AV2, AV1) ${q('Selección de códec avanzado.', 'Advanced codec selection.')}</label>
                         <select id="i-codec">${genArrOpts(CODEC_LIST, config.codecPref)}</select>
                     </div>
-                    <div class="bxc-row" style="flex-direction: column; align-items: flex-start;">
+                    <div class="gm-row" style="flex-direction: column; align-items: flex-start;">
                         <div style="display:flex; width:100%; align-items:center; margin-bottom:5px;">
                             <label class="title">🌈 Rango Dinámico Universal (HDR10, Dolby Vision, HLG) ${q('Activa simulación o HDR avanzado.', 'Activates HDR simulation.')}</label>
                             ${hdrBadge}
@@ -825,39 +825,39 @@
                         </div>
                     </div>
 
-                    <div class="bxc-section-title">🌍 Enrutamiento Geográfico Global (Búsqueda Directa)</div>
-                    <div class="bxc-row" style="flex-direction: column; align-items: flex-start;">
+                    <div class="gm-section-title">🌍 Enrutamiento Geográfico Global (Búsqueda Directa)</div>
+                    <div class="gm-row" style="flex-direction: column; align-items: flex-start;">
                         <div style="display:flex; width:100%; justify-content:space-between; align-items:center;">
                             <label class="title">🌐 Forzar Servidor Físico ${q('Conéctate al Data Center de tu preferencia.', 'Connect to your preferred DC.')}</label>
                             ${toggle('i-enablesrv', config.enableServerLock)}
                         </div>
                         <div id="div-srv-container" style="display:${config.enableServerLock ? 'block' : 'none'}; width: 100%; margin-top: 10px;">
-                            <input type="text" id="search-srv" class="bxc-search" placeholder="🔍 Filtrar servidor (Ej: Chile, Brazil)..." autocomplete="off">
+                            <input type="text" id="search-srv" class="gm-search" placeholder="🔍 Filtrar servidor (Ej: Chile, Brazil)..." autocomplete="off">
                             <select id="i-srv" size="4" style="margin-top: 5px;">${genArrOpts(SERVER_LIST, config.forceServer)}</select>
                         </div>
                     </div>
-                    <div class="bxc-row" style="flex-direction: column; align-items: flex-start;">
+                    <div class="gm-row" style="flex-direction: column; align-items: flex-start;">
                         <div style="display:flex; width:100%; justify-content:space-between; align-items:center;">
                             <label class="title">🛡️ X-Forwarded-For Bypass IP ${q('Proxy IP para regiones restringidas.', 'Proxy IP for restricted regions.')}</label>
                             ${toggle('i-net', config.enableNetworkBypass)}
                         </div>
                         <div id="div-ip-container" style="display:${config.enableNetworkBypass ? 'block' : 'none'}; width: 100%; margin-top: 10px;">
-                            <input type="text" id="search-ip" class="bxc-search" placeholder="🔍 Filtrar IP (Ej: Argentina, USA)..." autocomplete="off">
+                            <input type="text" id="search-ip" class="gm-search" placeholder="🔍 Filtrar IP (Ej: Argentina, USA)..." autocomplete="off">
                             <select id="i-ip" size="5" style="margin-top: 5px;">${genOpts(REGION_IPS, config.bypassIp)}</select>
                             <input type="text" id="i-customip" placeholder="Ej: 20.143.92.1" value="${config.customIp}" style="display:${config.bypassIp === 'custom' && config.enableNetworkBypass ? 'block' : 'none'}; width: 100%; margin-top: 10px;">
                         </div>
                     </div>
-                    <div class="bxc-row">
+                    <div class="gm-row">
                         <label class="title">🏪 Región de Tienda / Moneda ${q('Ajusta la divisa local de Microsoft Store.', 'Adjusts local store currency.')}</label>
                         <select id="i-store">${genOpts(STORE_LOCALES, config.storeLocale)}</select>
                     </div>
-                    <div class="bxc-row"><label class="title">🔗 Preferir Nodos IPv6 ${q('Intenta usar redes IPv6 para evitar problemas de NAT.', 'Attempts to use IPv6 networks.')}</label>${toggle('i-ipv6', config.preferIPv6)}</div>
+                    <div class="gm-row"><label class="title">🔗 Preferir Nodos IPv6 ${q('Intenta usar redes IPv6 para evitar problemas de NAT.', 'Attempts to use IPv6 networks.')}</label>${toggle('i-ipv6', config.preferIPv6)}</div>
                 </div>
 
                 <!-- TABS 2: CONTROLES Y AUDIO -->
-                <div class="bxc-content" id="t-in">
-                    <div class="bxc-section-title">🎮 Rendimiento y Respuesta del Mando</div>
-                    <div class="bxc-row"><label class="title">⚡ Polling Rate Mando (Hz/ms) ${q('Frecuencia de lectura del mando. 4ms (250Hz) es lo más rápido.', 'Controller reading frequency.')}</label>
+                <div class="gm-content" id="t-in">
+                    <div class="gm-section-title">🎮 Rendimiento y Respuesta del Mando</div>
+                    <div class="gm-row"><label class="title">⚡ Polling Rate Mando (Hz/ms) ${q('Frecuencia de lectura del mando. 4ms (250Hz) es lo más rápido.', 'Controller reading frequency.')}</label>
                         <select id="i-poll" style="width: 150px;">
                             <option value="4" ${config.pollingRate == 4 ? 'selected' : ''}>250 Hz (4 ms)</option>
                             <option value="8" ${config.pollingRate == 8 ? 'selected' : ''}>125 Hz (8 ms)</option>
@@ -865,15 +865,15 @@
                             <option value="16" ${config.pollingRate == 16 ? 'selected' : ''}>62 Hz (16 ms)</option>
                         </select>
                     </div>
-                    <div class="bxc-row">
+                    <div class="gm-row">
                         <label class="title">🎯 Zonas Muertas L/R (%) ${q('Ignora los movimientos leves del Joystick (Anti-Drift).', 'Ignores slight Joystick movements.')}</label>
                         <div>L: <input type="number" id="i-dzl" min="0" max="100" value="${config.deadzoneL}"> R: <input type="number" id="i-dzr" min="0" max="100" value="${config.deadzoneR}"></div>
                     </div>
-                    <div class="bxc-row"><label class="title">🔀 Modo Nintendo (Invertir A/B X/Y) ${q('Cambia los botones de lugar como en Nintendo Switch.', 'Swaps buttons like Nintendo Switch.')}</label>${toggle('i-swap', config.swapABXY)}</div>
+                    <div class="gm-row"><label class="title">🔀 Modo Nintendo (Invertir A/B X/Y) ${q('Cambia los botones de lugar como en Nintendo Switch.', 'Swaps buttons like Nintendo Switch.')}</label>${toggle('i-swap', config.swapABXY)}</div>
 
-                    <div class="bxc-section-title">📳 Motores de Vibración y Háptica (Fix Permanente)</div>
-                    <div class="bxc-row"><label class="title">📳 Activar Vibración por Navegador / Nativa ${q('Intercepta GamepadHapticActuator y el VibratorManager de Android sin fugas de memoria.', 'Vibrates your controller via root prototype & native bridge.')}</label>${toggle('i-forcevib', config.forceVib)}</div>
-                    <div class="bxc-row">
+                    <div class="gm-section-title">📳 Motores de Vibración y Háptica (Fix Permanente)</div>
+                    <div class="gm-row"><label class="title">📳 Activar Vibración por Navegador / Nativa ${q('Intercepta GamepadHapticActuator y el VibratorManager de Android sin fugas de memoria.', 'Vibrates your controller via root prototype & native bridge.')}</label>${toggle('i-forcevib', config.forceVib)}</div>
+                    <div class="gm-row">
                         <label class="title">🎮 Perfil de Vibración ${q('DualSense 5 simula vibraciones hápticas ajustando las frecuencias cortas.', 'Changes the vibration behavior profile.')}</label>
                         <select id="i-vib-profile">
                             <option value="standard" ${config.vibProfile === 'standard' ? 'selected' : ''}>Xbox Estándar</option>
@@ -881,34 +881,34 @@
                             <option value="pro" ${config.vibProfile === 'pro' ? 'selected' : ''}>Pro/Competitivo (Corta)</option>
                         </select>
                     </div>
-                    <div class="bxc-row"><label class="title">📈 Intensidad de Vibración (<span id="val-vibint">${config.vibIntensity}</span>%)</label><input type="range" id="i-vib-int" min="10" max="100" value="${config.vibIntensity}"></div>
+                    <div class="gm-row"><label class="title">📈 Intensidad de Vibración (<span id="val-vibint">${config.vibIntensity}</span>%)</label><input type="range" id="i-vib-int" min="10" max="100" value="${config.vibIntensity}"></div>
 
-                    <div class="bxc-section-title">⌨️ Configuración de Teclado y Ratón</div>
-                    <div class="bxc-row"><label class="title">⌨️ Soporte Nativo de Teclado Xbox</label>${toggle('i-keybnat', config.enableKeyboardNative)}</div>
-                    <div class="bxc-row"><label class="title">🖱️ Soporte Nativo de Ratón Xbox</label>${toggle('i-mousenat', config.enableMouseNative)}</div>
-                    <div class="bxc-row"><label class="title">⚔️ Forzar M&K en juegos de Consola (Emulación)</label>${toggle('i-keybforce', config.forceKeyboardConsole)}</div>
-                    <div class="bxc-row"><label class="title">🕹️ Emular WASD a Joystick</label>${toggle('i-mnkemu', config.enableMnKEmulation)}</div>
-                    <div class="bxc-row">
+                    <div class="gm-section-title">⌨️ Configuración de Teclado y Ratón</div>
+                    <div class="gm-row"><label class="title">⌨️ Soporte Nativo de Teclado Xbox</label>${toggle('i-keybnat', config.enableKeyboardNative)}</div>
+                    <div class="gm-row"><label class="title">🖱️ Soporte Nativo de Ratón Xbox</label>${toggle('i-mousenat', config.enableMouseNative)}</div>
+                    <div class="gm-row"><label class="title">⚔️ Forzar M&K en juegos de Consola (Emulación)</label>${toggle('i-keybforce', config.forceKeyboardConsole)}</div>
+                    <div class="gm-row"><label class="title">🕹️ Emular WASD a Joystick</label>${toggle('i-mnkemu', config.enableMnKEmulation)}</div>
+                    <div class="gm-row">
                         <label class="title">🛡️ Solo M&K Nativo (Evitar Baneos) ${q('Desactiva la emulación y asegura que tu cliente envíe datos de M&K solo cuando el juego lo soporte nativamente.', 'Disables M&K emulation for strict anti-cheat safety.')}</label>
                         ${toggle('i-safenat', config.safeNativeModeOnly)}
                     </div>
 
-                    <div class="bxc-section-title">📱 Controles Táctiles y Multijugador</div>
-                    <div class="bxc-row"><label class="title">📱 Activar Táctil Nativo (Solo juegos compatibles)</label>${toggle('i-touchnat', config.enableTouchNative)}</div>
-                    <div class="bxc-row"><label class="title">🕹️ Forzar Joystick Virtual en pantalla (Cualquier juego)</label>${toggle('i-touchvirt', config.forceTouchVirtual)}</div>
-                    <div class="bxc-row"><label class="title">👥 Habilitar Co-Op Local (Multimando)</label>${toggle('i-coop', config.enableCoOp)}</div>
+                    <div class="gm-section-title">📱 Controles Táctiles y Multijugador</div>
+                    <div class="gm-row"><label class="title">📱 Activar Táctil Nativo (Solo juegos compatibles)</label>${toggle('i-touchnat', config.enableTouchNative)}</div>
+                    <div class="gm-row"><label class="title">🕹️ Forzar Joystick Virtual en pantalla (Cualquier juego)</label>${toggle('i-touchvirt', config.forceTouchVirtual)}</div>
+                    <div class="gm-row"><label class="title">👥 Habilitar Co-Op Local (Multimando)</label>${toggle('i-coop', config.enableCoOp)}</div>
 
-                    <div class="bxc-section-title">🔊 Audio Avanzado</div>
-                    <div class="bxc-row"><label class="title">🎤 Micrófono Passthrough (Chat de voz)</label>${toggle('i-mic', config.enableMic)}</div>
-                    <div class="bxc-row"><label class="title">📢 Audio Volume Booster (+100%)</label>${toggle('i-vol', config.volBooster)}</div>
-                    <div class="bxc-row"><label class="title">🔄 Combinar Pistas A/V (Fix Sync)</label>${toggle('i-comb', config.combineAV)}</div>
-                    <div class="bxc-row"><label class="title">🔇 Silenciar si cambio de Pestaña</label>${toggle('i-mute', config.muteOnBlur)}</div>
+                    <div class="gm-section-title">🔊 Audio Avanzado</div>
+                    <div class="gm-row"><label class="title">🎤 Micrófono Passthrough (Chat de voz)</label>${toggle('i-mic', config.enableMic)}</div>
+                    <div class="gm-row"><label class="title">📢 Audio Volume Booster (+100%)</label>${toggle('i-vol', config.volBooster)}</div>
+                    <div class="gm-row"><label class="title">🔄 Combinar Pistas A/V (Fix Sync)</label>${toggle('i-comb', config.combineAV)}</div>
+                    <div class="gm-row"><label class="title">🔇 Silenciar si cambio de Pestaña</label>${toggle('i-mute', config.muteOnBlur)}</div>
                 </div>
 
                 <!-- TABS 3: VIDEO Y AI SHADERS -->
-                <div class="bxc-content" id="t-vid">
-                    <div class="bxc-section-title">🧠 Shaders de Escalado IA (Real-ESRGAN & SeedVR2)</div>
-                    <div class="bxc-row" style="flex-direction: column; align-items: flex-start;">
+                <div class="gm-content" id="t-vid">
+                    <div class="gm-section-title">🧠 Shaders de Escalado IA (Real-ESRGAN & SeedVR2)</div>
+                    <div class="gm-row" style="flex-direction: column; align-items: flex-start;">
                         <label class="title" style="margin-bottom:5px;">✨ Motor de Reconstrucción y Nitidez (GPU SVG Pipeline) ${q('Aplica pipelines matemáticos inspirados en Real-ESRGAN y SeedVR2 directo en el compositor GPU sin latencia ni pantalla negra.', 'Real-time GPU SVG shader pipelines.')}</label>
                         <select id="i-fsrmode">
                             <option value="esrgan_srvgg" ${config.fsrCasMode === 'esrgan_srvgg' ? 'selected' : ''}>🌟 Real-ESRGAN (SRVGG Compact - Limpieza + Nitidez Realista)</option>
@@ -919,15 +919,15 @@
                             <option value="none" ${config.fsrCasMode === 'none' ? 'selected' : ''}>❌ Desactivado</option>
                         </select>
                     </div>
-                    <div class="bxc-row">
+                    <div class="gm-row">
                         <label class="title">🎨 Estabilizador de Color SeedVR2 (Color Fix) ${q('Inspirado en src/utils/color_fix.py de SeedVR2: corrige la pérdida de rango tonal y estabiliza la luminancia del stream.', 'Stabilizes stream luminance and chroma.')}</label>
                         ${toggle('i-seedcolor', config.seedvrColorFix)}
                     </div>
-                    <div class="bxc-row"><label class="title">🔍 Intensidad del Motor IA / Nitidez (<span id="val-sha">${config.vidSharpness}</span>) ${q('Ajusta la fuerza de reconstrucción de bordes en tiempo real.', 'Adjusts edge reconstruction strength.')}</label><input type="range" id="i-sha" min="0" max="10" value="${config.vidSharpness}"></div>
+                    <div class="gm-row"><label class="title">🔍 Intensidad del Motor IA / Nitidez (<span id="val-sha">${config.vidSharpness}</span>) ${q('Ajusta la fuerza de reconstrucción de bordes en tiempo real.', 'Adjusts edge reconstruction strength.')}</label><input type="range" id="i-sha" min="0" max="10" value="${config.vidSharpness}"></div>
 
-                    <div class="bxc-section-title">📺 Pantalla y Relación de Aspecto</div>
-                    <div class="bxc-row"><label class="title">🪟 Auto-Fullscreen & Landscape</label>${toggle('i-full', config.autoFullscreen)}</div>
-                    <div class="bxc-row">
+                    <div class="gm-section-title">📺 Pantalla y Relación de Aspecto</div>
+                    <div class="gm-row"><label class="title">🪟 Auto-Fullscreen & Landscape</label>${toggle('i-full', config.autoFullscreen)}</div>
+                    <div class="gm-row">
                         <label class="title">↔️ Estiramiento (Stretch)</label>
                         <select id="i-stretch">
                             <option value="normal" ${config.videoStretch === 'normal' ? 'selected' : ''}>Normal</option>
@@ -935,7 +935,7 @@
                             <option value="custom" ${config.videoStretch === 'custom' ? 'selected' : ''}>Personalizado</option>
                         </select>
                     </div>
-                    <div class="bxc-row">
+                    <div class="gm-row">
                         <label class="title">📏 Aspect Ratio Ultrawide</label>
                         <select id="i-ratio">
                             <option value="16:9" ${config.aspectRatio === '16:9' ? 'selected' : ''}>16:9</option>
@@ -944,64 +944,64 @@
                             <option value="21:9" ${config.aspectRatio === '21:9' ? 'selected' : ''}>21:9</option>
                         </select>
                     </div>
-                    <div class="bxc-row" id="div-stretchxy" style="display:${config.videoStretch === 'custom' ? 'flex' : 'none'};">
+                    <div class="gm-row" id="div-stretchxy" style="display:${config.videoStretch === 'custom' ? 'flex' : 'none'};">
                         <label class="title">📐 Escala X/Y Manual</label>
                         <div>X: <input type="number" id="i-sx" step="0.01" value="${config.stretchX}"> Y: <input type="number" id="i-sy" step="0.01" value="${config.stretchY}"></div>
                     </div>
 
-                    <div class="bxc-section-title">🎨 Parámetros de Imagen Adicionales</div>
-                    <div class="bxc-row"><label class="title">☀️ Brillo (<span id="val-bri">${config.vidBrightness}</span>%)</label><input type="range" id="i-bri" min="50" max="150" value="${config.vidBrightness}"></div>
-                    <div class="bxc-row"><label class="title">🌗 Contraste (<span id="val-con">${config.vidContrast}</span>%)</label><input type="range" id="i-con" min="50" max="150" value="${config.vidContrast}"></div>
-                    <div class="bxc-row"><label class="title">🌈 Saturación (<span id="val-sat">${config.vidSaturation}</span>%)</label><input type="range" id="i-sat" min="50" max="200" value="${config.vidSaturation}"></div>
+                    <div class="gm-section-title">🎨 Parámetros de Imagen Adicionales</div>
+                    <div class="gm-row"><label class="title">☀️ Brillo (<span id="val-bri">${config.vidBrightness}</span>%)</label><input type="range" id="i-bri" min="50" max="150" value="${config.vidBrightness}"></div>
+                    <div class="gm-row"><label class="title">🌗 Contraste (<span id="val-con">${config.vidContrast}</span>%)</label><input type="range" id="i-con" min="50" max="150" value="${config.vidContrast}"></div>
+                    <div class="gm-row"><label class="title">🌈 Saturación (<span id="val-sat">${config.vidSaturation}</span>%)</label><input type="range" id="i-sat" min="50" max="200" value="${config.vidSaturation}"></div>
                 </div>
 
                 <!-- TABS 4: HUD Y SISTEMA -->
-                <div class="bxc-content" id="t-hud">
-                    <div class="bxc-section-title">🔐 Solución de Inicio de Sesión (XAL Fix)</div>
-                    <div class="bxc-row">
+                <div class="gm-content" id="t-hud">
+                    <div class="gm-section-title">🔐 Solución de Inicio de Sesión (XAL Fix)</div>
+                    <div class="gm-row">
                         <label class="title">🔐 Iniciar Sesión Segura (Evitar Error 403) ${q('Si ves un error 403 al intentar loguearte, usa este botón para iniciar sesión mediante el motor nativo XAL con firmas ECDSA.', 'Fixes 403 login errors using native XAL engine.')}</label>
-                        <button class="bxc-btn btn-save" id="btn-fix-login" style="flex:0 0 auto; padding: 8px 16px; font-size: 12px; background: #107C10 !important; color: white !important;">🔐 Login Seguro XAL</button>
+                        <button class="gm-btn btn-save" id="btn-fix-login" style="flex:0 0 auto; padding: 8px 16px; font-size: 12px; background: #107C10 !important; color: white !important;">🔐 Login Seguro XAL</button>
                     </div>
 
-                    <div class="bxc-section-title">🤖 Copiloto IA (Gemini 3.1 Flash / Argon)</div>
-                    <div class="bxc-row">
+                    <div class="gm-section-title">🤖 Copiloto IA (Gemini 3.1 Flash / Argon)</div>
+                    <div class="gm-row">
                         <label class="title">🤖 Asistente de Streaming y Estrategia IA ${q('Abre el asistente nativo de IA para diagnóstico de latencia en tiempo real, recomendaciones de shaders o tácticas complejas.', 'Opens native Gemini AI Assistant for stream diagnostics and game strategy.')}</label>
-                        <button class="bxc-btn btn-ai" id="btn-open-ai" style="flex:0 0 auto; padding: 8px 16px; font-size: 12px;">⚡ Abrir Copiloto IA</button>
+                        <button class="gm-btn btn-ai" id="btn-open-ai" style="flex:0 0 auto; padding: 8px 16px; font-size: 12px;">⚡ Abrir Copiloto IA</button>
                     </div>
 
-                    <div class="bxc-section-title">🧹 Detox Post-Juego y Optimización de Memoria</div>
-                    <div class="bxc-row">
+                    <div class="gm-section-title">🧹 Detox Post-Juego y Optimización de Memoria</div>
+                    <div class="gm-row">
                         <label class="title">🧹 Auto-Detox de Caché al Cerrar un Juego ${q('Limpia automáticamente imágenes, videos, fuentes y buffers pesados al salir de un juego, manteniendo intacta tu sesión de Xbox y tus configuraciones.', 'Automatically purges heavy media/font caches on game exit without touching sessions or settings.')}</label>
                         ${toggle('i-autodetox', config.autoDetoxCache)}
                     </div>
-                    <div class="bxc-row">
+                    <div class="gm-row">
                         <label class="title">✨ Ejecutar Detox Manual Ahora ${q('Libera inmediatamente la caché multimedia acumulada sin cerrar tu sesión ni perder ajustes.', 'Immediately frees cached media and buffers.')}</label>
-                        <button class="bxc-btn btn-save" id="btn-detox-now" style="flex:0 0 auto; padding: 8px 16px; font-size: 12px;">🧹 Limpiar Caché Ahora</button>
+                        <button class="gm-btn btn-save" id="btn-detox-now" style="flex:0 0 auto; padding: 8px 16px; font-size: 12px;">🧹 Limpiar Caché Ahora</button>
                     </div>
 
-                    <div class="bxc-section-title">⚙️ Sistema y QoL</div>
-                    <div class="bxc-row"><label class="title">🛑 Desactivar Chequeo de Red (Anti-Lag)</label>${toggle('i-nocheck', config.disableNetworkCheck)}</div>
-                    <div class="bxc-row"><label class="title">📺 Modo Smart TV (UI Grande)</label>${toggle('i-tv', config.smartTvMode)}</div>
-                    <div class="bxc-row"><label class="title">🖱️ Ocultar Ratón Inactivo (2s)</label>${toggle('i-hms', config.hideIdleMouse)}</div>
-                    <div class="bxc-row"><label class="title">👆 Swipe Táctil (Desliza para ocultar UI)</label>${toggle('i-swp', config.touchSlideHide)}</div>
-                    <div class="bxc-row"><label class="title">🎮 Ocultar Táctil si hay Mando Físico</label>${toggle('i-htc', config.autoHideTouch)}</div>
-                    <div class="bxc-row"><label class="title">🚀 Skip Splash (Omitir Logo Xbox)</label>${toggle('i-spl', config.skipSplash)}</div>
-                    <div class="bxc-row"><label class="title">🚫 Bloquear Pop-up de Feedback Final</label>${toggle('i-fdb', config.skipFeedback)}</div>
-                    <div class="bxc-row"><label class="title">🛡️ Bloquear Telemetría y Analíticas</label>${toggle('i-anal', config.blockAnalytics)}</div>
-                    <div class="bxc-row"><label class="title">🤖 Anti-Kick ("¿Sigues ahí?")</label>${toggle('i-kick', config.antiKick)}</div>
-                    <div class="bxc-row"><label class="title">⚡ Desactivar Animaciones CSS</label>${toggle('i-ani', config.disableUIAnim)}</div>
-                    <div class="bxc-row"><label class="title">👻 Opacidad de este Menú (<span id="val-menuop">${config.menuOpacity}</span>%)</label><input type="range" id="i-menuop" min="10" max="100" value="${config.menuOpacity}"></div>
+                    <div class="gm-section-title">⚙️ Sistema y QoL</div>
+                    <div class="gm-row"><label class="title">🛑 Desactivar Chequeo de Red (Anti-Lag)</label>${toggle('i-nocheck', config.disableNetworkCheck)}</div>
+                    <div class="gm-row"><label class="title">📺 Modo Smart TV (UI Grande)</label>${toggle('i-tv', config.smartTvMode)}</div>
+                    <div class="gm-row"><label class="title">🖱️ Ocultar Ratón Inactivo (2s)</label>${toggle('i-hms', config.hideIdleMouse)}</div>
+                    <div class="gm-row"><label class="title">👆 Swipe Táctil (Desliza para ocultar UI)</label>${toggle('i-swp', config.touchSlideHide)}</div>
+                    <div class="gm-row"><label class="title">🎮 Ocultar Táctil si hay Mando Físico</label>${toggle('i-htc', config.autoHideTouch)}</div>
+                    <div class="gm-row"><label class="title">🚀 Skip Splash (Omitir Logo Xbox)</label>${toggle('i-spl', config.skipSplash)}</div>
+                    <div class="gm-row"><label class="title">🚫 Bloquear Pop-up de Feedback Final</label>${toggle('i-fdb', config.skipFeedback)}</div>
+                    <div class="gm-row"><label class="title">🛡️ Bloquear Telemetría y Analíticas</label>${toggle('i-anal', config.blockAnalytics)}</div>
+                    <div class="gm-row"><label class="title">🤖 Anti-Kick ("¿Sigues ahí?")</label>${toggle('i-kick', config.antiKick)}</div>
+                    <div class="gm-row"><label class="title">⚡ Desactivar Animaciones CSS</label>${toggle('i-ani', config.disableUIAnim)}</div>
+                    <div class="gm-row"><label class="title">👻 Opacidad de este Menú (<span id="val-menuop">${config.menuOpacity}</span>%)</label><input type="range" id="i-menuop" min="10" max="100" value="${config.menuOpacity}"></div>
 
-                    <div class="bxc-section-title">📊 OSD Ghost HUD (Prioridad #1 Sobre Reescalado)</div>
-                    <div class="bxc-row"><label class="title">🟢 Activar HUD Dinámico (Capa Suprema en Stream)</label>${toggle('i-stats', config.showStats)}</div>
-                    <div class="bxc-row">
+                    <div class="gm-section-title">📊 OSD Ghost HUD (Prioridad #1 Sobre Reescalado)</div>
+                    <div class="gm-row"><label class="title">🟢 Activar HUD Dinámico (Capa Suprema en Stream)</label>${toggle('i-stats', config.showStats)}</div>
+                    <div class="gm-row">
                         <label class="title">📋 Diseño del HUD</label>
                         <select id="i-osdlayout">
                             <option value="horizontal" ${config.osdLayout === 'horizontal' ? 'selected' : ''}>Barra Horizontal (Fija en Línea)</option>
                             <option value="vertical" ${config.osdLayout === 'vertical' ? 'selected' : ''}>Lista Vertical</option>
                         </select>
                     </div>
-                    <div class="bxc-row">
+                    <div class="gm-row">
                         <label class="title">📌 Posición</label>
                         <select id="i-statspos">
                             <option value="top-left" ${config.statsPosition === 'top-left' ? 'selected' : ''}>Arriba Izq.</option>
@@ -1012,10 +1012,10 @@
                             <option value="bottom-right" ${config.statsPosition === 'bottom-right' ? 'selected' : ''}>Abajo Der.</option>
                         </select>
                     </div>
-                    <div class="bxc-row"><label class="title">👻 Opacidad HUD (<span id="val-statsop">${config.statsOpacity}</span>%)</label><input type="range" id="i-statsop" min="10" max="100" value="${config.statsOpacity}"></div>
+                    <div class="gm-row"><label class="title">👻 Opacidad HUD (<span id="val-statsop">${config.statsOpacity}</span>%)</label><input type="range" id="i-statsop" min="10" max="100" value="${config.statsOpacity}"></div>
                     
-                    <div class="bxc-section-title">🔍 Métricas Expandidas OSD</div>
-                    <div class="btxcl-grid">
+                    <div class="gm-section-title">🔍 Métricas Expandidas OSD</div>
+                    <div class="gm-grid">
                         <label><input type="checkbox" id="osd-time" ${config.osdTime ? 'checked' : ''}> ⏱️ Reloj</label>
                         <label><input type="checkbox" id="osd-play" ${config.osdPlay ? 'checked' : ''}> ⏳ T. Jugado</label>
                         <label><input type="checkbox" id="osd-batt" ${config.osdBatt ? 'checked' : ''}> 🔋 Batería</label>
@@ -1033,11 +1033,11 @@
                     </div>
                 </div>
 
-                <div class="bxc-footer">
-                    <button class="bxc-btn btn-ai" id="btn-copilot-footer">⚡ COPILOTO IA</button>
-                    <button class="bxc-btn btn-ai" id="btn-opt-footer" style="background: #1565C0; border-color: #1E88E5;">🚀 OPTIMIZAR JUEGO</button>
-                    <button class="bxc-btn btn-save" id="btn-save">💾 GUARDAR Y APLICAR</button>
-                    <button class="bxc-btn btn-close" id="btn-close">❌ CERRAR</button>
+                <div class="gm-footer">
+                    <button class="gm-btn btn-ai" id="btn-copilot-footer">⚡ COPILOTO IA</button>
+                    <button class="gm-btn btn-ai" id="btn-opt-footer" style="background: #1565C0; border-color: #1E88E5;">🚀 OPTIMIZAR JUEGO</button>
+                    <button class="gm-btn btn-save" id="btn-save">💾 GUARDAR Y APLICAR</button>
+                    <button class="gm-btn btn-close" id="btn-close">❌ CERRAR</button>
                 </div>
             </div>
         `;
@@ -1127,8 +1127,8 @@
         });
         if (config.hdrMode !== 'off') warnHdr.style.display = 'block';
 
-        const panel = document.getElementById('bxc-panel');
-        const dragHandle = document.getElementById('bxc-drag-handle');
+        const panel = document.getElementById('gm-panel');
+        const dragHandle = document.getElementById('gm-drag-handle');
         let isDraggingPanel = false, panelOffsetX = 0, panelOffsetY = 0;
 
         dragHandle.addEventListener('pointerdown', (e) => {
@@ -1175,10 +1175,10 @@
         filterSelect('search-ip', 'i-ip');
         filterSelect('search-srv', 'i-srv');
 
-        document.querySelectorAll('.bxc-tab').forEach(t => {
+        document.querySelectorAll('.gm-tab').forEach(t => {
             t.addEventListener('click', (e) => {
-                document.querySelectorAll('.bxc-tab').forEach(b => b.classList.remove('active'));
-                document.querySelectorAll('.bxc-content').forEach(c => c.classList.remove('active'));
+                document.querySelectorAll('.gm-tab').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.gm-content').forEach(c => c.classList.remove('active'));
                 e.target.classList.add('active');
                 document.getElementById(e.target.dataset.target).classList.add('active');
             });
@@ -1197,12 +1197,12 @@
                     if (valEl) valEl.innerText = e.target.value;
 
                     if (id === 'menuop') {
-                        document.getElementById('bxc-panel').style.opacity = e.target.value / 100;
+                        document.getElementById('gm-panel').style.opacity = e.target.value / 100;
                         const btn = document.getElementById('mjs-header-btn');
                         if (btn) btn.style.opacity = e.target.value / 100;
                     }
                     if (id === 'statsop') {
-                        const hud = document.getElementById('bxc-hud');
+                        const hud = document.getElementById('gm-hud');
                         if (hud) hud.style.opacity = e.target.value / 100;
                     }
                     if (['bri', 'con', 'sat', 'sha'].includes(id)) {
@@ -1652,7 +1652,7 @@
             initStats();
             ensureHudOnTopOfStream();
 
-            xflyEngine.initStreamEngine(this);
+            gmEngine.initStreamEngine(this);
 
             // Sincronización de pistas A/V (combineAV) cuando se reciben los tracks remotos
             if (config.combineAV) {
@@ -1682,7 +1682,7 @@
                 } else if (wasInGameSession && (this.connectionState === 'closed' || this.connectionState === 'disconnected' || this.connectionState === 'failed')) {
                     wasInGameSession = false;
                     GodModeNativeBridge.setPointerCapture(false);
-                    const hud = document.getElementById('bxc-hud');
+                    const hud = document.getElementById('gm-hud');
                     if (hud) hud.style.display = 'none';
                     runPostGameCacheDetox(false);
                 }
@@ -1817,31 +1817,31 @@
     window.applyVideoFilters = function () {
         ensureHudOnTopOfStream();
 
-        let svgContainer = document.getElementById('bxc-svg-filters-container');
+        let svgContainer = document.getElementById('gm-svg-filters-container');
         if (!svgContainer) {
             svgContainer = document.createElement('div');
-            svgContainer.id = 'bxc-svg-filters-container';
+            svgContainer.id = 'gm-svg-filters-container';
             svgContainer.style.display = 'none';
             svgContainer.innerHTML = `
                 <svg xmlns="http://www.w3.org/2000/svg">
                     <defs>
                         <!-- 1. Clásico USM / AMD CAS -->
-                        <filter id="bxc-filter-cas" color-interpolation-filters="sRGB">
-                            <feConvolveMatrix id="bxc-matrix-cas" order="3" preserveAlpha="true" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0" />
+                        <filter id="gm-filter-cas" color-interpolation-filters="sRGB">
+                            <feConvolveMatrix id="gm-matrix-cas" order="3" preserveAlpha="true" kernelMatrix="0 -1 0 -1 5 -1 0 -1 0" />
                         </filter>
 
                         <!-- 2. Real-ESRGAN (SRVGG Compact): Micro-Denoise + Reconstrucción de Bordes Simétrica -->
-                        <filter id="bxc-filter-esrgan-srvgg" color-interpolation-filters="sRGB">
+                        <filter id="gm-filter-esrgan-srvgg" color-interpolation-filters="sRGB">
                             <feGaussianBlur in="SourceGraphic" stdDeviation="0.35" result="denoise" />
                             <feComposite in="SourceGraphic" in2="denoise" operator="arithmetic" k1="0" k2="0.75" k3="0.25" result="cleanBase" />
-                            <feConvolveMatrix id="bxc-matrix-srvgg" in="cleanBase" order="3" preserveAlpha="true" kernelMatrix="-0.15 -0.35 -0.15 -0.35 3.0 -0.35 -0.15 -0.35 -0.15" />
+                            <feConvolveMatrix id="gm-matrix-srvgg" in="cleanBase" order="3" preserveAlpha="true" kernelMatrix="-0.15 -0.35 -0.15 -0.35 3.0 -0.35 -0.15 -0.35 -0.15" />
                         </filter>
 
                         <!-- 3. Real-ESRGAN (AnimeVideo): Delineado Fuerte + Limpieza Cel-Shading -->
-                        <filter id="bxc-filter-esrgan-anime" color-interpolation-filters="sRGB">
+                        <filter id="gm-filter-esrgan-anime" color-interpolation-filters="sRGB">
                             <feGaussianBlur in="SourceGraphic" stdDeviation="0.45" result="flatSmooth" />
                             <feComposite in="SourceGraphic" in2="flatSmooth" operator="arithmetic" k1="0" k2="0.65" k3="0.35" result="celBase" />
-                            <feConvolveMatrix id="bxc-matrix-anime" in="celBase" order="3" preserveAlpha="true" kernelMatrix="-0.25 -0.5 -0.25 -0.5 4.0 -0.5 -0.25 -0.5 -0.25" result="sharpCel" />
+                            <feConvolveMatrix id="gm-matrix-anime" in="celBase" order="3" preserveAlpha="true" kernelMatrix="-0.25 -0.5 -0.25 -0.5 4.0 -0.5 -0.25 -0.5 -0.25" result="sharpCel" />
                             <feComponentTransfer in="sharpCel">
                                 <feFuncR type="linear" slope="1.04" intercept="-0.02"/>
                                 <feFuncG type="linear" slope="1.04" intercept="-0.02"/>
@@ -1850,12 +1850,12 @@
                         </filter>
 
                         <!-- 4. SeedVR2 Detail Enhancer: Nitidez Fina Diagonal -->
-                        <filter id="bxc-filter-seedvr2" color-interpolation-filters="sRGB">
-                            <feConvolveMatrix id="bxc-matrix-seedvr2" order="3" preserveAlpha="true" kernelMatrix="-0.1 -0.2 -0.1 -0.2 2.2 -0.2 -0.1 -0.2 -0.1" />
+                        <filter id="gm-filter-seedvr2" color-interpolation-filters="sRGB">
+                            <feConvolveMatrix id="gm-matrix-seedvr2" order="3" preserveAlpha="true" kernelMatrix="-0.1 -0.2 -0.1 -0.2 2.2 -0.2 -0.1 -0.2 -0.1" />
                         </filter>
 
                         <!-- 5. SeedVR2 Color Fix (Estabilización de Rango Luminancia/Croma) -->
-                        <filter id="bxc-filter-seedvr-colorfix" color-interpolation-filters="sRGB">
+                        <filter id="gm-filter-seedvr-colorfix" color-interpolation-filters="sRGB">
                             <feColorMatrix type="matrix" values="
                                 1.06 -0.03 -0.03 0 0.005
                                 -0.02 1.05 -0.03 0 0.005
@@ -1885,38 +1885,38 @@
                 const diag = (-0.04 * (s / 4)).toFixed(3);
                 const adj = (-0.12 * (s / 4)).toFixed(3);
                 const cent = (1 + (-4 * parseFloat(diag)) + (-4 * parseFloat(adj))).toFixed(3);
-                const mat = document.getElementById('bxc-matrix-srvgg');
+                const mat = document.getElementById('gm-matrix-srvgg');
                 if (mat) mat.setAttribute('kernelMatrix', `${diag} ${adj} ${diag} ${adj} ${cent} ${adj} ${diag} ${adj} ${diag}`);
-                filters.push('url(#bxc-filter-esrgan-srvgg)');
+                filters.push('url(#gm-filter-esrgan-srvgg)');
             } else if (config.fsrCasMode === 'esrgan_anime') {
                 const diag = (-0.06 * (s / 4)).toFixed(3);
                 const adj = (-0.18 * (s / 4)).toFixed(3);
                 const cent = (1 + (-4 * parseFloat(diag)) + (-4 * parseFloat(adj))).toFixed(3);
-                const mat = document.getElementById('bxc-matrix-anime');
+                const mat = document.getElementById('gm-matrix-anime');
                 if (mat) mat.setAttribute('kernelMatrix', `${diag} ${adj} ${diag} ${adj} ${cent} ${adj} ${diag} ${adj} ${diag}`);
-                filters.push('url(#bxc-filter-esrgan-anime)');
+                filters.push('url(#gm-filter-esrgan-anime)');
             } else if (config.fsrCasMode === 'seedvr2') {
                 const diag = (-0.03 * (s / 4)).toFixed(3);
                 const adj = (-0.09 * (s / 4)).toFixed(3);
                 const cent = (1 + (-4 * parseFloat(diag)) + (-4 * parseFloat(adj))).toFixed(3);
-                const mat = document.getElementById('bxc-matrix-seedvr2');
+                const mat = document.getElementById('gm-matrix-seedvr2');
                 if (mat) mat.setAttribute('kernelMatrix', `${diag} ${adj} ${diag} ${adj} ${cent} ${adj} ${diag} ${adj} ${diag}`);
-                filters.push('url(#bxc-filter-seedvr2)');
+                filters.push('url(#gm-filter-seedvr2)');
             } else if (config.fsrCasMode === 'cas') {
                 let center = (7 - (s / 2 - 1) * 0.5).toFixed(1);
-                const mat = document.getElementById('bxc-matrix-cas');
+                const mat = document.getElementById('gm-matrix-cas');
                 if (mat) mat.setAttribute('kernelMatrix', `-0.125 -0.125 -0.125 -0.125 ${parseFloat(center) * 0.8} -0.125 -0.125 -0.125 -0.125`);
-                filters.push('url(#bxc-filter-cas)');
+                filters.push('url(#gm-filter-cas)');
             } else {
                 let center = (7 - (s / 2 - 1) * 0.5).toFixed(1);
-                const mat = document.getElementById('bxc-matrix-cas');
+                const mat = document.getElementById('gm-matrix-cas');
                 if (mat) mat.setAttribute('kernelMatrix', `0 -1 0 -1 ${center} -1 0 -1 0`);
-                filters.push('url(#bxc-filter-cas)');
+                filters.push('url(#gm-filter-cas)');
             }
         }
 
         if (config.seedvrColorFix) {
-            filters.push('url(#bxc-filter-seedvr-colorfix)');
+            filters.push('url(#gm-filter-seedvr-colorfix)');
         }
 
         if (!isHdrSupported && config.hdrMode !== 'off') {
@@ -2060,8 +2060,8 @@
                     if (stat.totalDecodeTime && stat.framesDecoded) dt = (stat.totalDecodeTime / stat.framesDecoded) * 1000;
                     if (stat.bytesReceived) {
                         dl = (stat.bytesReceived / 1048576).toFixed(1);
-                        if (window._bxcLastBytes) bitrate = ((stat.bytesReceived - window._bxcLastBytes) * 8) / ((now - window._bxcLastTime) * 1000);
-                        window._bxcLastBytes = stat.bytesReceived; window._bxcLastTime = now;
+                        if (window._gmLastBytes) bitrate = ((stat.bytesReceived - window._gmLastBytes) * 8) / ((now - window._gmLastTime) * 1000);
+                        window._gmLastBytes = stat.bytesReceived; window._gmLastTime = now;
                     }
                 }
                 if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
@@ -2140,7 +2140,7 @@
                     if (!streamVideo && (!peerConnection || peerConnection.connectionState !== 'connected')) {
                         wasInGameSession = false;
                         GodModeNativeBridge.setPointerCapture(false);
-                        const hud = document.getElementById('bxc-hud');
+                        const hud = document.getElementById('gm-hud');
                         if (hud) hud.style.display = 'none';
                         runPostGameCacheDetox(false);
                     }
@@ -2169,7 +2169,7 @@
 
                     hudBtn.onclick = (e) => {
                         e.preventDefault();
-                        const ov = document.getElementById('bxc-overlay');
+                        const ov = document.getElementById('gm-overlay');
                         if (ov) ov.style.display = 'flex';
                         const backButton = document.querySelector('button[class^="StreamMenu-module__backButton"]');
                         if (backButton) backButton.click();
@@ -2354,7 +2354,7 @@
         };
 
         window.addEventListener('keydown', (e) => {
-            if (document.getElementById('bxc-overlay')?.style.display === 'flex') return;
+            if (document.getElementById('gm-overlay')?.style.display === 'flex') return;
             const m = keyMap[e.code];
             if (m) {
                 virtualPadState.active = true;
@@ -2380,7 +2380,7 @@
         });
 
         window.addEventListener('mousedown', (e) => {
-            if (document.getElementById('bxc-overlay')?.style.display === 'flex') return;
+            if (document.getElementById('gm-overlay')?.style.display === 'flex') return;
             if (e.button === 0) virtualPadState.buttons[7] = { pressed: true, touched: true, value: 1.0 };
             if (e.button === 2) virtualPadState.buttons[6] = { pressed: true, touched: true, value: 1.0 };
         });
@@ -2485,21 +2485,21 @@
         }
     }
 
-    // Navegación espacial en el panel #bxc-panel para Android TV, Mandos y LG webOS
+    // Navegación espacial en el panel #gm-panel para Android TV, Mandos y LG webOS
     let currentFocusIdx = 0;
     function getFocusablePanelElements() {
-        const overlay = document.getElementById('bxc-overlay');
+        const overlay = document.getElementById('gm-overlay');
         if (!overlay || overlay.style.display !== 'flex') return [];
-        const activeContent = overlay.querySelector('.bxc-content.active');
-        const tabs = Array.from(overlay.querySelectorAll('.bxc-tab'));
+        const activeContent = overlay.querySelector('.gm-content.active');
+        const tabs = Array.from(overlay.querySelectorAll('.gm-tab'));
         const controls = activeContent ? Array.from(activeContent.querySelectorAll('select, input, button')) : [];
-        const footerBtns = Array.from(overlay.querySelectorAll('.bxc-footer button'));
+        const footerBtns = Array.from(overlay.querySelectorAll('.gm-footer button'));
         return [...tabs, ...controls, ...footerBtns].filter(el => el.offsetParent !== null && !el.disabled);
     }
 
     function highlightFocusedElement(elements, idx) {
         elements.forEach((el, i) => {
-            const row = el.closest('.bxc-row');
+            const row = el.closest('.gm-row');
             if (i === idx) {
                 el.focus();
                 if (row) {
@@ -2513,7 +2513,7 @@
     }
 
     window.addEventListener('keydown', (e) => {
-        const overlay = document.getElementById('bxc-overlay');
+        const overlay = document.getElementById('gm-overlay');
         const isPanelOpen = overlay && overlay.style.display === 'flex';
 
         if (e.key === 'F8' || e.keyCode === 405 || e.keyCode === 406) {

@@ -50,14 +50,14 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
         val xHomeRegionUri: String,
         val xCloudGsToken: String,
         val xCloudRegionUri: String,
-        val gamerpic: String = ""
+        val gamerpic: String = "",
+        val webXstsTokenFull: JSONObject? = null // Store full object for UHS
     )
 
     /**
      * Inicia flujo de Device Code (Microsoft OAuth2 Connect)
-     * No requiere DeviceToken ni SISU (Evita el 403 Forbidden).
      */
-    suspend fun startDeviceCodeFlow(): PendingAuthContext = withContext(Dispatchers.IO) {
+    suspend fun initDeviceLogin(): PendingAuthContext = withContext(Dispatchers.IO) {
         val formBody = FormBody.Builder()
             .add("client_id", CLIENT_ID)
             .add("scope", "service::user.auth.xboxlive.com::MBI_SSL offline_access")
@@ -70,7 +70,7 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             .build()
 
         okHttpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw Exception("Device Code Init HTTP ${response.code}")
+            if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
             val json = JSONObject(response.body?.string() ?: "")
             return@withContext PendingAuthContext(
                 userCode = json.getString("user_code"),
@@ -83,9 +83,9 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
     }
 
     /**
-     * Poll por el token del flujo Device Code
+     * Comprueba el estado del login por código de dispositivo
      */
-    suspend fun pollDeviceCode(deviceCode: String): JSONObject? = withContext(Dispatchers.IO) {
+    suspend fun checkLoginStatus(deviceCode: String): JSONObject? = withContext(Dispatchers.IO) {
         val formBody = FormBody.Builder()
             .add("client_id", CLIENT_ID)
             .add("device_code", deviceCode)
@@ -105,14 +105,14 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             val error = json?.optString("error")
             if (error == "authorization_pending") return@withContext null
             
-            throw Exception("Error polling device code: $error")
+            throw Exception("Status: $error")
         }
     }
 
     /**
-     * Flujo PKCE Directo (Alternative)
+     * Inicia flujo PKCE (WebView)
      */
-    suspend fun startPkceFlow(): PendingAuthContext = withContext(Dispatchers.IO) {
+    suspend fun initWebLogin(): PendingAuthContext = withContext(Dispatchers.IO) {
         val verifierBytes = ByteArray(32)
         SecureRandom().nextBytes(verifierBytes)
         val codeVerifier = base64UrlEncode(verifierBytes)
@@ -144,32 +144,29 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
     }
 
     /**
-     * Finaliza el flujo de gaming canjeando los tokens de MSA por tokens de Xbox.
+     * Finaliza la autenticación y prepara la sesión de juego
      */
-    suspend fun finalizeGamingSession(msaTokens: JSONObject): XboxReadySession = withContext(Dispatchers.IO) {
+    suspend fun completeAuth(msaTokens: JSONObject): XboxReadySession = withContext(Dispatchers.IO) {
         val msaAccessToken = msaTokens.getString("access_token")
         val msaRefreshToken = msaTokens.optString("refresh_token", "")
 
-        // 1. Canjear token MSA por UserToken de Xbox Live (RPS Directo)
-        val userToken = exchangeMsaForXboxUserToken(msaAccessToken)
+        // 1. Canje directo MSA -> Xbox UserToken
+        val userToken = msaToXbox(msaAccessToken)
 
-        // 2. Obtener Perfil y Gamertag (Requerido para handshake)
-        val webXstsData = authorizeXsts(userToken, "http://xboxlive.com")
+        // 2. Handshake XSTS
+        val webXstsData = getXsts(userToken, "http://xboxlive.com")
         val webXstsToken = webXstsData.getString("Token")
         val xui = webXstsData.optJSONObject("DisplayClaims")?.optJSONArray("xui")?.optJSONObject(0)
         val uhs = xui?.optString("uhs", "") ?: ""
         val gamertag = xui?.optString("gtg", "Spartan") ?: "Spartan"
 
-        // 4. Obtener Perfil (Gamerpic)
-        val gamerpic = try {
-            fetchGamerpic(uhs, webXstsToken)
-        } catch (_: Exception) { "" }
+        val gamerpic = try { fetchGamerpic(uhs, webXstsToken) } catch (_: Exception) { "" }
 
-        // 5. Obtener token para Streaming (GSSV)
-        val gssvToken = authorizeXsts(userToken, "http://gssv.xboxlive.com/").getString("Token")
+        // 3. Tokens GSSV (Streaming)
+        val gssvToken = getXsts(userToken, "http://gssv.xboxlive.com/").getString("Token")
 
-        // 6. Iniciar sesión en Servidores de Streaming
-        val xCloudLogin = loginToGssv(
+        // 4. Login Regional
+        val xCloudLogin = gssvLogin(
             "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user",
             "xgpuweb",
             gssvToken
@@ -184,7 +181,8 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             xHomeRegionUri = xCloudLogin.second,
             xCloudGsToken = xCloudLogin.first,
             xCloudRegionUri = xCloudLogin.second,
-            gamerpic = gamerpic
+            gamerpic = gamerpic,
+            webXstsTokenFull = webXstsData
         )
     }
 
@@ -217,9 +215,9 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
     }
 
     /**
-     * Canjea el código PKCE obtenido en el WebView
+     * Canjea el código PKCE
      */
-    suspend fun exchangePkceCode(code: String, verifier: String): JSONObject = withContext(Dispatchers.IO) {
+    suspend fun tokenExchange(code: String, verifier: String): JSONObject = withContext(Dispatchers.IO) {
         val formBody = FormBody.Builder()
             .add("client_id", CLIENT_ID)
             .add("code", code)
@@ -236,23 +234,21 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
 
         okHttpClient.newCall(request).execute().use { response ->
             val body = response.body?.string() ?: ""
-            if (!response.isSuccessful) throw Exception("Error exchange PKCE code: $body")
+            if (!response.isSuccessful) throw Exception("Exchange Failed: $body")
             return@withContext JSONObject(body)
         }
     }
 
-    private suspend fun exchangeMsaForXboxUserToken(msaAccessToken: String): String = withContext(Dispatchers.IO) {
+    private suspend fun msaToXbox(msaAccessToken: String): String = withContext(Dispatchers.IO) {
         val endpoint = "https://user.auth.xboxlive.com/user/authenticate"
         val mediaType = "application/json".toMediaType()
 
-        // Probamos con t= como prefijo para RPS ticket
         val payload = JSONObject().apply {
-            val props = JSONObject().apply {
+            put("Properties", JSONObject().apply {
                 put("AuthMethod", "RPS")
                 put("SiteName", "user.auth.xboxlive.com")
                 put("RpsTicket", "t=$msaAccessToken")
-            }
-            put("Properties", props)
+            })
             put("RelyingParty", "http://auth.xboxlive.com")
             put("TokenType", "JWT")
         }
@@ -266,12 +262,12 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
 
         okHttpClient.newCall(request).execute().use { response ->
             val body = response.body?.string() ?: ""
-            if (!response.isSuccessful) throw Exception("Xbox User Auth Failed: $body")
+            if (!response.isSuccessful) throw Exception("User Auth Failed: $body")
             return@withContext JSONObject(body).getString("Token")
         }
     }
 
-    private suspend fun authorizeXsts(userToken: String, relyingParty: String): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun getXsts(userToken: String, relyingParty: String): JSONObject = withContext(Dispatchers.IO) {
         val endpoint = "https://xsts.auth.xboxlive.com/xsts/authorize"
         val mediaType = "application/json".toMediaType()
         val payload = JSONObject().apply {
@@ -292,12 +288,12 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
 
         okHttpClient.newCall(req).execute().use { response ->
             val body = response.body?.string() ?: ""
-            if (!response.isSuccessful) throw Exception("XSTS Authorize ($relyingParty) Failed: $body")
+            if (!response.isSuccessful) throw Exception("XSTS ($relyingParty) Failed: $body")
             return@withContext JSONObject(body)
         }
     }
 
-    private suspend fun loginToGssv(endpoint: String, offeringId: String, xstsToken: String): Pair<String, String> = withContext(Dispatchers.IO) {
+    private suspend fun gssvLogin(endpoint: String, offeringId: String, xstsToken: String): Pair<String, String> = withContext(Dispatchers.IO) {
         val mediaType = "application/json".toMediaType()
         val payload = JSONObject().apply {
             put("token", xstsToken)
@@ -367,6 +363,107 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
     fun extractAuthCode(input: String): String {
         val match = Regex("""[?&]code=([^&#\s]+)""").find(input)
         return if (match != null) URLDecoder.decode(match.groupValues[1], "UTF-8") else input.trim()
+    }
+
+    /**
+     * 2.1 Get Console
+     */
+    suspend fun getConsoles(uhs: String, webToken: String): JSONObject = withContext(Dispatchers.IO) {
+        val url = "https://xccs.xboxlive.com/lists/devices?queryCurrentDevice=false&includeStorageDevices=true"
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "XBL3.0 x=$uhs;$webToken")
+            .addHeader("Accept-Language", "en-US")
+            .addHeader("x-xbl-contract-version", "2")
+            .addHeader("x-xbl-client-name", "XboxApp")
+            .addHeader("x-xbl-client-type", "UWA")
+            .addHeader("x-xbl-client-version", "39.39.22001.0")
+            .get()
+            .build()
+
+        okHttpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) throw Exception("Get Consoles Failed: $body")
+            return@withContext JSONObject(body)
+        }
+    }
+
+    /**
+     * 2.4 Get All XGPU Cloud Games
+     */
+    suspend fun getCloudTitles(gsToken: String, regionUri: String): JSONObject = withContext(Dispatchers.IO) {
+        val baseUrl = regionUri.removeSuffix("/")
+        val url = "$baseUrl/v2/titles"
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Content-Type", "application/json")
+            .addHeader("Authorization", "Bearer $gsToken")
+            .get()
+            .build()
+
+        okHttpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) throw Exception("Get Cloud Titles Failed: $body")
+            return@withContext JSONObject(body)
+        }
+    }
+
+    /**
+     * 2.7 Get MRU Titles
+     */
+    suspend fun getMruTitles(gsToken: String, regionUri: String): JSONObject = withContext(Dispatchers.IO) {
+        val baseUrl = regionUri.removeSuffix("/")
+        val url = "$baseUrl/v2/titles/mru?mr=25"
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Content-Type", "application/json")
+            .addHeader("Authorization", "Bearer $gsToken")
+            .get()
+            .build()
+
+        okHttpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) throw Exception("Get MRU Titles Failed: $body")
+            return@withContext JSONObject(body)
+        }
+    }
+
+    /**
+     * 2.5 Get Cloud Game Details
+     */
+    suspend fun getCloudTitleDetails(productIds: List<String>): JSONObject = withContext(Dispatchers.IO) {
+        val url = "https://catalog.gamepass.com/v3/products?market=US&language=en-US&hydration=RemoteHighSapphire0"
+        val payload = JSONObject().apply {
+            put("Products", JSONArray(productIds))
+        }
+        val mediaType = "application/json".toMediaType()
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Content-Type", "application/json")
+            .addHeader("ms-cv", "0")
+            .addHeader("calling-app-name", "Xbox Cloud Gaming Web")
+            .addHeader("calling-app-version", "21.0.0")
+            .post(payload.toString().toRequestBody(mediaType))
+            .build()
+
+        okHttpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) throw Exception("Get Product Details Failed: $body")
+            return@withContext JSONObject(body)
+        }
+    }
+
+    /**
+     * 2.6 Get newly added cloud games
+     */
+    suspend fun getRecentlyAddedTitles(): JSONArray = withContext(Dispatchers.IO) {
+        val url = "https://catalog.gamepass.com/sigls/v2?id=f13cf6b4-57e6-4459-89df-6aec18cf0538&market=US&language=en-US"
+        val request = Request.Builder().url(url).get().build()
+        okHttpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string() ?: "[]"
+            if (!response.isSuccessful) return@withContext JSONArray()
+            return@withContext JSONArray(body)
+        }
     }
 
     private fun base64UrlEncode(bytes: ByteArray): String {

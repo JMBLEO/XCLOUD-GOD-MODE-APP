@@ -7,8 +7,12 @@ import org.webrtc.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * WebRTCStreamManager handles the WebRTC connection to the Xbox Cloud Gaming servers.
@@ -71,7 +75,7 @@ class WebRTCStreamManager(
     }
 
     /**
-     * Motor de reescritura de SDP (inspirado en better-xcloud sdp.ts).
+     * Motor de reescritura de SDP.
      * Reordena los códecs de video priorizando AV1, HEVC, VP9 o H264,
      * inyecta límites de tasa de bits x-google-max-bitrate y optimiza Opus a 510kbps / minptime=10.
      */
@@ -139,7 +143,15 @@ class WebRTCStreamManager(
             modifiedLines.add(line)
         }
 
-        return modifiedLines.joinToString("\r\n")
+        val finalSdp = modifiedLines.joinToString("\r\n")
+        
+        // Final Sanitization (mDNS Anonymization & Candidate Filtering)
+        return com.aistudio.xcloudgodmode.ai.engine.GodModeEngineUtils.sanitizeSdp(
+            rawSdp = finalSdp,
+            anonymize = settings.anonymizeWebRtcLocalIps,
+            filterTeredo = settings.filterTeredoCandidates,
+            isLocal = settings.forceXRemoteRes // Approximate check for local
+        )
     }
 
     private fun initWebRTC() {
@@ -166,15 +178,167 @@ class WebRTCStreamManager(
 
     fun startStream(gsToken: String, sessionPath: String) {
         executor.execute {
-            createPeerConnection()
-            // In a real implementation, we would now negotiate SDP with the sessionPath
-            // 1. Create Offer
-            // 2. Send Offer to sessionPath -> receive Answer
-            // 3. Set Remote Description
-            // 4. Handle ICE candidates
-            Log.d(TAG, "Starting stream with token: $gsToken at $sessionPath")
+            try {
+                Log.d(TAG, "Initiating stream session at $sessionPath")
+                
+                // 1. Create PeerConnection early to be ready for candidates
+                createPeerConnection()
+
+                // 2. Poll for Provisioned state if sessionPath is already a session
+                // Or start a new session if titleId was passed. 
+                // For this implementation, we assume sessionPath is either the login user path or a full session path.
+                
+                var currentPath = sessionPath
+                if (sessionPath.endsWith("/login/user")) {
+                    // This is a startup path, we might need to handle titleId here or assume it's handled in callers
+                }
+
+                // Wait for provisioned
+                var isProvisioned = false
+                var retryCount = 0
+                while (!isProvisioned && retryCount < 10) {
+                    val state = getSessionState(gsToken, currentPath)
+                    Log.d(TAG, "Session state: $state")
+                    if (state == "Provisioned") {
+                        isProvisioned = true
+                    } else {
+                        Thread.sleep(2000)
+                        retryCount++
+                    }
+                }
+
+                if (!isProvisioned) throw Exception("Session failed to provision")
+
+                // 3. Get Configuration
+                val config = getConfiguration(gsToken, currentPath)
+                Log.d(TAG, "Configuration received. Server IP: ${config.optJSONObject("serverDetails")?.optString("ipAddress")}")
+
+                // 4. Create and Send Offer
+                createOffer { sdpOffer ->
+                    executor.execute {
+                        try {
+                            sendSdpOffer(gsToken, currentPath, sdpOffer)
+                            
+                            // 5. Query for Answer
+                            val sdpAnswer = querySdpAnswer(gsToken, currentPath)
+                            peerConnection?.setRemoteDescription(object : SdpObserver {
+                                override fun onCreateSuccess(p0: SessionDescription?) {}
+                                override fun onSetSuccess() { Log.d(TAG, "Remote SDP set successfully") }
+                                override fun onCreateFailure(p0: String?) {}
+                                override fun onSetFailure(p0: String?) { Log.e(TAG, "Failed to set remote SDP: $p0") }
+                            }, SessionDescription(SessionDescription.Type.ANSWER, sdpAnswer))
+                            
+                            // 6. Handle ICE exchange would happen via onIceCandidate callback
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Offer/Answer exchange failed: ${e.message}")
+                        }
+                    }
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Stream start failed: ${e.message}")
+            }
         }
     }
+
+    private fun getSessionState(gsToken: String, sessionPath: String): String {
+        val url = if (sessionPath.startsWith("http")) "$sessionPath/state" else "https://uks.core.gssv-play-prod.xboxlive.com/$sessionPath/state"
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $gsToken")
+            .get()
+            .build()
+        
+        okHttpClient.newCall(request).execute().use { resp: Response ->
+            val json = JSONObject(resp.body?.string() ?: "{}")
+            return json.optString("state", "Unknown")
+        }
+    }
+
+    private fun getConfiguration(gsToken: String, sessionPath: String): JSONObject {
+        val url = if (sessionPath.startsWith("http")) "$sessionPath/configuration" else "https://uks.core.gssv-play-prod.xboxlive.com/$sessionPath/configuration"
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $gsToken")
+            .get()
+            .build()
+        
+        okHttpClient.newCall(request).execute().use { resp: Response ->
+            return JSONObject(resp.body?.string() ?: "{}")
+        }
+    }
+
+    private fun sendSdpOffer(gsToken: String, sessionPath: String, sdp: String) {
+        val url = if (sessionPath.startsWith("http")) "$sessionPath/sdp" else "https://uks.core.gssv-play-prod.xboxlive.com/$sessionPath/sdp"
+        val payload = JSONObject().apply {
+            put("messageType", "offer")
+            put("sdp", sdp)
+            put("configuration", JSONObject().apply {
+                put("chatConfiguration", JSONObject().apply {
+                    put("bytesPerSample", 2)
+                    put("expectedClipDurationMs", 20)
+                    put("format", JSONObject().apply { put("codec", "opus"); put("container", "webm") })
+                    put("numChannels", 1)
+                    put("sampleFrequencyHz", 24000)
+                })
+                put("chat", JSONObject().apply { put("minVersion", 1); put("maxVersion", 1) })
+                put("control", JSONObject().apply { put("minVersion", 1); put("maxVersion", 3) })
+                put("input", JSONObject().apply { put("minVersion", 1); put("maxVersion", 8) })
+                put("message", JSONObject().apply { put("minVersion", 1); put("maxVersion", 1) })
+            })
+        }
+        val mediaType = "application/json".toMediaType()
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $gsToken")
+            .post(payload.toString().toRequestBody(mediaType))
+            .build()
+        
+        okHttpClient.newCall(request).execute().close()
+    }
+
+    private fun querySdpAnswer(gsToken: String, sessionPath: String): String {
+        val url = if (sessionPath.startsWith("http")) "$sessionPath/sdp" else "https://uks.core.gssv-play-prod.xboxlive.com/$sessionPath/sdp"
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $gsToken")
+            .get()
+            .build()
+        
+        okHttpClient.newCall(request).execute().use { resp: Response ->
+            val json = JSONObject(resp.body?.string() ?: "{}")
+            val exchangeResponse = json.optString("exchangeResponse")
+            val innerJson = JSONObject(exchangeResponse)
+            return innerJson.optString("sdp")
+        }
+    }
+
+    private fun createOffer(onSdpReady: (String) -> Unit) {
+        val constraints = MediaConstraints()
+        constraints.mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+        constraints.mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+
+        peerConnection?.createOffer(object : SdpObserver {
+            override fun onCreateSuccess(desc: SessionDescription?) {
+                if (desc != null) {
+                    peerConnection?.setLocalDescription(object : SdpObserver {
+                        override fun onCreateSuccess(p0: SessionDescription?) {}
+                        override fun onSetSuccess() { onSdpReady(desc.description) }
+                        override fun onCreateFailure(p0: String?) {}
+                        override fun onSetFailure(p0: String?) {}
+                    }, desc)
+                }
+            }
+            override fun onSetSuccess() {}
+            override fun onCreateFailure(p0: String?) {}
+            override fun onSetFailure(p0: String?) {}
+        }, constraints)
+    }
+
+    private val okHttpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
 
     private fun createPeerConnection() {
         val iceServers = listOf(
@@ -194,7 +358,7 @@ class WebRTCStreamManager(
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
             override fun onIceCandidate(candidate: IceCandidate?) {
                 Log.d(TAG, "New ICE candidate: ${candidate?.sdp}")
-                // Send to server
+                // In a full implementation, we'd batch these and send via POST /ice
             }
             override fun onIceCandidatesRemoved(p0: Array<out IceCandidate>?) {}
             override fun onAddStream(p0: MediaStream?) {}

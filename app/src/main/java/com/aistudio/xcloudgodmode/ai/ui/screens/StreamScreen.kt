@@ -30,8 +30,7 @@ fun StreamScreen(
     streamManager: WebRTCStreamManager,
     gsToken: String,
     sessionPath: String,
-    onClose: () -> Unit,
-    onOpenSettings: () -> Unit
+    onClose: () -> Unit
 ) {
     val context = LocalContext.current
     var isHudVisible by remember { mutableStateOf(true) }
@@ -118,7 +117,7 @@ fun StreamScreen(
                 )
                 GameStreamWebView(
                     launchUrl = "https://www.xbox.com/play/launch/forza-horizon-5/9PNLT98ZLR9W",
-                    settings = liveSettings,
+                    appSettings = liveSettings,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -158,14 +157,6 @@ fun StreamScreen(
                 colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.6f))
             ) {
                 Icon(Icons.Default.Info, contentDescription = "Toggle HUD", tint = if (isHudVisible) Color(0xFF107C10) else Color.White)
-            }
-
-            // Full Settings Screen
-            IconButton(
-                onClick = onOpenSettings,
-                colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.6f))
-            ) {
-                Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
             }
 
             // Close Stream with Telemetry Report
@@ -239,7 +230,7 @@ fun StreamScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("Ajustes Rápidos de God Mode", style = MaterialTheme.typography.titleSmall, color = Color.White)
+                    Text("Ajustes de Stream", style = MaterialTheme.typography.titleSmall, color = Color.White)
 
                     // FSR Toggle & Slider
                     Row(
@@ -247,7 +238,7 @@ fun StreamScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("AMD FSR Nitidez:", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                        Text("FSR Sharpness:", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
                         Switch(
                             checked = fsrEnabled,
                             onCheckedChange = { fsrEnabled = it },
@@ -291,7 +282,7 @@ fun StreamScreen(
                     }
 
                     // Volume Boost
-                    Text("Amplificador de Audio (#241): $volumeBoost%", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                    Text("Vol Boost: $volumeBoost%", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
                     Slider(
                         value = volumeBoost.toFloat(),
                         onValueChange = { volumeBoost = it.toInt() },

@@ -20,9 +20,7 @@ import com.aistudio.xcloudgodmode.ai.services.NetworkClient
 import com.aistudio.xcloudgodmode.ai.services.WebRTCStreamManager
 import com.aistudio.xcloudgodmode.ai.services.XboxFullAuthManager
 import com.aistudio.xcloudgodmode.ai.ui.screens.HomeScreen
-import com.aistudio.xcloudgodmode.ai.ui.screens.OptimizationSettingsScreen
 import com.aistudio.xcloudgodmode.ai.ui.screens.StreamScreen
-import com.aistudio.xcloudgodmode.ai.ui.viewmodels.OptimizationViewModel
 
 class MainActivity : ComponentActivity() {
 
@@ -79,9 +77,6 @@ fun MainNavigation(
                     activeGsToken = "demo_console_token"
                     activeSessionPath = "https://ukw.core.gssv-play-prod.xboxlive.com/v2/login/user"
                     navController.navigate("stream")
-                },
-                onOpenOptimization = {
-                    navController.navigate("settings")
                 }
             )
         }
@@ -90,29 +85,7 @@ fun MainNavigation(
                 streamManager = streamManager,
                 gsToken = activeGsToken,
                 sessionPath = activeSessionPath,
-                onClose = { navController.popBackStack() },
-                onOpenSettings = { navController.navigate("settings") }
-            )
-        }
-        composable("settings") {
-            val context = androidx.compose.ui.platform.LocalContext.current
-            val app = context.applicationContext as? android.app.Application
-            val optimizationViewModel: OptimizationViewModel = viewModel(
-                factory = object : androidx.lifecycle.ViewModelProvider.Factory {
-                    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                        @Suppress("UNCHECKED_CAST")
-                        return if (app != null) {
-                            OptimizationViewModel(app, geminiService) as T
-                        } else {
-                            OptimizationViewModel(geminiService) as T
-                        }
-                    }
-                }
-            )
-
-            OptimizationSettingsScreen(
-                viewModel = optimizationViewModel,
-                onBack = { navController.popBackStack() }
+                onClose = { navController.popBackStack() }
             )
         }
     }

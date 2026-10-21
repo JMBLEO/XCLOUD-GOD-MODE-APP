@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -49,7 +50,6 @@ fun HomeScreen(
     authManager: XboxFullAuthManager,
     onLaunchGame: (String, String) -> Unit,
     onLaunchConsole: (String) -> Unit,
-    onOpenOptimization: () -> Unit = {},
     viewModel: HomeViewModel = viewModel()
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -65,6 +65,7 @@ fun HomeScreen(
     val postStreamSummary by viewModel.postStreamSummary.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val chameleonColor by viewModel.chameleonColor.collectAsState()
+    val consoles by viewModel.consoles.collectAsState()
 
     var isBladeOpen by remember { mutableStateOf(false) }
 
@@ -143,7 +144,9 @@ fun HomeScreen(
                             Badge(containerColor = chameleonColor.copy(alpha = 0.2f)) {
                                 Text(
                                     text = deviceType.name,
-                                    style = MaterialTheme.typography.labelSmall,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = MaterialTheme.typography.labelSmall.fontSize * (settings.textScalePercent / 100f)
+                                    ),
                                     color = chameleonColor,
                                     modifier = Modifier.padding(horizontal = 4.dp)
                                 )
@@ -157,18 +160,10 @@ fun HomeScreen(
                         
                         UserAccountHeaderButton(
                             userSession = userSession,
-                            onLoginClick = { viewModel.setAuthModalOpen(true) },
+                            onLoginClick = { viewModel.showAuth(true) },
                             onLogoutClick = { viewModel.logout() },
                             modifier = Modifier.padding(end = 8.dp)
                         )
-                        
-                        IconButton(onClick = onOpenOptimization) {
-                            Icon(
-                                imageVector = Icons.Default.Bolt,
-                                contentDescription = "Optimization Center",
-                                tint = chameleonColor
-                            )
-                        }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black.copy(alpha = 0.6f))
                 )
@@ -269,16 +264,18 @@ fun HomeScreen(
                             0 -> XCloudLibraryTab(
                                 viewModel = viewModel,
                                 columnsCount = columnsCount,
-                                onGameSelected = { game -> viewModel.openGameDetails(game) },
+                                onGameSelected = { game -> viewModel.showDetails(game) },
                                 onLaunchGame = onLaunchGame,
                                 settings = settings,
                                 chameleonColor = chameleonColor
                             )
-                            1 -> ConsolesTab(onLaunchConsole)
+                            1 -> ConsolesTab(
+                                consoles = consoles,
+                                onLaunchConsole = onLaunchConsole
+                            )
                             2 -> AdvancedSettingsTab(
                                 settings = settings,
-                                onSettingsChanged = { viewModel.updateSettings(it) },
-                                onOpenOptimizationCenter = onOpenOptimization
+                                onSettingsChanged = { viewModel.setSettings(it) }
                             )
                         }
                     }
@@ -291,6 +288,9 @@ fun HomeScreen(
             }
         }
 
+            val recommendation by viewModel.recommendation.collectAsState()
+            val isAnalyzing by viewModel.isAnalyzing.collectAsState()
+
             XboxBladeGuide(
                 isOpen = isBladeOpen,
                 onClose = { 
@@ -298,21 +298,25 @@ fun HomeScreen(
                     com.aistudio.xcloudgodmode.ai.audio.PlayStaxBoxNativeSoundEngine.play(com.aistudio.xcloudgodmode.ai.audio.SoundEventType.BLADE_CLOSE)
                 },
                 settings = settings,
-                onSettingsChanged = { viewModel.updateSettings(it) },
+                onSettingsChanged = { viewModel.setSettings(it) },
                 accentColor = chameleonColor,
                 onApplyPreset = { 
-                    viewModel.applyPreset(it) 
+                    viewModel.setPreset(it) 
                     com.aistudio.xcloudgodmode.ai.audio.PlayStaxBoxNativeSoundEngine.play(com.aistudio.xcloudgodmode.ai.audio.SoundEventType.PROFILE_SWITCH)
-                }
+                },
+                recommendation = recommendation,
+                isAnalyzing = isAnalyzing,
+                onReAnalyze = { viewModel.getAiTip(selectedGameForDetails?.title ?: "Xbox Game", "Wi-Fi 6") },
+                onTestHaptics = { viewModel.testHaptics() }
             )
 
         // Modals
         if (selectedGameForDetails != null) {
             GameDetailsModal(
                 game = selectedGameForDetails!!,
-                onClose = { viewModel.closeGameDetails() },
+                onClose = { viewModel.hideDetails() },
                 onStartStream = {
-                    viewModel.closeGameDetails()
+                    viewModel.hideDetails()
                     com.aistudio.xcloudgodmode.ai.audio.PlayStaxBoxNativeSoundEngine.play(com.aistudio.xcloudgodmode.ai.audio.SoundEventType.LAUNCH)
                     val targetRegion = userSession?.xCloudRegionUri?.ifBlank { "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user" } ?: "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user"
                     onLaunchGame(selectedGameForDetails!!.id, targetRegion)
@@ -323,17 +327,17 @@ fun HomeScreen(
         if (isAuthModalOpen) {
             DualAuthModal(
                 authManager = authManager,
-                onDismiss = { viewModel.setAuthModalOpen(false) },
-                onSuccess = { session -> viewModel.setUserSession(session) }
+                onDismiss = { viewModel.showAuth(false) },
+                onSuccess = { session -> viewModel.setSession(session, authManager) }
             )
         }
 
         if (postStreamSummary != null) {
             PostStreamPerformanceModal(
                 summary = postStreamSummary!!,
-                onClose = { viewModel.dismissPostStreamModal() },
+                onClose = { viewModel.hideSummary() },
                 onQuickReconnect = {
-                    viewModel.dismissPostStreamModal()
+                    viewModel.hideSummary()
                     val targetPath = StreamSessionHolder.activeSessionPath.ifBlank { "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user" }
                     val targetTitle = StreamSessionHolder.activeGame?.id ?: "9PNLT98ZLR9W"
                     onLaunchGame(targetTitle, targetPath)
@@ -354,6 +358,7 @@ fun XCloudLibraryTab(
     chameleonColor: Color
 ) {
     val games by viewModel.filteredGames.collectAsState()
+    val mruGames by viewModel.mruGames.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val isLoading by viewModel.isLoadingCatalog.collectAsState()
 
@@ -364,7 +369,7 @@ fun XCloudLibraryTab(
         // Search Bar (Translucent)
         TextField(
             value = searchQuery,
-            onValueChange = { viewModel.updateSearchQuery(it) },
+            onValueChange = { viewModel.search(it) },
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             placeholder = { Text("Search 4K library...", color = Color.Gray) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = chameleonColor) },
@@ -384,7 +389,7 @@ fun XCloudLibraryTab(
                 focusedIndex = focusedIndex,
                 onGameFocused = { 
                     focusedIndex = it
-                    viewModel.deriveColorFromGame(games[it])
+                    viewModel.autoChameleon(games[it])
                 },
                 onGameSelected = onGameSelected,
                 accentColor = chameleonColor
@@ -394,13 +399,52 @@ fun XCloudLibraryTab(
             
             Text(
                 "Full Catalog",
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize * (settings.textScalePercent / 100f)
+                ),
+                color = Color.White,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+            )
+        } else if (mruGames.isNotEmpty()) {
+            Text(
+                "Recientes",
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize * (settings.textScalePercent / 100f)
+                ),
+                color = Color.White,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+            )
+            
+            androidx.compose.foundation.lazy.LazyRow(
+                contentPadding = PaddingValues(horizontal = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.height(140.dp)
+            ) {
+                items(mruGames) { game ->
+                    GamePosterCard(
+                        game = game,
+                        onFavoriteToggle = { viewModel.fav(game.id) },
+                        onClick = { viewModel.showDetails(game) },
+                        accentColor = chameleonColor,
+                        settings = settings,
+                        modifier = Modifier.width(93.dp)
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 24.dp), color = Color.White.copy(alpha = 0.1f))
+            
+            Text(
+                "Catálogo Completo",
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontSize = MaterialTheme.typography.titleMedium.fontSize * (settings.textScalePercent / 100f)
+                ),
                 color = Color.White,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
             )
         }
 
-        // Adaptive Grid
         LazyVerticalGrid(
             columns = GridCells.Fixed(columnsCount),
             contentPadding = PaddingValues(16.dp),
@@ -411,9 +455,10 @@ fun XCloudLibraryTab(
             items(games, key = { it.id }) { game ->
                 GamePosterCard(
                     game = game,
-                    onFavoriteToggle = { viewModel.toggleFavorite(game.id) },
+                    onFavoriteToggle = { viewModel.fav(game.id) },
                     onClick = { onGameSelected(game) },
-                    accentColor = chameleonColor
+                    accentColor = chameleonColor,
+                    settings = settings
                 )
             }
         }
@@ -425,19 +470,22 @@ fun GamePosterCard(
     game: GameModel,
     onFavoriteToggle: () -> Unit,
     onClick: () -> Unit,
-    accentColor: Color
+    accentColor: Color,
+    settings: SettingsModel,
+    modifier: Modifier = Modifier
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(targetValue = if (isFocused) 1.05f else 1.0f, label = "card_scale")
 
     Card(
         onClick = onClick,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .aspectRatio(2f / 3f)
             .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
+                val baseScale = settings.posterScalePercent / 100f
+                scaleX = scale * baseScale
+                scaleY = scale * baseScale
             }
             .focusable()
             .onFocusChanged { 

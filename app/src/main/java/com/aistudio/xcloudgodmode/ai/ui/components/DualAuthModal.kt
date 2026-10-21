@@ -58,9 +58,9 @@ fun DualAuthModal(
         errorMessage = null
         try {
             pendingAuth = if (selectedTab == 0) {
-                authManager.startDeviceCodeFlow()
+                authManager.initDeviceLogin()
             } else {
-                authManager.startPkceFlow()
+                authManager.initWebLogin()
             }
         } catch (e: Exception) {
             errorMessage = e.message
@@ -76,10 +76,10 @@ fun DualAuthModal(
             while (true) {
                 delay(5000)
                 try {
-                    val tokens = authManager.pollDeviceCode(auth.deviceCode)
+                    val tokens = authManager.checkLoginStatus(auth.deviceCode)
                     if (tokens != null) {
                         isSubmitting = true
-                        val session = authManager.finalizeGamingSession(tokens)
+                        val session = authManager.completeAuth(tokens)
                         onSuccess(session)
                         break
                     }
@@ -261,8 +261,8 @@ fun DualAuthModal(
                                                         isSubmitting = true
                                                         try {
                                                             val code = authManager.extractAuthCode(url)
-                                                            val msaTokens = authManager.exchangePkceCode(code, auth.codeVerifier)
-                                                            val session = authManager.finalizeGamingSession(msaTokens)
+                                                            val msaTokens = authManager.tokenExchange(code, auth.codeVerifier)
+                                                            val session = authManager.completeAuth(msaTokens)
                                                             onSuccess(session)
                                                         } catch (e: Exception) {
                                                             errorMessage = e.message

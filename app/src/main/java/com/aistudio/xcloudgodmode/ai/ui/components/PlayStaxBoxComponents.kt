@@ -237,7 +237,11 @@ fun XboxBladeGuide(
     settings: SettingsModel,
     onSettingsChanged: (SettingsModel) -> Unit,
     accentColor: Color,
-    onApplyPreset: (String) -> Unit
+    onApplyPreset: (String) -> Unit,
+    recommendation: String = "",
+    isAnalyzing: Boolean = false,
+    onReAnalyze: () -> Unit = {},
+    onTestHaptics: () -> Unit = {}
 ) {
     AnimatedVisibility(
         visible = isOpen,
@@ -325,6 +329,47 @@ fun XboxBladeGuide(
                             valueRange = 100f..300f,
                             colors = SliderDefaults.colors(thumbColor = accentColor, activeTrackColor = accentColor)
                         )
+                    }
+
+                    // Test Haptics Button
+                    Button(
+                        onClick = onTestHaptics,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1F2429)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.Vibration, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Probar Háptica", style = MaterialTheme.typography.labelMedium)
+                    }
+
+                    // AI Diagnostics Section
+                    Surface(
+                        color = Color(0xFF101216),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Psychology, contentDescription = null, tint = accentColor, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Copiloto IA", fontWeight = FontWeight.Bold, color = Color.White, style = MaterialTheme.typography.labelMedium)
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = recommendation,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.LightGray,
+                                fontSize = 10.sp
+                            )
+                            if (isAnalyzing) {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), color = accentColor)
+                            }
+                            TextButton(onClick = onReAnalyze, modifier = Modifier.align(Alignment.End)) {
+                                Text("Re-Analizar", color = accentColor, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.weight(1f))
