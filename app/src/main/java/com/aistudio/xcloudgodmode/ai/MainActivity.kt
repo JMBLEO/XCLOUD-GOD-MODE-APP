@@ -61,6 +61,9 @@ fun MainNavigation(
 ) {
     val navController = rememberNavController()
 
+    val homeViewModel: com.aistudio.xcloudgodmode.ai.viewmodels.HomeViewModel = viewModel()
+    val settings by homeViewModel.settings.collectAsState()
+
     var activeGsToken by remember { mutableStateOf("demo_token") }
     var activeSessionPath by remember { mutableStateOf("https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user") }
 
@@ -77,7 +80,8 @@ fun MainNavigation(
                     activeGsToken = "demo_console_token"
                     activeSessionPath = "https://ukw.core.gssv-play-prod.xboxlive.com/v2/login/user"
                     navController.navigate("stream")
-                }
+                },
+                viewModel = homeViewModel
             )
         }
         composable("stream") {
@@ -85,6 +89,7 @@ fun MainNavigation(
                 streamManager = streamManager,
                 gsToken = activeGsToken,
                 sessionPath = activeSessionPath,
+                settings = settings,
                 onClose = { navController.popBackStack() }
             )
         }

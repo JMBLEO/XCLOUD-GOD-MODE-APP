@@ -13,7 +13,13 @@ data class GameModel(
     val trailerUrl: String = "",
     val screenshots: List<String> = emptyList(),
     val rating: String = "ESRB Everyone",
+    val ratingIconUrl: String = "",
+    val contentDescriptors: List<String> = emptyList(),
     val capabilities: List<String> = listOf("Cloud Enabled", "Xbox Series X|S", "Multiplayer"),
+    val languages: List<String> = emptyList(),
+    val accessibilityFeatures: List<String> = emptyList(),
+    val isGamePass: Boolean = true,
+    val isOwned: Boolean = false,
     val isFavorite: Boolean = false,
     val chameleonRgb: Triple<Int, Int, Int>? = null
 ) {

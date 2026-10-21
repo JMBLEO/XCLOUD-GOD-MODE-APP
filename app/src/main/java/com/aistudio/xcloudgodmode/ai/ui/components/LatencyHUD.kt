@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aistudio.xcloudgodmode.ai.services.WebRTCStreamManager
@@ -20,43 +21,48 @@ import com.aistudio.xcloudgodmode.ai.services.WebRTCStreamManager
 @Composable
 fun LatencyHUD(
     streamManager: WebRTCStreamManager,
+    position: String = "TOP",
     modifier: Modifier = Modifier
 ) {
     val stats by streamManager.stats.collectAsState()
 
+    val alignment = if (position == "BOTTOM") Alignment.BottomCenter else Alignment.TopCenter
+    
     Box(
         modifier = modifier
-            .padding(16.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color.Black.copy(alpha = 0.6f))
-            .padding(8.dp)
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.4f))
+            .padding(horizontal = 12.dp, vertical = 2.dp)
             .testTag("latency_hud")
     ) {
-        Column(horizontalAlignment = Alignment.End) {
-            HUDStatRow(label = "RTT", value = "${stats.rtt}ms", color = getLatencyColor(stats.rtt))
-            HUDStatRow(label = "Jitter", value = String.format("%.1fms", stats.jitter), color = Color.White)
-            HUDStatRow(label = "Loss", value = "${stats.packetLoss}%", color = if (stats.packetLoss > 0) Color.Red else Color.Green)
-            HUDStatRow(label = "Bitrate", value = "${stats.bitrate / 1000}kbps", color = Color.Cyan)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            HUDStatItem(label = "RTT", value = "${stats.rtt}ms", color = getLatencyColor(stats.rtt))
+            HUDStatItem(label = "Jitter", value = String.format("%.1fms", stats.jitter), color = Color.White)
+            HUDStatItem(label = "Loss", value = "${stats.packetLoss}%", color = if (stats.packetLoss > 0) Color.Red else Color.Green)
+            HUDStatItem(label = "Bitrate", value = "${stats.bitrate / 1000}kbps", color = Color.Cyan)
         }
     }
 }
 
 @Composable
-private fun HUDStatRow(label: String, value: String, color: Color) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(vertical = 1.dp)
-    ) {
+private fun HUDStatItem(label: String, value: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = "$label: ",
-            color = Color.LightGray,
-            fontSize = 10.sp,
+            color = Color.Gray,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.labelSmall
         )
         Text(
             text = value,
             color = color,
-            fontSize = 10.sp,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.labelSmall
         )
     }

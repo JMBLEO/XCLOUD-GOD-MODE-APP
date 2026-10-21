@@ -30,10 +30,11 @@ fun StreamScreen(
     streamManager: WebRTCStreamManager,
     gsToken: String,
     sessionPath: String,
+    settings: com.aistudio.xcloudgodmode.ai.models.SettingsModel,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
-    var isHudVisible by remember { mutableStateOf(true) }
+    var isHudVisible by remember { mutableStateOf(settings.showStats) }
     var selectedMotor by remember { mutableIntStateOf(1) } // 1: Native WebRTC, 2: WebView Script
 
     // In-stream quick tuners
@@ -169,48 +170,13 @@ fun StreamScreen(
             }
         }
 
-        // Latency & Bitrate HUD (Top-Left)
+        // Latency & Bitrate HUD (God Mode Script Style)
         if (isHudVisible && selectedMotor == 1) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                LatencyHUD(
-                    streamManager = streamManager
-                )
-
-                // FSR & Aspect ratio badge
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color.Black.copy(alpha = 0.7f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E333A))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (fsrEnabled) "FSR 3.1 RCAS: ON (${(fsrSharpness * 100).toInt()}%)" else "FSR: OFF",
-                            color = if (fsrEnabled) Color(0xFF4ADE80) else Color.Gray,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Ratio: $selectedAspectRatio",
-                            color = Color.White,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Vol: $volumeBoost%",
-                            color = Color(0xFF38BDF8),
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                }
-            }
+            LatencyHUD(
+                streamManager = streamManager,
+                position = settings.hudPosition,
+                modifier = Modifier.align(if (settings.hudPosition == "BOTTOM") Alignment.BottomCenter else Alignment.TopCenter)
+            )
         }
 
         // Quick Menu Drawer / Dropdown Panel
@@ -231,6 +197,20 @@ fun StreamScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text("Ajustes de Stream", style = MaterialTheme.typography.titleSmall, color = Color.White)
+
+                    // HUD Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Mostrar Estadísticas:", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                        Switch(
+                            checked = isHudVisible,
+                            onCheckedChange = { isHudVisible = it },
+                            colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF107C10))
+                        )
+                    }
 
                     // FSR Toggle & Slider
                     Row(

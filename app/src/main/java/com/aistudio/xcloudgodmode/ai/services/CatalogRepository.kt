@@ -35,6 +35,8 @@ class CatalogRepository(private val client: OkHttpClient = OkHttpClient.Builder(
             ),
             rating = "ESRB Everyone",
             capabilities = listOf("Control Táctil Nativo", "4K Ultra HD", "HDR10", "60+ FPS"),
+            languages = listOf("Español (AL)", "Inglés", "Francés", "Alemán"),
+            accessibilityFeatures = listOf("Subtítulos", "Narrador", "Modo Daltónico"),
             chameleonRgb = Triple(244, 63, 134)
         ),
         GameModel(
@@ -53,6 +55,7 @@ class CatalogRepository(private val client: OkHttpClient = OkHttpClient.Builder(
             ),
             rating = "ESRB Teen",
             capabilities = listOf("Control Táctil Nativo", "Multijugador Online", "120 FPS"),
+            languages = listOf("Español", "Inglés", "Portugués"),
             chameleonRgb = Triple(56, 189, 248)
         ),
         GameModel(
@@ -69,8 +72,10 @@ class CatalogRepository(private val client: OkHttpClient = OkHttpClient.Builder(
             screenshots = emptyList(),
             rating = "ESRB Mature 17+",
             capabilities = listOf("Control Táctil Nativo", "Co-op Local", "HDR10"),
+            languages = listOf("Español", "Inglés"),
             chameleonRgb = Triple(239, 68, 68)
-        ),
+        )
+,
         GameModel(
             id = "9NCGNJMRWB1Q",
             title = "Starfield",
@@ -251,6 +256,11 @@ class CatalogRepository(private val client: OkHttpClient = OkHttpClient.Builder(
                 if (poster.isBlank() && hero.isNotBlank()) poster = hero
                 if (superHero.isBlank()) superHero = hero.ifBlank { poster }
 
+                val properties = prod.optJSONArray("MarketProperties")?.optJSONObject(0)
+                val ratingInfo = prod.optJSONArray("Properties")?.optJSONObject(0)?.optJSONArray("Ratings")?.optJSONObject(0)
+                val ratingIcon = ratingInfo?.optString("RatingImageUri") ?: ""
+                val contentRating = ratingInfo?.optString("RatingDescriptor") ?: ""
+
                 hydratedGames.add(
                     GameModel(
                         id = prodId,
@@ -262,6 +272,9 @@ class CatalogRepository(private val client: OkHttpClient = OkHttpClient.Builder(
                         superHeroUrl = superHero,
                         logoUrl = logo,
                         screenshots = screenshots,
+                        rating = contentRating,
+                        ratingIconUrl = if (ratingIcon.startsWith("//")) "https:$ratingIcon" else ratingIcon,
+                        isGamePass = true,
                         chameleonRgb = deriveColorFromTitle(title)
                     )
                 )

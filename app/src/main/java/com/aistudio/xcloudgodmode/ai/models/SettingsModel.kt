@@ -51,7 +51,8 @@ data class SettingsModel(
     val blockAnalytics: Boolean = true,
     val antiKick: Boolean = true,
     val deviceOverride: String = "Auto",
-    val showStats: Boolean = true, 
+    val showStats: Boolean = true,
+    val hudPosition: String = "TOP", // "TOP", "BOTTOM"
 
     // --- [B] GAME OPTIMIZER (IN-STREAM / REAL-TIME) ---
     
