@@ -67,7 +67,15 @@ object XboxEndpoints {
             url = url.replace(Regex("^https?://tore-images\\.microsoft\\.com", RegexOption.IGNORE_CASE), STORE_IMAGES_SECONDARY)
         }
 
-        // Return preserved URL without synthetic query injections that trigger HTTP 500 on Akamai
+        // Add sizing parameters only for Microsoft Store images (safe check)
+        if (url.contains("store-images.microsoft.com") || url.contains("store-images.s-microsoft.com")) {
+            if (!url.contains("?")) {
+                url = "$url?w=$width&h=$height&format=jpg"
+            } else if (!url.contains("w=") && !url.contains("h=")) {
+                url = "$url&w=$width&h=$height&format=jpg"
+            }
+        }
+
         return url
     }
 }

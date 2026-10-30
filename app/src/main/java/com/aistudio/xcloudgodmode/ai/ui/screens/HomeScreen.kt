@@ -60,6 +60,7 @@ fun HomeScreen(
     val settings by viewModel.settings.collectAsState()
     val chameleonColor by viewModel.chameleonColor.collectAsState()
     val consoles by viewModel.consoles.collectAsState()
+    val savedAccounts by viewModel.savedAccounts.collectAsState()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     val strings = com.aistudio.xcloudgodmode.ai.ui.theme.AppStrings.get(settings.appLanguage)
@@ -176,8 +177,10 @@ fun HomeScreen(
                         
                         UserAccountHeaderButton(
                             userSession = userSession,
+                            savedAccounts = savedAccounts,
                             onLoginClick = { viewModel.showAuth(true) },
                             onLogoutClick = { viewModel.logout() },
+                            onSwitchAccount = { viewModel.switchAccount(it, authManager) },
                             modifier = Modifier.padding(end = 8.dp)
                         )
                     },
@@ -344,6 +347,7 @@ fun HomeScreen(
         if (isAuthModalOpen) {
             DualAuthModal(
                 authManager = authManager,
+                homeViewModel = viewModel,
                 settings = settings,
                 onDismiss = { viewModel.showAuth(false) },
                 onSuccess = { session -> viewModel.setSession(session, authManager) }

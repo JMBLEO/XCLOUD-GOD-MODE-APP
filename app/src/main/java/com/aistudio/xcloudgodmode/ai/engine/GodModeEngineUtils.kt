@@ -105,21 +105,32 @@ object GodModeEngineUtils {
             } catch (_: Exception) {}
         }
 
-        webView.setLayerType(
-            if (enableGpu) WebView.LAYER_TYPE_HARDWARE else WebView.LAYER_TYPE_NONE,
-            null
-        )
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            webView.settings.forceDark = if (enableDark) {
-                WebSettings.FORCE_DARK_ON
+        // Safer hardware acceleration toggle to prevent EGL crashes on specific drivers
+        try {
+            if (enableGpu) {
+                webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null)
             } else {
-                WebSettings.FORCE_DARK_OFF
+                webView.setLayerType(WebView.LAYER_TYPE_SOFTWARE, null)
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("GodModeEngine", "Failed to set layer type: ${e.message}")
+            webView.setLayerType(WebView.LAYER_TYPE_NONE, null)
+        }
+
+        webView.settings.apply {
+            domStorageEnabled = true
+            databaseEnabled = true
+            javaScriptEnabled = true
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                forceDark = if (enableDark) WebSettings.FORCE_DARK_ON else WebSettings.FORCE_DARK_OFF
             }
         }
         
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-            WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, enableDark)
+            try {
+                WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, enableDark)
+            } catch (_: Exception) {}
         }
     }
 }

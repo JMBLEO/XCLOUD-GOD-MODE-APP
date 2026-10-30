@@ -214,6 +214,21 @@ fun GameStreamWebView(
                     override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
                         handler?.proceed()
                     }
+
+                    override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                        android.util.Log.e("GameStreamWebView", "Renderer process crashed! code: ${detail?.rendererPriorityAtExit()}")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            if (!detail?.didCrash()!!) {
+                                // System killed it, just reload
+                                view?.reload()
+                                return true
+                            }
+                        }
+                        // It crashed. We return true to handle it and not kill the app.
+                        // We could show a "Crash Recovery" UI here.
+                        view?.reload()
+                        return true
+                    }
                 }
 
                 loadUrl(launchUrl)

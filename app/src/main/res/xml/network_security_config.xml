@@ -21,7 +21,6 @@
         <domain includeSubdomains="true">uhf.microsoft.com</domain>
         <domain includeSubdomains="true">store-images.s-microsoft.com</domain>
         <domain includeSubdomains="true">store-images.microsoft.com</domain>
-        <domain includeSubdomains="true">tore-images.microsoft.com</domain>
         <!-- Root parent domains for complete TLS coverage -->
         <domain includeSubdomains="true">xboxservices.com</domain>
         <domain includeSubdomains="true">xboxlive.com</domain>

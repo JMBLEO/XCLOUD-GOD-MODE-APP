@@ -68,6 +68,13 @@ android {
   }
 }
 
+// Ensure KSP doesn't conflict with IDE ApplicationManager during build
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    compilerOptions {
+        freeCompilerArgs.add("-Xopt-in=kotlin.RequiresOptIn")
+    }
+}
+
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
 secrets {
@@ -132,6 +139,9 @@ dependencies {
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
   testImplementation(libs.junit)
+  implementation(libs.google.gson)
+  implementation(libs.zxing.core)
+  implementation(libs.androidx.work.runtime.ktx)
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.robolectric)
   androidTestImplementation(platform(libs.androidx.compose.bom))

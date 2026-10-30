@@ -84,17 +84,6 @@ fun GameDetailsModal(
                     )
                 }
 
-                // Close Button Top-Right
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(16.dp)
-                        .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(50))
-                ) {
-                    Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.White)
-                }
-
                 // Main Scrollable Content
                 Column(
                     modifier = Modifier
@@ -102,7 +91,6 @@ fun GameDetailsModal(
                         .padding(horizontal = 24.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
-                    Spacer(modifier = Modifier.height(24.dp))
 
                     // Trailer Player (if activated)
                     if (isTrailerPlaying && game.trailerUrl.isNotBlank()) {
@@ -510,6 +498,18 @@ fun GameDetailsModal(
                     }
 
                     Spacer(modifier = Modifier.height(24.dp))
+                }
+
+                // Close Button Top-Right (Placed at the end of Box to be on top of Z-stack)
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(16.dp)
+                        .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(50))
+                        .testTag("close_modal_button")
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.White)
                 }
             }
         }

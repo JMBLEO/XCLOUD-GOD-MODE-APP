@@ -28,6 +28,10 @@ class WebRTCStreamManager(
     private var peerConnectionFactory: PeerConnectionFactory? = null
     private var peerConnection: PeerConnection? = null
     private var dataChannel: DataChannel? = null
+    private var audioTrack: AudioTrack? = null
+    private var audioSource: AudioSource? = null
+    
+    private val gamepadStates = mutableMapOf<Int, ByteArray>() // Slot -> Last Packet
     
     val eglBase: EglBase = EglBase.create()
     
@@ -318,6 +322,9 @@ class WebRTCStreamManager(
         val constraints = MediaConstraints()
         constraints.mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
         constraints.mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+        
+        // Ensure we send audio if mic is enabled
+        peerConnection?.addTrack(audioTrack, listOf("stream1"))
 
         peerConnection?.createOffer(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription?) {
@@ -392,10 +399,23 @@ class WebRTCStreamManager(
         })
     }
 
-    fun sendInput(data: ByteArray) {
+    fun sendInput(data: ByteArray, slot: Int = 0) {
         if (dataChannel?.state() == DataChannel.State.OPEN) {
+            // Prefix with slot if needed by protocol or just send raw if it's already mapped
             val buffer = DataChannel.Buffer(java.nio.ByteBuffer.wrap(data), true)
             dataChannel?.send(buffer)
+        }
+    }
+
+    fun setMicrophoneEnabled(enabled: Boolean) {
+        if (enabled) {
+            if (audioSource == null) {
+                audioSource = peerConnectionFactory?.createAudioSource(MediaConstraints())
+                audioTrack = peerConnectionFactory?.createAudioTrack("mic_track", audioSource)
+            }
+            audioTrack?.setEnabled(true)
+        } else {
+            audioTrack?.setEnabled(false)
         }
     }
 

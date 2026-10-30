@@ -15,6 +15,7 @@ import com.aistudio.xcloudgodmode.ai.models.SettingsModel
 import com.aistudio.xcloudgodmode.ai.services.CatalogRepository
 import com.aistudio.xcloudgodmode.ai.services.SessionTelemetrySummary
 import com.aistudio.xcloudgodmode.ai.services.StreamSessionHolder
+import com.aistudio.xcloudgodmode.ai.services.TokenVaultManager
 import com.aistudio.xcloudgodmode.ai.services.XboxFullAuthManager
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -26,6 +27,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val TAG = "HomeViewModel"
     private val context = application.applicationContext
     private val catalogRepo = CatalogRepository()
+    private val vault = TokenVaultManager(context)
     private val FAVORITES_KEY = stringSetPreferencesKey("favorites")
 
     // Search query
@@ -42,6 +44,62 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     // Auth state
     private val _userSession = MutableStateFlow<XboxFullAuthManager.XboxReadySession?>(null)
     val userSession: StateFlow<XboxFullAuthManager.XboxReadySession?> = _userSession.asStateFlow()
+
+    val savedAccounts: StateFlow<List<com.aistudio.xcloudgodmode.ai.services.XboxSessionProfile>> = vault.savedAccounts
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val activeVaultProfile: StateFlow<com.aistudio.xcloudgodmode.ai.services.XboxSessionProfile?> = vault.activeProfile
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    private val SESSION_KEY = stringSetPreferencesKey("xbox_session")
+
+    init {
+        loadGames()
+        loadSession()
+    }
+
+    private fun loadSession() {
+        viewModelScope.launch {
+            context.dataStore.data.firstOrNull()?.get(SESSION_KEY)?.let { sessionSet ->
+                try {
+                    val list = sessionSet.toList()
+                    if (list.size >= 8) {
+                        _userSession.value = XboxFullAuthManager.XboxReadySession(
+                            gamertag = list[0],
+                            uhs = list[1],
+                            msaRefreshToken = list[2],
+                            webXstsToken = list[3],
+                            xHomeGsToken = list[4],
+                            xHomeRegionUri = list[5],
+                            xCloudGsToken = list[6],
+                            xCloudRegionUri = list[7]
+                        )
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun saveSession(session: XboxFullAuthManager.XboxReadySession?) {
+        viewModelScope.launch {
+            context.dataStore.edit { preferences ->
+                if (session == null) {
+                    preferences.remove(SESSION_KEY)
+                } else {
+                    preferences[SESSION_KEY] = setOf(
+                        session.gamertag,
+                        session.uhs,
+                        session.msaRefreshToken,
+                        session.webXstsToken,
+                        session.xHomeGsToken,
+                        session.xHomeRegionUri,
+                        session.xCloudGsToken,
+                        session.xCloudRegionUri
+                    )
+                }
+            }
+        }
+    }
 
     private val _isAuthModalOpen = MutableStateFlow(false)
     val isAuthModalOpen: StateFlow<Boolean> = _isAuthModalOpen.asStateFlow()
@@ -60,6 +118,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     // MRU Games state
     private val _mruGames = MutableStateFlow<List<GameModel>>(emptyList())
     val mruGames: StateFlow<List<GameModel>> = _mruGames.asStateFlow()
+
+    // Captured Auth Code (from deep link)
+    private val _capturedAuthCode = MutableStateFlow<String?>(null)
+    val capturedAuthCode: StateFlow<String?> = _capturedAuthCode.asStateFlow()
 
     // Settings
     private val _settings = MutableStateFlow(SettingsModel())
@@ -93,9 +155,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             .sortedBy { !it.isFavorite }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    init {
-        loadGames()
-    }
 
     fun loadGames(authManager: XboxFullAuthManager? = null) {
         viewModelScope.launch {
@@ -262,12 +321,66 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setSession(session: XboxFullAuthManager.XboxReadySession?, authManager: XboxFullAuthManager? = null) {
+        if (session != null && (session.ageGroup == "Child" || session.ageGroup == "Teen")) {
+            android.widget.Toast.makeText(context, "Advertencia: Cuenta restringida (Age Group: ${session.ageGroup}). Algunos juegos podrían no cargar.", android.widget.Toast.LENGTH_LONG).show()
+        }
+
         _userSession.value = session
+        saveSession(session)
+        
+        // Also save to vault if it's a new session
+        if (session != null) {
+            viewModelScope.launch {
+                vault.saveOrUpdateProfile(
+                    com.aistudio.xcloudgodmode.ai.services.XboxSessionProfile(
+                        xuid = session.uhs, // Using UHS as a proxy for XUID if not provided elsewhere
+                        gamertag = session.gamertag,
+                        uhs = session.uhs,
+                        gamerpic = session.gamerpic,
+                        xCloudGsToken = session.xCloudGsToken,
+                        xHomeGsToken = session.xHomeGsToken,
+                        refreshToken = session.msaRefreshToken,
+                        expiresAtMs = System.currentTimeMillis() + (4 * 60 * 60 * 1000)
+                    )
+                )
+            }
+        }
+
         _isAuthModalOpen.value = false
         if (session != null && authManager != null) {
             loadGames(authManager)
             fetchConsoles(authManager)
             fetchMruTitles(authManager)
+        }
+    }
+
+    fun switchAccount(xuid: String, authManager: XboxFullAuthManager) {
+        viewModelScope.launch {
+            vault.switchActiveAccount(xuid)
+            val profile = vault.activeProfile.first()
+            if (profile != null) {
+                val session = XboxFullAuthManager.XboxReadySession(
+                    gamertag = profile.gamertag,
+                    uhs = profile.uhs,
+                    msaRefreshToken = profile.refreshToken,
+                    webXstsToken = "", // Will be refreshed on first use
+                    xHomeGsToken = profile.xHomeGsToken,
+                    xHomeRegionUri = "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user",
+                    xCloudGsToken = profile.xCloudGsToken,
+                    xCloudRegionUri = "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user",
+                    gamerpic = profile.gamerpic
+                )
+                setSession(session, authManager)
+            }
+        }
+    }
+
+    fun removeAccount(xuid: String) {
+        viewModelScope.launch {
+            vault.removeAccount(xuid)
+            if (_userSession.value?.uhs == xuid) {
+                logout()
+            }
         }
     }
 
@@ -385,7 +498,17 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setCapturedAuthCode(code: String) {
+        _capturedAuthCode.value = code
+        _isAuthModalOpen.value = true // Ensure modal is open to process the code
+    }
+
+    fun clearCapturedAuthCode() {
+        _capturedAuthCode.value = null
+    }
+
     fun logout() {
         _userSession.value = null
+        saveSession(null)
     }
 }

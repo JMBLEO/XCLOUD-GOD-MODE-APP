@@ -74,7 +74,13 @@ data class AppStringsData(
     val touchEditorSavedSuccess: String,
     val touchEditorTestMode: String,
     val touchEditorExit: String,
-    val touchEditorCustomize: String
+    val touchEditorCustomize: String,
+    val copyCode: String,
+    val copySuccess: String,
+    val refreshCode: String,
+    val fix403Error: String,
+    val confirmQr: String,
+    val confirmQrSuccess: String
 )
 
 object AppStrings {
@@ -150,7 +156,13 @@ object AppStrings {
         touchEditorSavedSuccess = "¡Perfil táctil guardado localmente por TitleID!",
         touchEditorTestMode = "Modo Prueba",
         touchEditorExit = "Salir del Editor",
-        touchEditorCustomize = "Personalizar Controles Táctiles"
+        touchEditorCustomize = "Personalizar Controles Táctiles",
+        copyCode = "Copiar Código",
+        copySuccess = "Código copiado al portapapeles",
+        refreshCode = "Actualizar Código",
+        fix403Error = "Solucionar Error 403 (Abrir Navegador)",
+        confirmQr = "Confirmar Activación",
+        confirmQrSuccess = "¡Activación confirmada! Iniciando sesión..."
     )
 
     val English = AppStringsData(
@@ -225,7 +237,13 @@ object AppStrings {
         touchEditorSavedSuccess = "Touch profile saved locally by TitleID!",
         touchEditorTestMode = "Test Mode",
         touchEditorExit = "Exit Editor",
-        touchEditorCustomize = "Customize Touch Controls"
+        touchEditorCustomize = "Customize Touch Controls",
+        copyCode = "Copy Code",
+        copySuccess = "Code copied to clipboard",
+        refreshCode = "Refresh Code",
+        fix403Error = "Fix 403 Error (Open Browser)",
+        confirmQr = "Confirm Activation",
+        confirmQrSuccess = "Activation confirmed! Signing in..."
     )
 
     fun get(languageCode: String): AppStringsData {

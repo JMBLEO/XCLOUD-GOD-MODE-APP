@@ -28,8 +28,17 @@ import com.aistudio.xcloudgodmode.ai.services.GameProfileManager
 import com.aistudio.xcloudgodmode.ai.streaming.GameStreamWebView
 import com.aistudio.xcloudgodmode.ai.ui.components.LatencyHUD
 import com.aistudio.xcloudgodmode.ai.ui.components.TrueAchievementsOverlay
+import com.aistudio.xcloudgodmode.ai.ui.components.InStreamGameBar
+import com.aistudio.xcloudgodmode.ai.engine.GyroscopeProvider
+import com.aistudio.xcloudgodmode.ai.ControllerInputManager
+import com.aistudio.xcloudgodmode.ai.services.StreamingService
+import android.content.Intent
+import android.os.Build
 import org.webrtc.SurfaceViewRenderer
+import androidx.compose.ui.input.pointer.pointerInteropFilter
+import android.view.MotionEvent
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun StreamScreen(
     streamManager: WebRTCStreamManager,
@@ -63,6 +72,13 @@ fun StreamScreen(
     var mkbEnabled by remember { mutableStateOf(gameProfile.mkbEnabled) }
     var mouseSensitivity by remember { mutableFloatStateOf(gameProfile.mouseSensitivity) }
     var stickDeadzone by remember { mutableFloatStateOf(gameProfile.stickDeadzoneLeft) }
+    
+    // Advanced Input (Gyro & Co-Op)
+    val inputManager = remember { ControllerInputManager(streamManager) }
+    val gyroProvider = remember { GyroscopeProvider(context) }
+    var isGyroEnabled by remember { mutableStateOf(false) }
+    var isMicMuted by remember { mutableStateOf(true) }
+    var streamVolume by remember { mutableFloatStateOf(1.0f) }
 
     // HUD granular options (God Mode script style)
     var hudPosition by remember { mutableStateOf(settings.hudPosition) } // "TOP", "BOTTOM"
@@ -84,6 +100,25 @@ fun StreamScreen(
         streamManager.setVideoSink(surfaceViewRenderer)
         streamManager.startStream(gsToken, sessionPath)
         StreamSessionHolder.recordStart(null, gsToken, sessionPath)
+        
+        // Start Foreground Service
+        val serviceIntent = Intent(context, StreamingService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(serviceIntent)
+        } else {
+            context.startService(serviceIntent)
+        }
+    }
+
+    LaunchedEffect(isGyroEnabled) {
+        gyroProvider.isEnabled = isGyroEnabled
+        gyroProvider.setOnGyroUpdate { dx, dy ->
+            inputManager.injectGyro(dx, dy)
+        }
+    }
+    
+    LaunchedEffect(isMicMuted) {
+        streamManager.setMicrophoneEnabled(!isMicMuted)
     }
 
     var isRendererReleased by remember { mutableStateOf(false) }
@@ -110,6 +145,7 @@ fun StreamScreen(
             motor = if (selectedMotor == 1) "Native WebRTC + FSR" else "WebView God Mode Script"
         )
         safeReleaseRenderer()
+        context.stopService(Intent(context, StreamingService::class.java))
         onClose()
     }
 
@@ -161,6 +197,10 @@ fun StreamScreen(
                 AndroidView(
                     factory = { surfaceViewRenderer },
                     modifier = aspectModifier
+                        .pointerInteropFilter { event ->
+                            inputManager.handleMotionEvent(event)
+                            true
+                        }
                 )
             } else {
                 // Motor 2: WebView + God Mode Script con configuración activa
@@ -265,6 +305,19 @@ fun StreamScreen(
                     Icons.Default.Tune,
                     contentDescription = "Ajustes Rápidos de Stream",
                     tint = if (showQuickMenu) Color(0xFF107C10) else Color.White
+                )
+            }
+
+            // In-Stream Game Bar (God Mode Guide)
+            IconButton(
+                onClick = { showQuickMenu = true },
+                colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.65f)),
+                modifier = Modifier.testTag("game_bar_toggle")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MenuOpen,
+                    contentDescription = "Game Bar",
+                    tint = Color(0xFF107C10)
                 )
             }
 
@@ -622,5 +675,18 @@ fun StreamScreen(
                 onDismiss = { showTouchEditor = false }
             )
         }
+
+        // Advanced Game Bar (God Mode)
+        InStreamGameBar(
+            isOpen = showQuickMenu,
+            onClose = { showQuickMenu = false },
+            isMicMuted = isMicMuted,
+            onToggleMic = { isMicMuted = !isMicMuted },
+            isGyroEnabled = isGyroEnabled,
+            onToggleGyro = { isGyroEnabled = !isGyroEnabled },
+            volume = streamVolume,
+            onVolumeChange = { streamVolume = it },
+            onTakeScreenshot = { /* Screenshot logic */ }
+        )
     }
 }
