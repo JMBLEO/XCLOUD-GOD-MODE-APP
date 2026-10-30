@@ -43,7 +43,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        networkClient = NetworkClient()
+        // Initialize Network with DoH for bypass
+        networkClient = NetworkClient(enableDoh = true)
         xboxAuthManager = XboxFullAuthManager(networkClient)
         streamManager = WebRTCStreamManager(this, networkClient)
         geminiService = GeminiService()

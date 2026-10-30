@@ -6,11 +6,39 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
 
+import okhttp3.dnsoverhttps.DnsOverHttps
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import java.net.InetAddress
+import java.util.concurrent.TimeUnit
+
 /**
  * NetworkClient handles authenticated requests to Xbox Live and GSSV APIs.
  * It automatically injects the required "Signature" header for XAL compliance.
+ * Now supports DNS over HTTPS (DoH) for bypass and strict network environments.
  */
-class NetworkClient(private val okHttpClient: OkHttpClient = OkHttpClient()) {
+class NetworkClient(
+    enableDoh: Boolean = true,
+    private var okHttpClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+) {
+
+    init {
+        if (enableDoh) {
+            val appCache = okHttpClient.cache
+            val bootstrapClient = okHttpClient.newBuilder().build()
+            val dns = DnsOverHttps.Builder()
+                .client(bootstrapClient)
+                .url("https://cloudflare-dns.com/dns-query".toHttpUrl())
+                .bootstrapDnsHosts(listOf(InetAddress.getByName("1.1.1.1"), InetAddress.getByName("1.0.0.1")))
+                .build()
+            
+            okHttpClient = okHttpClient.newBuilder()
+                .dns(dns)
+                .build()
+        }
+    }
 
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()

@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.testTag
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 
@@ -104,7 +105,7 @@ fun QrAuthDisplay(
             onClick = onCheckStatusClick,
             colors = ButtonDefaults.buttonColors(containerColor = androidx.compose.ui.graphics.Color(0xFF107C10)),
             shape = RoundedCornerShape(8.dp),
-            modifier = Modifier.fillMaxWidth().height(48.dp)
+            modifier = Modifier.fillMaxWidth().height(48.dp).testTag("confirm_qr_activation_button")
         ) {
             Icon(androidx.compose.material.icons.Icons.Default.CheckCircle, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))

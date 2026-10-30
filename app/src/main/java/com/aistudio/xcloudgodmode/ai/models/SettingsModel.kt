@@ -103,7 +103,15 @@ data class SettingsModel(
     val pollingRateMs: Int = 8,
     val swapABXY: Boolean = false,
     val safeNativeModeOnly: Boolean = false,
-    val userAgentProfile: String = "XboxApp/Android"
+    val userAgentProfile: String = "XboxApp/Android",
+
+    // --- [C] GOD MODE ULTIMATE (ENGINE v3) ---
+    val enableAudioHaptics: Boolean = true,
+    val enableTcpFallback: Boolean = false,
+    val enableDoh: Boolean = true,
+    val enableDynamicPatcher: Boolean = true,
+    val enableClarityBoost: Boolean = true,
+    val enableWakeOnLan: Boolean = true
 ) {
     fun toJson(): String {
         val json = org.json.JSONObject()

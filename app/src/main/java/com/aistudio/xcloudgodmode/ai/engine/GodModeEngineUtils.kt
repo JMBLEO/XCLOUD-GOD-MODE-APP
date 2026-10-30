@@ -133,4 +133,27 @@ object GodModeEngineUtils {
             } catch (_: Exception) {}
         }
     }
+
+    /**
+     * Returns the Clarity Boost (High-Fidelity Sharpening) GLSL shader.
+     * Ported from Microsoft's edge-specific implementation to God Mode Engine.
+     */
+    fun getClarityBoostShader(): String {
+        return """
+            precision highp float;
+            uniform sampler2D u_Texture;
+            varying vec2 v_TexCoord;
+            
+            void main() {
+                vec4 center = texture2D(u_Texture, v_TexCoord);
+                vec4 left   = texture2D(u_Texture, v_TexCoord + vec2(-0.001, 0.0));
+                vec4 right  = texture2D(u_Texture, v_TexCoord + vec2(0.001, 0.0));
+                vec4 top    = texture2D(u_Texture, v_TexCoord + vec2(0.0, -0.001));
+                vec4 bottom = texture2D(u_Texture, v_TexCoord + vec2(0.0, 0.001));
+                
+                vec4 edge = 4.0 * center - left - right - top - bottom;
+                gl_FragColor = center + 0.45 * edge; // Contrast-adaptive sharpening
+            }
+        """.trimIndent()
+    }
 }

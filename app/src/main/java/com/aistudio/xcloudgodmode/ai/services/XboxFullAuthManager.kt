@@ -51,7 +51,7 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
         val isDeviceCodeFlow: Boolean = false,
         val sessionId: String = "",
         val deviceToken: String = ""
-    )
+    ) : java.io.Serializable
 
     data class XboxReadySession(
         val gamertag: String,
@@ -128,17 +128,40 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
     }
 
     private fun derToP1363(der: ByteArray): ByteArray {
-        val rLen = der[3].toInt()
-        val sLenIdx = 3 + rLen + 2
-        val sLen = der[sLenIdx].toInt()
-        val r = ByteArray(32)
-        val s = ByteArray(32)
-        val rStart = 4
-        if (rLen > 32) System.arraycopy(der, rStart + (rLen - 32), r, 0, 32)
-        else System.arraycopy(der, rStart, r, 32 - rLen, rLen)
-        val sStart = sLenIdx + 1
-        if (sLen > 32) System.arraycopy(der, sStart + (sLen - 32), s, 0, 32)
-        else System.arraycopy(der, sStart, s, 32 - sLen, sLen)
+        var offset = 0
+        if (der[offset++] != 0x30.toByte()) throw Exception("Invalid DER: not a sequence")
+        
+        // Skip length
+        val len = der[offset++].toInt() and 0xFF
+        if (len and 0x80 != 0) {
+            offset += len and 0x7F
+        }
+
+        fun extractInt(bytes: ByteArray, start: Int): ByteArray {
+            var curr = start
+            if (bytes[curr++] != 0x02.toByte()) throw Exception("Invalid DER: not an integer")
+            var iLen = bytes[curr++].toInt() and 0xFF
+            if (iLen and 0x80 != 0) throw Exception("DER integer length too long")
+            
+            while (iLen > 0 && bytes[curr] == 0.toByte()) {
+                curr++
+                iLen--
+            }
+            
+            val result = ByteArray(32)
+            if (iLen > 32) {
+                System.arraycopy(bytes, curr + (iLen - 32), result, 0, 32)
+            } else {
+                System.arraycopy(bytes, curr, result, 32 - iLen, iLen)
+            }
+            return result
+        }
+
+        val r = extractInt(der, offset)
+        // Skip R integer (tag + len + actual_len)
+        var rTotalLen = (der[offset + 1].toInt() and 0xFF) + 2
+        val s = extractInt(der, offset + rTotalLen)
+        
         return r + s
     }
 
@@ -199,14 +222,19 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             .build()
 
         okHttpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
-            val json = JSONObject(response.body?.string() ?: "")
+            val body = response.body?.string() ?: ""
+            if (!response.isSuccessful) throw Exception("OAuth Connect Failed: ${response.code} $body")
+            
+            val json = JSONObject(body)
+            val interval = json.optInt("interval", 5)
+            
             return@withContext PendingAuthContext(
                 userCode = json.getString("user_code"),
                 deviceCode = json.getString("device_code"),
                 verificationUri = json.getString("verification_uri"),
                 isDeviceCodeFlow = true,
-                isDirectRps = true
+                isDirectRps = true,
+                sessionId = interval.toString() // Almacenamos el intervalo aquí para el polling
             )
         }
     }
@@ -288,7 +316,10 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             if (!response.isSuccessful) throw Exception("Sisu Authenticate Failed: $body")
             
             val json = JSONObject(body)
-            val authUrl = json.optString("MsaOauthRedirect") ?: json.optJSONObject("data")?.optString("MsaOauthRedirect", "") ?: ""
+            var authUrl = json.optString("MsaOauthRedirect") ?: json.optJSONObject("data")?.optString("MsaOauthRedirect", "") ?: ""
+            if (authUrl.isNotEmpty()) {
+                authUrl += if (authUrl.contains("?")) "&prompt=login" else "?prompt=login"
+            }
             val sessionId = response.header("x-sessionid", "") ?: ""
             
             return@withContext PendingAuthContext(
@@ -308,77 +339,87 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
      */
     suspend fun completeSisuAuth(code: String, context: PendingAuthContext): XboxReadySession = withContext(Dispatchers.IO) {
         val msaTokens = tokenExchange(code, context.codeVerifier)
-        val accessToken = msaTokens.getString("access_token")
         
-        val keys = getOrCreateKeys()
-        val payload = JSONObject().apply {
-            put("AccessToken", "t=$accessToken")
-            put("AppId", CLIENT_ID)
-            put("DeviceToken", context.deviceToken)
-            put("Sandbox", "RETAIL")
-            put("SiteName", "user.auth.xboxlive.com")
-            put("UseModernGamertag", true)
-            put("ProofKey", JSONObject().apply {
-                put("use", "sig")
-                put("alg", "ES256")
-                put("kty", "EC")
-                put("crv", "P-256")
-                put("x", keys.x)
-                put("y", keys.y)
-            })
-        }
-        
-        val timestamp = getWindowsTimestamp()
-        val signature = generateSignature("https://sisu.xboxlive.com/authorize", "", payload.toString(), keys.keyPair.private, timestamp)
-        
-        val request = Request.Builder()
-            .url("https://sisu.xboxlive.com/authorize")
-            .header("x-xbl-contract-version", "1")
-            .header("Cache-Control", "no-store, must-revalidate, no-cache")
-            .header("Signature", signature)
-            .post(payload.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-            
-        okHttpClient.newCall(request).execute().use { response ->
-            val body = response.body?.string() ?: ""
-            if (!response.isSuccessful) throw Exception("Sisu Authorize Failed: $body")
-            
-            val sisuResult = JSONObject(body)
-            val authHeaderToken = sisuResult.getJSONObject("AuthorizationToken").getString("Token")
-            val xui = sisuResult.getJSONObject("AuthorizationToken").getJSONObject("DisplayClaims").getJSONArray("xui").getJSONObject(0)
-            val uhs = xui.getString("uhs")
-            val gamertag = xui.optString("gtg", "Spartan")
-            val ageGroup = xui.optString("agg", "Adult")
-
-            if (ageGroup.equals("Child", ignoreCase = true) || ageGroup.equals("Teen", ignoreCase = true)) {
-                // Log warning but continue if sandbox allows, though most GSSV endpoints will 403 later
-                Log.w("XboxAuth", "User is restricted (Age Group: $ageGroup)")
+        try {
+            val accessToken = msaTokens.getString("access_token")
+            val keys = getOrCreateKeys()
+            val payload = JSONObject().apply {
+                put("AccessToken", "t=$accessToken")
+                put("AppId", CLIENT_ID)
+                put("DeviceToken", context.deviceToken)
+                put("Sandbox", "RETAIL")
+                put("SiteName", "user.auth.xboxlive.com")
+                put("UseModernGamertag", true)
+                put("ProofKey", JSONObject().apply {
+                    put("use", "sig")
+                    put("alg", "ES256")
+                    put("kty", "EC")
+                    put("crv", "P-256")
+                    put("x", keys.x)
+                    put("y", keys.y)
+                })
             }
+            
+            val timestamp = getWindowsTimestamp()
+            val signature = generateSignature("https://sisu.xboxlive.com/authorize", "", payload.toString(), keys.keyPair.private, timestamp)
+            
+            val request = Request.Builder()
+                .url("https://sisu.xboxlive.com/authorize")
+                .header("x-xbl-contract-version", "1")
+                .header("Cache-Control", "no-store, must-revalidate, no-cache")
+                .header("Signature", signature)
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+                
+            okHttpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: ""
+                if (!response.isSuccessful) {
+                    Log.w("XboxAuth", "Sisu authorize failed: $body. Falling back to RPS.")
+                    return@withContext completeAuth(msaTokens)
+                }
+                
+                val sisuResult = JSONObject(body)
+                
+                // Final reliability check for Sisu components
+                if (!sisuResult.has("DeviceToken") || !sisuResult.has("UserToken") || !sisuResult.has("AuthorizationToken")) {
+                    Log.w("XboxAuth", "Sisu response missing tokens. Falling back to RPS path.")
+                    return@withContext completeAuth(msaTokens)
+                }
 
-            val gamerpic = try { fetchGamerpic(uhs, authHeaderToken) } catch (_: Exception) { "" }
-            
-            val gssvTokenData = getXstsFromSisu(sisuResult, "http://gssv.xboxlive.com/")
-            val gssvToken = gssvTokenData.getString("Token")
-            
-            val xCloudLogin = gssvLogin(
-                "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user",
-                "xgpuweb",
-                gssvToken
-            )
-            
-            return@withContext XboxReadySession(
-                gamertag = gamertag,
-                uhs = uhs,
-                msaRefreshToken = msaTokens.optString("refresh_token", ""),
-                webXstsToken = authHeaderToken,
-                xHomeGsToken = xCloudLogin.first,
-                xHomeRegionUri = xCloudLogin.second,
-                xCloudGsToken = xCloudLogin.first,
-                xCloudRegionUri = xCloudLogin.second,
-                gamerpic = gamerpic,
-                ageGroup = ageGroup,
-                webXstsTokenFull = sisuResult
-            )
+                val authHeaderToken = sisuResult.getJSONObject("AuthorizationToken").getString("Token")
+                val xui = sisuResult.getJSONObject("AuthorizationToken").getJSONObject("DisplayClaims").getJSONArray("xui").getJSONObject(0)
+                val uhs = xui.getString("uhs")
+                val gamertag = xui.optString("gtg", "Spartan")
+                val ageGroup = xui.optString("agg", "Adult")
+
+                val gamerpic = try { fetchGamerpic(uhs, authHeaderToken) } catch (_: Exception) { "" }
+                
+                val gssvTokenData = getXstsFromSisu(sisuResult, "http://gssv.xboxlive.com/")
+                val gssvToken = gssvTokenData.getString("Token")
+                
+                val xCloudLogin = gssvLogin(
+                    "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user",
+                    "xgpuweb",
+                    gssvToken
+                )
+                
+                return@withContext XboxReadySession(
+                    gamertag = gamertag,
+                    uhs = uhs,
+                    msaRefreshToken = msaTokens.optString("refresh_token", ""),
+                    webXstsToken = authHeaderToken,
+                    xHomeGsToken = xCloudLogin.first,
+                    xHomeRegionUri = xCloudLogin.second,
+                    xCloudGsToken = xCloudLogin.first,
+                    xCloudRegionUri = xCloudLogin.second,
+                    gamerpic = gamerpic,
+                    ageGroup = ageGroup,
+                    webXstsTokenFull = sisuResult
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("XboxAuth", "God Mode Sisu recovery: ${e.message}. Forcing RPS.")
+            return@withContext completeAuth(msaTokens)
         }
     }
 
@@ -501,7 +542,14 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
 
         okHttpClient.newCall(request).execute().use { response ->
             val body = response.body?.string() ?: ""
-            if (!response.isSuccessful) throw Exception("Exchange Failed: $body")
+            if (!response.isSuccessful) {
+                val json = try { JSONObject(body) } catch(_: Exception) { null }
+                val error = json?.optString("error") ?: "unknown"
+                if (error == "invalid_grant") {
+                    throw Exception("El código ha expirado o ya fue canjeado. Por favor, reinicia el inicio de sesión.")
+                }
+                throw Exception("Exchange Failed ($error): $body")
+            }
             return@withContext JSONObject(body)
         }
     }
@@ -509,25 +557,34 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
     private suspend fun msaToXbox(msaAccessToken: String): String = withContext(Dispatchers.IO) {
         val endpoint = "https://user.auth.xboxlive.com/user/authenticate"
         val mediaType = "application/json".toMediaType()
-        val payload = JSONObject().apply {
-            put("Properties", JSONObject().apply {
-                put("AuthMethod", "RPS")
-                put("SiteName", "user.auth.xboxlive.com")
-                put("RpsTicket", "t=$msaAccessToken")
-            })
-            put("RelyingParty", "http://auth.xboxlive.com")
-            put("TokenType", "JWT")
+        
+        suspend fun attempt(prefix: String): String? {
+            val payload = JSONObject().apply {
+                put("Properties", JSONObject().apply {
+                    put("AuthMethod", "RPS")
+                    put("SiteName", "user.auth.xboxlive.com")
+                    put("RpsTicket", "$prefix$msaAccessToken")
+                })
+                put("RelyingParty", "http://auth.xboxlive.com")
+                put("TokenType", "JWT")
+            }
+            val request = Request.Builder()
+                .url(endpoint)
+                .addHeader("x-xbl-contract-version", "1")
+                .post(payload.toString().toRequestBody(mediaType))
+                .build()
+            
+            return try {
+                okHttpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        JSONObject(response.body?.string() ?: "").getString("Token")
+                    } else null
+                }
+            } catch (e: Exception) { null }
         }
-        val request = Request.Builder()
-            .url(endpoint)
-            .addHeader("x-xbl-contract-version", "1")
-            .post(payload.toString().toRequestBody(mediaType))
-            .build()
-        okHttpClient.newCall(request).execute().use { response ->
-            val body = response.body?.string() ?: ""
-            if (!response.isSuccessful) throw Exception("User Auth Failed: $body")
-            return@withContext JSONObject(body).getString("Token")
-        }
+
+        // Try 'd=' first (recommended for God Mode), fallback to 't='
+        attempt("d=") ?: attempt("t=") ?: throw Exception("User Auth Failed after dual-ticket attempts")
     }
 
     private suspend fun getXsts(userToken: String, relyingParty: String): JSONObject = withContext(Dispatchers.IO) {
@@ -548,7 +605,11 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             .build()
         okHttpClient.newCall(req).execute().use { response ->
             val body = response.body?.string() ?: ""
-            if (!response.isSuccessful) throw Exception("XSTS ($relyingParty) Failed: $body")
+            if (!response.isSuccessful) {
+                val errJson = try { JSONObject(body) } catch(_:Exception) { null }
+                val identity = errJson?.optString("Identity") ?: "Unknown"
+                throw Exception("XSTS ($relyingParty) Failed (Identity: $identity): $body")
+            }
             return@withContext JSONObject(body)
         }
     }

@@ -200,6 +200,30 @@ fun GameStreamWebView(
                 }
 
                 webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                        val url = request?.url?.toString() ?: return null
+                        
+                        if (appSettings.enableDynamicPatcher && url.contains(".js") && (url.contains("xbox.com") || url.contains("xboxlive.com"))) {
+                            try {
+                                val okHttpClient = okhttp3.OkHttpClient()
+                                val okRequest = okhttp3.Request.Builder().url(url).build()
+                                val response = okHttpClient.newCall(okRequest).execute()
+                                val body = response.body?.string() ?: ""
+                                
+                                val patchedBody = com.aistudio.xcloudgodmode.ai.engine.XCloudPatcher.patch(url, body)
+                                
+                                return WebResourceResponse(
+                                    "application/javascript",
+                                    "UTF-8",
+                                    patchedBody.byteInputStream()
+                                )
+                            } catch (e: Exception) {
+                                android.util.Log.e("GameStreamWebView", "Patching failed for $url: ${e.message}")
+                            }
+                        }
+                        return super.shouldInterceptRequest(view, request)
+                    }
+
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
                         if (view != null) {

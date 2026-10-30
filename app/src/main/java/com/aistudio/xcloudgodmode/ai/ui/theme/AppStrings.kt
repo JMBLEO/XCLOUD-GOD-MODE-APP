@@ -80,7 +80,10 @@ data class AppStringsData(
     val refreshCode: String,
     val fix403Error: String,
     val confirmQr: String,
-    val confirmQrSuccess: String
+    val confirmQrSuccess: String,
+    val biometricLoginTitle: String,
+    val biometricLoginDesc: String,
+    val openBrowserForPasskey: String
 )
 
 object AppStrings {
@@ -162,7 +165,10 @@ object AppStrings {
         refreshCode = "Actualizar Código",
         fix403Error = "Solucionar Error 403 (Abrir Navegador)",
         confirmQr = "Confirmar Activación",
-        confirmQrSuccess = "¡Activación confirmada! Iniciando sesión..."
+        confirmQrSuccess = "¡Activación confirmada! Iniciando sesión...",
+        biometricLoginTitle = "Passkeys / Teléfono",
+        biometricLoginDesc = "Utiliza el navegador del sistema para iniciar sesión con tu huella digital, Face ID o llave de seguridad FIDO2.",
+        openBrowserForPasskey = "Abrir Navegador para Passkeys"
     )
 
     val English = AppStringsData(
@@ -242,8 +248,11 @@ object AppStrings {
         copySuccess = "Code copied to clipboard",
         refreshCode = "Refresh Code",
         fix403Error = "Fix 403 Error (Open Browser)",
-        confirmQr = "Confirm Activation",
-        confirmQrSuccess = "Activation confirmed! Signing in..."
+        confirmQr = "Confirmar Activation",
+        confirmQrSuccess = "Activation confirmed! Signing in...",
+        biometricLoginTitle = "Passkeys / Phone",
+        biometricLoginDesc = "Use the system browser to sign in with your fingerprint, Face ID, or FIDO2 security key.",
+        openBrowserForPasskey = "Open Browser for Passkeys"
     )
 
     fun get(languageCode: String): AppStringsData {

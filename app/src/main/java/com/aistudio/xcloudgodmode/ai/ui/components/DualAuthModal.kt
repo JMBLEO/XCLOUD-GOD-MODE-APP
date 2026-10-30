@@ -58,31 +58,34 @@ fun DualAuthModal(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val strings = com.aistudio.xcloudgodmode.ai.ui.theme.AppStrings.get(settings.appLanguage)
-    var pendingAuth by remember { mutableStateOf<XboxFullAuthManager.PendingAuthContext?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
+    var pendingAuth by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<XboxFullAuthManager.PendingAuthContext?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
     var isLoadingQr by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var selectedTab by remember { mutableIntStateOf(0) } // 0: Smart TV (Device Code), 1: WebView (PKCE/Sisu)
     var isSubmitting by remember { mutableStateOf(false) }
     var webProgress by remember { mutableIntStateOf(0) }
-    var showManualCodeEntry by remember { mutableStateOf(false) }
-    var manualCodeInput by remember { mutableStateOf("") }
+    var showManualUrlEntry by remember { mutableStateOf(false) }
+    var manualUrlInput by remember { mutableStateOf("") }
     var activeWebView by remember { mutableStateOf<WebView?>(null) }
     
     val capturedCode by homeViewModel.capturedAuthCode.collectAsState()
 
     // Handle automatically captured deep link
-    LaunchedEffect(capturedCode, pendingAuth) {
+    LaunchedEffect(capturedCode) {
         val code = capturedCode
         val auth = pendingAuth
-        if (code != null && auth != null && !auth.isDeviceCodeFlow) {
+        if (code != null && auth != null && !auth.isDeviceCodeFlow && !isSubmitting) {
+            Log.d("AuthModal", "Processing captured code: $code")
             isSubmitting = true
+            errorMessage = null
             try {
                 val session = authManager.completeSisuAuth(code, auth)
                 homeViewModel.clearCapturedAuthCode()
                 onSuccess(session)
             } catch (e: Exception) {
                 errorMessage = "Error en canje automático: ${e.message}"
+                // If it's an invalid grant, maybe the code expired, don't clear it immediately so user can try manual
             } finally {
                 isSubmitting = false
             }
@@ -102,18 +105,22 @@ fun DualAuthModal(
     }
 
     LaunchedEffect(selectedTab) {
-        isLoading = true
-        errorMessage = null
-        try {
-            pendingAuth = if (selectedTab == 0) {
-                authManager.initDeviceLogin()
-            } else {
-                authManager.initWebLogin()
+        // Only initialize if we don't have a pending auth or if the type mismatch
+        val current = pendingAuth
+        if (current == null || (selectedTab == 0 && !current.isDeviceCodeFlow) || (selectedTab == 1 && current.isDeviceCodeFlow)) {
+            isLoading = true
+            errorMessage = null
+            try {
+                pendingAuth = if (selectedTab == 0) {
+                    authManager.initDeviceLogin()
+                } else {
+                    authManager.initWebLogin()
+                }
+            } catch (e: Exception) {
+                errorMessage = e.message
+            } finally {
+                isLoading = false
             }
-        } catch (e: Exception) {
-            errorMessage = e.message
-        } finally {
-            isLoading = false
         }
     }
 
@@ -121,23 +128,39 @@ fun DualAuthModal(
     LaunchedEffect(pendingAuth, selectedTab) {
         val auth = pendingAuth
         if (selectedTab == 0 && auth != null && auth.isDeviceCodeFlow) {
+            val intervalMs = (auth.sessionId.toIntOrNull() ?: 5).coerceIn(2, 15) * 1000L
+            Log.d("AuthModal", "Starting QR polling every ${intervalMs}ms")
+            
             while (true) {
-                delay(5000)
+                delay(intervalMs)
                 try {
                     val tokens = authManager.checkLoginStatus(auth.deviceCode)
                     if (tokens != null) {
                         isSubmitting = true
-                        val session = authManager.completeAuth(tokens)
-                        onSuccess(session)
-                        break
+                        try {
+                            val session = authManager.completeAuth(tokens)
+                            onSuccess(session)
+                            break
+                        } catch (e: Exception) {
+                            errorMessage = "Error al completar sesión: ${e.message}"
+                            isSubmitting = false
+                        }
                     }
                 } catch (e: Exception) {
                     val msg = e.message ?: ""
-                    if (!msg.contains("authorization_pending") && !msg.contains("Status: null")) {
-                        if (msg.contains("expired_token")) {
-                           errorMessage = "El código ha expirado. Por favor actualízalo."
+                    when {
+                        msg.contains("authorization_pending") -> { /* Continue polling */ }
+                        msg.contains("slow_down") -> { delay(intervalMs) /* Extra wait if requested by MS */ }
+                        msg.contains("expired_token") || msg.contains("invalid_grant") -> {
+                            errorMessage = "El código ha expirado. Por favor actualiza el QR."
+                            break
                         }
-                        break
+                        else -> {
+                            if (!msg.contains("Status: null")) {
+                                errorMessage = "Error en vinculación: $msg"
+                                break
+                            }
+                        }
                     }
                 }
             }
@@ -207,8 +230,8 @@ fun DualAuthModal(
                     Tab(
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 },
-                        text = { Text(strings.nativeLoginTitle) },
-                        icon = { Icon(Icons.Default.Language, contentDescription = null) }
+                        text = { Text(strings.biometricLoginTitle) },
+                        icon = { Icon(Icons.Default.Fingerprint, contentDescription = null) }
                     )
                 }
 
@@ -332,7 +355,22 @@ fun DualAuthModal(
                                                             Text(strings.confirmQr, style = MaterialTheme.typography.labelSmall)
                                                         }
                                                         
-                                                        Spacer(modifier = Modifier.width(8.dp))
+                                                        Spacer(modifier = Modifier.width(4.dp))
+
+                                                        TextButton(
+                                                            onClick = {
+                                                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                                                val clip = ClipData.newPlainText("Xbox Auth Code", auth.userCode)
+                                                                clipboard.setPrimaryClip(clip)
+                                                                Toast.makeText(context, "Código copiado", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        ) {
+                                                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                            Text("Copiar", style = MaterialTheme.typography.labelSmall)
+                                                        }
+                                                        
+                                                        Spacer(modifier = Modifier.width(4.dp))
                                                         
                                                         TextButton(
                                                             onClick = { coroutineScope.launch { refreshQr() } }
@@ -401,75 +439,114 @@ fun DualAuthModal(
                                             },
                                             modifier = Modifier.size(qrBoxSize)
                                         )
+                                        
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            TextButton(
+                                                onClick = {
+                                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                                    val clip = ClipData.newPlainText("Xbox Auth Code", auth.userCode)
+                                                    clipboard.setPrimaryClip(clip)
+                                                    Toast.makeText(context, "Código copiado", Toast.LENGTH_SHORT).show()
+                                                }
+                                            ) {
+                                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Copiar Código")
+                                            }
+                                            
+                                            TextButton(onClick = { coroutineScope.launch { refreshQr() } }) {
+                                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("Actualizar QR")
+                                            }
+                                        }
                                     }
                                 }
                             }
                         } else {
-                            // WebView PKCE / Sisu Tab
-                            Column(modifier = Modifier.fillMaxSize()) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(Color(0xFF16191D))
-                                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                            // Passkeys / Biometric Tab
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(20.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Fingerprint,
+                                    contentDescription = null,
+                                    tint = Color(0xFF4ADE80),
+                                    modifier = Modifier.size(64.dp)
+                                )
+
+                                Text(
+                                    text = strings.biometricLoginDesc,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.LightGray,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Button(
+                                    onClick = {
+                                        try {
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(auth.authUrl))
+                                            context.startActivity(intent)
+                                            Toast.makeText(context, "Navegador abierto. Autoriza y regresa.", Toast.LENGTH_LONG).show()
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "No se pudo abrir navegador: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10))
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(8.dp)
-                                                .background(Color(0xFF107C10), RoundedCornerShape(4.dp))
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = strings.nativeLoginTitle,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = Color.LightGray
-                                        )
-                                    }
+                                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(strings.openBrowserForPasskey, fontWeight = FontWeight.Bold)
+                                }
 
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        IconButton(
-                                            onClick = { activeWebView?.reload() },
-                                            modifier = Modifier.size(36.dp)
-                                        ) {
-                                            Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(18.dp))
-                                        }
+                                HorizontalDivider(color = Color(0xFF1F2329), modifier = Modifier.padding(vertical = 8.dp))
 
-                                        IconButton(
-                                            onClick = {
-                                                try {
-                                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(auth.authUrl))
-                                                    context.startActivity(intent)
-                                                } catch (e: Exception) {
-                                                    Toast.makeText(context, "No se pudo abrir navegador: ${e.message}", Toast.LENGTH_SHORT).show()
-                                                }
-                                            },
-                                            modifier = Modifier.size(36.dp)
-                                        ) {
-                                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, tint = Color(0xFF4ADE80), modifier = Modifier.size(18.dp))
-                                        }
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text(
+                                        text = strings.manualCodePrompt,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = Color.White
+                                    )
 
-                                        TextButton(
-                                            onClick = { showManualCodeEntry = !showManualCodeEntry },
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(
-                                                text = if (showManualCodeEntry) "Ocultar" else strings.redeemCode,
-                                                color = Color(0xFF38BDF8),
-                                                style = MaterialTheme.typography.labelSmall
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = manualUrlInput,
+                                            onValueChange = { manualUrlInput = it },
+                                            placeholder = { Text("ms-xal://...", style = MaterialTheme.typography.bodySmall, color = Color.Gray) },
+                                            modifier = Modifier.weight(1f),
+                                            singleLine = true,
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = Color(0xFF107C10),
+                                                unfocusedBorderColor = Color(0xFF333A42),
+                                                focusedTextColor = Color.White,
+                                                unfocusedTextColor = Color.White
                                             )
-                                        }
-                                        
-                                        if (capturedCode != null) {
-                                            Button(
-                                                onClick = {
+                                        )
+
+                                        Button(
+                                            onClick = {
+                                                val code = authManager.extractAuthCode(manualUrlInput)
+                                                if (code.isNotEmpty()) {
                                                     coroutineScope.launch {
                                                         isSubmitting = true
                                                         try {
-                                                            val session = authManager.completeSisuAuth(capturedCode!!, auth)
-                                                            homeViewModel.clearCapturedAuthCode()
+                                                            val session = authManager.completeSisuAuth(code, auth)
                                                             onSuccess(session)
                                                         } catch (e: Exception) {
                                                             errorMessage = "Error en canje: ${e.message}"
@@ -477,201 +554,40 @@ fun DualAuthModal(
                                                             isSubmitting = false
                                                         }
                                                     }
-                                                },
-                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
-                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                                modifier = Modifier.height(32.dp)
-                                            ) {
-                                                Text("Confirmar Inicio", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                                            }
+                                                }
+                                            },
+                                            enabled = manualUrlInput.isNotBlank() && !isSubmitting,
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2B2B36)),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text("Confirmar")
                                         }
                                     }
-                                }
-
-                                if (webProgress in 1..99) {
-                                    LinearProgressIndicator(
-                                        progress = { webProgress / 100f },
-                                        modifier = Modifier.fillMaxWidth().height(2.dp),
-                                        color = Color(0xFF107C10),
-                                        trackColor = Color(0xFF1C2024)
-                                    )
-                                }
-
-                                if (showManualCodeEntry) {
-                                    Surface(
-                                        color = Color(0xFF1A1F26),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier.fillMaxWidth().padding(12.dp).border(1.dp, Color(0xFF282D33), RoundedCornerShape(8.dp))
-                                    ) {
-                                        Column(modifier = Modifier.padding(12.dp)) {
-                                            Text(text = strings.manualCodePrompt, style = MaterialTheme.typography.labelMedium, color = Color.LightGray)
-                                            Spacer(modifier = Modifier.height(8.dp))
-                                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                                OutlinedTextField(
-                                                    value = manualCodeInput,
-                                                    onValueChange = { manualCodeInput = it },
-                                                    placeholder = { Text("ms-xal-...", style = MaterialTheme.typography.bodySmall, color = Color.Gray) },
-                                                    modifier = Modifier.weight(1f),
-                                                    singleLine = true,
-                                                    colors = OutlinedTextFieldDefaults.colors(
-                                                        focusedBorderColor = Color(0xFF107C10),
-                                                        unfocusedBorderColor = Color(0xFF333A42),
-                                                        focusedTextColor = Color.White,
-                                                        unfocusedTextColor = Color.White
-                                                    )
-                                                )
-                                                Spacer(modifier = Modifier.width(8.dp))
-                                                Button(
-                                                    onClick = {
-                                                        val code = authManager.extractAuthCode(manualCodeInput)
-                                                        if (code.isNotEmpty()) {
-                                                            coroutineScope.launch {
-                                                                isSubmitting = true
-                                                                try {
-                                                                    val session = authManager.completeSisuAuth(code, auth)
-                                                                    onSuccess(session)
-                                                                } catch (e: Exception) {
-                                                                    errorMessage = "Error en canje: ${e.message}"
-                                                                } finally {
-                                                                    isSubmitting = false
-                                                                }
-                                                            }
-                                                        }
-                                                    },
-                                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
-                                                    shape = RoundedCornerShape(8.dp)
-                                                ) {
-                                                    Text(strings.redeemCode, fontWeight = FontWeight.Bold)
+                                    
+                                    if (capturedCode != null) {
+                                        Button(
+                                            onClick = {
+                                                coroutineScope.launch {
+                                                    isSubmitting = true
+                                                    try {
+                                                        val session = authManager.completeSisuAuth(capturedCode!!, auth)
+                                                        homeViewModel.clearCapturedAuthCode()
+                                                        onSuccess(session)
+                                                    } catch (e: Exception) {
+                                                        errorMessage = "Error en canje: ${e.message}"
+                                                    } finally {
+                                                        isSubmitting = false
+                                                    }
                                                 }
-                                            }
+                                            },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF14532D)),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Icon(Icons.Default.CheckCircle, contentDescription = null)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Canjear Código Capturado", fontWeight = FontWeight.Bold)
                                         }
-                                    }
-                                }
-
-                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                                    key(auth.authUrl) {
-                                        AndroidView(
-                                            modifier = Modifier.fillMaxSize(),
-                                            factory = { ctx ->
-                                                WebView(ctx).apply {
-                                                    activeWebView = this
-                                                    layoutParams = android.view.ViewGroup.LayoutParams(
-                                                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                                                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                                                    )
-                                                    val cookieManager = android.webkit.CookieManager.getInstance()
-                                                    cookieManager.setAcceptCookie(true)
-                                                    cookieManager.setAcceptThirdPartyCookies(this, true)
-
-                                                    com.aistudio.xcloudgodmode.ai.engine.GodModeEngineUtils.applyWebViewFlags(
-                                                        webView = this,
-                                                        enableGpu = settings.enableGpuRasterization,
-                                                        enableDark = settings.autoDarkModeWebContents,
-                                                        enforceTls13 = settings.enforceTls13Strict
-                                                    )
-
-                                                    this.settings.apply {
-                                                        javaScriptEnabled = true
-                                                        domStorageEnabled = true
-                                                        databaseEnabled = true
-                                                        loadsImagesAutomatically = true
-                                                        useWideViewPort = true
-                                                        loadWithOverviewMode = true
-                                                        javaScriptCanOpenWindowsAutomatically = true
-                                                        cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
-                                                        val defaultUA = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
-                                                        userAgentString = defaultUA.replace("; wv", "")
-                                                    }
-
-                                                    webChromeClient = object : android.webkit.WebChromeClient() {
-                                                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                                                            webProgress = newProgress
-                                                        }
-                                                    }
-
-                                                    addJavascriptInterface(object {
-                                                        @android.webkit.JavascriptInterface
-                                                        fun onTokenIntercepted(tokenData: String) {
-                                                            Log.d("DualAuthModal", "Token Intercepted via JS: $tokenData")
-                                                            try {
-                                                                val json = JSONObject(tokenData)
-                                                                val gsToken = json.optString("gsToken")
-                                                                val region = json.optString("region")
-                                                                if (gsToken.isNotBlank()) {
-                                                                    coroutineScope.launch {
-                                                                        // If we intercept a valid streaming token, we can potentially bypass the rest of the flow
-                                                                        // for a "Fast Login" experience.
-                                                                        // For now, we'll just log it and maybe show a "Token captured" toast.
-                                                                        withContext(Dispatchers.Main) {
-                                                                            Toast.makeText(context, "Streaming Token Interceptado ✅", Toast.LENGTH_SHORT).show()
-                                                                        }
-                                                                    }
-                                                                }
-                                                            } catch (_: Exception) {}
-                                                        }
-                                                    }, "AndroidTokenBridge")
-
-                                                    webViewClient = object : WebViewClient() {
-                                                        override fun onPageFinished(view: WebView?, url: String?) {
-                                                            super.onPageFinished(view, url)
-                                                            if (url?.contains("xbox.com") == true && url.contains("play")) {
-                                                                val js = """
-                                                                    (function() {
-                                                                        try {
-                                                                            for (let i = 0; i < localStorage.length; i++) {
-                                                                                let key = localStorage.key(i);
-                                                                                if (key && key.includes('xCloudToken')) {
-                                                                                    AndroidTokenBridge.onTokenIntercepted(localStorage.getItem(key));
-                                                                                    return;
-                                                                                }
-                                                                            }
-                                                                        } catch(e) {}
-                                                                    })();
-                                                                """.trimIndent()
-                                                                view?.evaluateJavascript(js, null)
-                                                            }
-                                                        }
-                                                        private fun handleUrlIntercept(url: String?): Boolean {
-                                                            if (url == null) return false
-                                                            if (url.startsWith("ms-xal-") || url.contains("code=") || url.contains("approval_code=")) {
-                                                                val code = authManager.extractAuthCode(url)
-                                                                if (code.isNotEmpty() && !code.startsWith("http")) {
-                                                                    coroutineScope.launch {
-                                                                        isSubmitting = true
-                                                                        try {
-                                                                            val session = authManager.completeSisuAuth(code, auth)
-                                                                            onSuccess(session)
-                                                                        } catch (e: Exception) {
-                                                                            errorMessage = "Error en canje: ${e.message}"
-                                                                        } finally {
-                                                                            isSubmitting = false
-                                                                        }
-                                                                    }
-                                                                    return true
-                                                                }
-                                                            }
-                                                            return false
-                                                        }
-
-                                                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?) = handleUrlIntercept(request?.url?.toString())
-                                                        override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) { handleUrlIntercept(url) }
-                                                        override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: android.webkit.WebResourceError?) {
-                                                            if (request?.isForMainFrame == true) {
-                                                                val desc = error?.description?.toString() ?: ""
-                                                                if (!desc.contains("ERR_UNKNOWN_URL_SCHEME")) {
-                                                                    errorMessage = "Error de conexión ($desc). Abre en navegador externo."
-                                                                }
-                                                            }
-                                                        }
-                                                        override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
-                                                            view?.reload()
-                                                            return true
-                                                        }
-                                                    }
-                                                    loadUrl(auth.authUrl)
-                                                }
-                                            }
-                                        )
                                     }
                                 }
                             }

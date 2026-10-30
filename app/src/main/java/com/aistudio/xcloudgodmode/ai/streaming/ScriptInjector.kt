@@ -117,6 +117,8 @@ class ScriptInjector(private val context: android.content.Context) {
 
                 let audioCtx = null;
                 let gainNode = null;
+                let hapticsActive = ${settings.vibrationEnabled};
+                let hapticsIntensity = ${settings.vibrationIntensity};
 
                 function hookAudio(videoElem) {
                     if (videoElem.__godModeAudio) return;
@@ -129,10 +131,53 @@ class ScriptInjector(private val context: android.content.Context) {
                         if (AudioContextClass) {
                             audioCtx = new AudioContextClass();
                             const source = audioCtx.createMediaElementSource(videoElem);
+                            
+                            // 1. Audio Output Path
                             gainNode = audioCtx.createGain();
                             gainNode.gain.value = $audioGain;
                             source.connect(gainNode);
                             gainNode.connect(audioCtx.destination);
+
+                            // 2. Audio-to-Haptics Path (Bass Analysis)
+                            if (hapticsActive && window.GodModeAndroidBridge) {
+                                const analyser = audioCtx.createAnalyser();
+                                analyser.fftSize = 256;
+                                
+                                const bassFilter = audioCtx.createBiquadFilter();
+                                bassFilter.type = "lowpass";
+                                bassFilter.frequency.value = 120; // Cutoff at 120Hz for pure bass
+                                
+                                source.connect(bassFilter);
+                                bassFilter.connect(analyser);
+                                
+                                const bufferLength = analyser.frequencyBinCount;
+                                const dataArray = new Uint8Array(bufferLength);
+                                
+                                let lastHapticTime = 0;
+                                
+                                function processHaptics() {
+                                    if (!hapticsActive) return;
+                                    
+                                    analyser.getByteFrequencyData(dataArray);
+                                    let sum = 0;
+                                    // Use first few bins for sub-120Hz analysis
+                                    for (let i = 0; i < 5; i++) {
+                                        sum += dataArray[i];
+                                    }
+                                    const average = sum / 5;
+                                    const threshold = 160; // Lowered from 180 for better bass detection
+                                    
+                                    const now = Date.now();
+                                    if (average > threshold && (now - lastHapticTime) > 75) {
+                                        // Intensity is scaled by both audio level and user settings
+                                        const intensity = Math.min(100, (average / 255) * hapticsIntensity * 1.2);
+                                        window.GodModeAndroidBridge.triggerNativeHaptics(50, intensity);
+                                        lastHapticTime = now;
+                                    }
+                                    requestAnimationFrame(processHaptics);
+                                }
+                                processHaptics();
+                            }
                         }
                     } catch(e) { console.warn('[GodMode] Audio Hook:', e); }
                 }

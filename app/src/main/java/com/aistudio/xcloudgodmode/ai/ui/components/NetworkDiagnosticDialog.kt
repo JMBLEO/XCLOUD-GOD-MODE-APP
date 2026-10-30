@@ -150,7 +150,7 @@ fun NetworkDiagnosticDialog(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 MetricBox(label = "RTT", value = "${res.rttMs}ms", color = Color(0xFF4ADE80), modifier = Modifier.weight(1f))
-                                MetricBox(label = "Jitter", value = String.format("%.1fms", res.jitterMs), color = Color(0xFF38BDF8), modifier = Modifier.weight(1f))
+                                MetricBox(label = "Jitter", value = "%.1fms".format(java.util.Locale.US, res.jitterMs), color = Color(0xFF38BDF8), modifier = Modifier.weight(1f))
                                 MetricBox(label = "Pérdida", value = "${res.packetLossPercent}%", color = if (res.packetLossPercent > 0) Color(0xFFEF4444) else Color(0xFF4ADE80), modifier = Modifier.weight(1f))
                                 MetricBox(label = "MTU", value = "${res.mtuSize}", color = Color.White, modifier = Modifier.weight(1f))
                             }
