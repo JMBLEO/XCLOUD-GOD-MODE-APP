@@ -40,7 +40,8 @@ class WebRTCStreamManager(
         val rtt: Long = 0,
         val jitter: Double = 0.0,
         val packetLoss: Int = 0,
-        val bitrate: Long = 0
+        val bitrate: Long = 0,
+        val fps: Int = 60
     )
 
     init {

@@ -1,5 +1,6 @@
 package com.aistudio.xcloudgodmode.ai.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -52,13 +53,6 @@ fun HomeScreen(
     onLaunchConsole: (String) -> Unit,
     viewModel: HomeViewModel = viewModel()
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("xCloud Library", "My Consoles", "Advanced Settings")
-
-    val config = LocalConfiguration.current
-    val deviceType = viewModel.determineDeviceType(config.screenWidthDp)
-    val columnsCount = viewModel.getGridColumnsForDevice(deviceType)
-
     val userSession by viewModel.userSession.collectAsState()
     val isAuthModalOpen by viewModel.isAuthModalOpen.collectAsState()
     val selectedGameForDetails by viewModel.selectedGameForDetails.collectAsState()
@@ -66,6 +60,14 @@ fun HomeScreen(
     val settings by viewModel.settings.collectAsState()
     val chameleonColor by viewModel.chameleonColor.collectAsState()
     val consoles by viewModel.consoles.collectAsState()
+
+    var selectedTab by remember { mutableIntStateOf(0) }
+    val strings = com.aistudio.xcloudgodmode.ai.ui.theme.AppStrings.get(settings.appLanguage)
+    val tabs = listOf(strings.xcloudTab, strings.consolesTab, strings.settingsTab)
+
+    val config = LocalConfiguration.current
+    val deviceType = viewModel.determineDeviceType(config.screenWidthDp)
+    val columnsCount = viewModel.getGridColumnsForDevice(deviceType)
 
     var isBladeOpen by remember { mutableStateOf(false) }
 
@@ -109,6 +111,20 @@ fun HomeScreen(
                 else -> false
             }
         } else false
+    }
+
+    // Predictive Back Handling in Home
+    BackHandler(enabled = isBladeOpen || selectedGameForDetails != null || postStreamSummary != null) {
+        if (selectedGameForDetails != null) {
+            viewModel.hideDetails()
+        } else if (isBladeOpen) {
+            isBladeOpen = false
+            com.aistudio.xcloudgodmode.ai.audio.PlayStaxBoxNativeSoundEngine.play(
+                com.aistudio.xcloudgodmode.ai.audio.SoundEventType.BLADE_CLOSE
+            )
+        } else if (postStreamSummary != null) {
+            viewModel.hideSummary()
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize().onKeyEvent(onGamepadKeyEvent)) {
@@ -314,6 +330,7 @@ fun HomeScreen(
         if (selectedGameForDetails != null) {
             GameDetailsModal(
                 game = selectedGameForDetails!!,
+                settings = settings,
                 onClose = { viewModel.hideDetails() },
                 onStartStream = {
                     viewModel.hideDetails()
@@ -327,6 +344,7 @@ fun HomeScreen(
         if (isAuthModalOpen) {
             DualAuthModal(
                 authManager = authManager,
+                settings = settings,
                 onDismiss = { viewModel.showAuth(false) },
                 onSuccess = { session -> viewModel.setSession(session, authManager) }
             )
@@ -474,6 +492,7 @@ fun GamePosterCard(
     settings: SettingsModel,
     modifier: Modifier = Modifier
 ) {
+    val screenScale = com.aistudio.xcloudgodmode.ai.ui.theme.LocalScreenScale.current
     var isFocused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(targetValue = if (isFocused) 1.05f else 1.0f, label = "card_scale")
 
@@ -483,7 +502,7 @@ fun GamePosterCard(
             .fillMaxWidth()
             .aspectRatio(2f / 3f)
             .graphicsLayer {
-                val baseScale = settings.posterScalePercent / 100f
+                val baseScale = screenScale.posterScale
                 scaleX = scale * baseScale
                 scaleY = scale * baseScale
             }
@@ -495,8 +514,8 @@ fun GamePosterCard(
                 }
             }
             .border(
-                width = if (isFocused) 2.5.dp else 1.dp,
-                color = if (isFocused) accentColor else Color.White.copy(alpha = 0.1f),
+                width = if (isFocused) 3.dp else 1.dp,
+                color = if (isFocused) (if (settings.enableLeanbackFocus) Color(0xFF107C10) else accentColor) else Color.White.copy(alpha = 0.1f),
                 shape = RoundedCornerShape(12.dp)
             ),
         shape = RoundedCornerShape(12.dp),
@@ -519,13 +538,17 @@ fun GamePosterCard(
                     onFavoriteToggle()
                     com.aistudio.xcloudgodmode.ai.audio.PlayStaxBoxNativeSoundEngine.play(com.aistudio.xcloudgodmode.ai.audio.SoundEventType.FAVORITE)
                 },
-                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(28.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .size(screenScale.scaledDp(32f))
+                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
             ) {
                 Icon(
                     imageVector = if (game.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
                     contentDescription = null,
                     tint = if (game.isFavorite) Color.Yellow else Color.White,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(screenScale.scaledDp(18f))
                 )
             }
         }

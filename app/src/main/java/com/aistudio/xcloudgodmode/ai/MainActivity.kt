@@ -15,12 +15,17 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.compose.runtime.CompositionLocalProvider
 import com.aistudio.xcloudgodmode.ai.services.GeminiService
 import com.aistudio.xcloudgodmode.ai.services.NetworkClient
 import com.aistudio.xcloudgodmode.ai.services.WebRTCStreamManager
 import com.aistudio.xcloudgodmode.ai.services.XboxFullAuthManager
 import com.aistudio.xcloudgodmode.ai.ui.screens.HomeScreen
 import com.aistudio.xcloudgodmode.ai.ui.screens.StreamScreen
+import com.aistudio.xcloudgodmode.ai.ui.theme.AppLocaleManager
+import com.aistudio.xcloudgodmode.ai.ui.theme.LocalAppStrings
+import com.aistudio.xcloudgodmode.ai.ui.theme.LocalScreenScaleProvider
+import com.aistudio.xcloudgodmode.ai.viewmodels.HomeViewModel
 
 class MainActivity : ComponentActivity() {
 
@@ -41,12 +46,31 @@ class MainActivity : ComponentActivity() {
         com.aistudio.xcloudgodmode.ai.audio.PlayStaxBoxNativeSoundEngine.init(this)
 
         setContent {
+            val homeViewModel: HomeViewModel = viewModel()
+            val settings by homeViewModel.settings.collectAsState()
+            val currentLanguage by AppLocaleManager.currentLanguageState.collectAsState()
+            val currentStrings by AppLocaleManager.currentStrings.collectAsState()
+
+            // Keep AppLocaleManager in sync with settings.appLanguage
+            LaunchedEffect(settings.appLanguage) {
+                AppLocaleManager.setLanguageByCode(settings.appLanguage)
+            }
+
             XCloudGodModeTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MainNavigation(xboxAuthManager, streamManager, geminiService)
+                    LocalScreenScaleProvider(settings = settings) {
+                        CompositionLocalProvider(LocalAppStrings provides currentStrings) {
+                            MainNavigation(
+                                authManager = xboxAuthManager,
+                                streamManager = streamManager,
+                                geminiService = geminiService,
+                                homeViewModel = homeViewModel
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -57,15 +81,16 @@ class MainActivity : ComponentActivity() {
 fun MainNavigation(
     authManager: XboxFullAuthManager,
     streamManager: WebRTCStreamManager,
-    geminiService: GeminiService
+    geminiService: GeminiService,
+    homeViewModel: HomeViewModel
 ) {
     val navController = rememberNavController()
-
-    val homeViewModel: com.aistudio.xcloudgodmode.ai.viewmodels.HomeViewModel = viewModel()
     val settings by homeViewModel.settings.collectAsState()
 
     var activeGsToken by remember { mutableStateOf("demo_token") }
     var activeSessionPath by remember { mutableStateOf("https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user") }
+    var activeTitleId by remember { mutableStateOf("9NKX70BBCDRN") }
+    var activeTitleName by remember { mutableStateOf("Forza Horizon 5") }
 
     NavHost(navController = navController, startDestination = "home") {
         composable("home") {
@@ -74,11 +99,15 @@ fun MainNavigation(
                 onLaunchGame = { titleId, path ->
                     activeGsToken = "demo_token"
                     activeSessionPath = path
+                    activeTitleId = titleId
+                    activeTitleName = "Xbox Cloud Title"
                     navController.navigate("stream")
                 },
                 onLaunchConsole = { consoleId ->
                     activeGsToken = "demo_console_token"
                     activeSessionPath = "https://ukw.core.gssv-play-prod.xboxlive.com/v2/login/user"
+                    activeTitleId = consoleId
+                    activeTitleName = "Xbox Console Remote Play"
                     navController.navigate("stream")
                 },
                 viewModel = homeViewModel
@@ -90,6 +119,8 @@ fun MainNavigation(
                 gsToken = activeGsToken,
                 sessionPath = activeSessionPath,
                 settings = settings,
+                titleId = activeTitleId,
+                gameTitle = activeTitleName,
                 onClose = { navController.popBackStack() }
             )
         }

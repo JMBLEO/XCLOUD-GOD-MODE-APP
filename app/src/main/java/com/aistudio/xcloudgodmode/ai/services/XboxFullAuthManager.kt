@@ -127,7 +127,7 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
                 "client_id=$CLIENT_ID" +
                 "&response_type=code" +
                 "&approval_prompt=auto" +
-                "&scope=service::user.auth.xboxlive.com::MBI_SSL%20offline_access" +
+                "&scope=" + URLEncoder.encode(SCOPES, "UTF-8") +
                 "&redirect_uri=" + URLEncoder.encode(REDIRECT_URI, "UTF-8") +
                 "&code_challenge=$codeChallenge" +
                 "&code_challenge_method=S256" +
@@ -224,7 +224,7 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             .add("code_verifier", verifier)
             .add("grant_type", "authorization_code")
             .add("redirect_uri", REDIRECT_URI)
-            .add("scope", "service::user.auth.xboxlive.com::MBI_SSL offline_access")
+            .add("scope", SCOPES)
             .build()
 
         val request = Request.Builder()
@@ -345,7 +345,7 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             .add("client_id", CLIENT_ID)
             .add("refresh_token", refreshToken)
             .add("grant_type", "refresh_token")
-            .add("scope", "service::user.auth.xboxlive.com::MBI_SSL offline_access")
+            .add("scope", SCOPES)
             .build()
 
         val request = Request.Builder()
@@ -361,7 +361,7 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
     }
 
     fun extractAuthCode(input: String): String {
-        val match = Regex("""[?&]code=([^&#\s]+)""").find(input)
+        val match = Regex("""[?&#](?:code|approval_code)=([^&#\s]+)""").find(input)
         return if (match != null) URLDecoder.decode(match.groupValues[1], "UTF-8") else input.trim()
     }
 

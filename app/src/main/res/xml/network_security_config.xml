@@ -6,17 +6,28 @@
         </trust-anchors>
     </base-config>
     <domain-config cleartextTrafficPermitted="false">
-        <domain includeSubdomains="true">xboxservices.com</domain>
+        <!-- 14 Xbox & Microsoft Core Media, Gaming and Auth Domains -->
         <domain includeSubdomains="true">emerald.xboxservices.com</domain>
         <domain includeSubdomains="true">contentaccess.exp.xboxservices.com</domain>
-        <domain includeSubdomains="true">xboxlive.com</domain>
-        <domain includeSubdomains="true">clc.core.gssv-play-prod.xboxlive.com</domain>
-        <domain includeSubdomains="true">play.xbox.com</domain>
+        <domain includeSubdomains="true">userpresence.xboxlive.com</domain>
         <domain includeSubdomains="true">assets.play.xbox.com</domain>
-        <domain includeSubdomains="true">s-microsoft.com</domain>
+        <domain includeSubdomains="true">notificationinbox.xboxlive.com</domain>
+        <domain includeSubdomains="true">xblmessaging.xboxlive.com</domain>
+        <domain includeSubdomains="true">rta.xboxlive.com</domain>
+        <domain includeSubdomains="true">clc.core.gssv-play-prod.xboxlive.com</domain>
+        <domain includeSubdomains="true">peoplehub.xboxlive.com</domain>
+        <domain includeSubdomains="true">chat.xboxlive.com</domain>
+        <domain includeSubdomains="true">accounts.xboxlive.com</domain>
+        <domain includeSubdomains="true">uhf.microsoft.com</domain>
         <domain includeSubdomains="true">store-images.s-microsoft.com</domain>
         <domain includeSubdomains="true">store-images.microsoft.com</domain>
         <domain includeSubdomains="true">tore-images.microsoft.com</domain>
-        <domain includeSubdomains="true">uhf.microsoft.com</domain>
+        <!-- Root parent domains for complete TLS coverage -->
+        <domain includeSubdomains="true">xboxservices.com</domain>
+        <domain includeSubdomains="true">xboxlive.com</domain>
+        <domain includeSubdomains="true">xbox.com</domain>
+        <domain includeSubdomains="true">microsoft.com</domain>
+        <domain includeSubdomains="true">s-microsoft.com</domain>
+        <domain includeSubdomains="true">live.com</domain>
     </domain-config>
 </network-security-config>

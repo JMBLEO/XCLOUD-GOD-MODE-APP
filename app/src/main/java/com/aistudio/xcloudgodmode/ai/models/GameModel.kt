@@ -1,5 +1,7 @@
 package com.aistudio.xcloudgodmode.ai.models
 
+import com.aistudio.xcloudgodmode.ai.api.XboxEndpoints
+
 data class GameModel(
     val id: String,
     val title: String,
@@ -24,25 +26,23 @@ data class GameModel(
     val chameleonRgb: Triple<Int, Int, Int>? = null
 ) {
     /**
-     * Devuelve la URL formateada para la CDN de Microsoft con parámetros de redimensionado según el dispositivo
+     * Formats poster URL with Microsoft Store or custom sizing
      */
     fun getFormattedPosterUrl(width: Int = 320, height: Int = 480): String {
         if (posterUrl.isBlank()) return ""
-        val sanitized = if (posterUrl.startsWith("//")) "https:$posterUrl" else posterUrl
-        return if (!sanitized.contains("?")) {
-            "$sanitized?w=$width&h=$height&format=jpg&q=85"
-        } else {
-            sanitized
-        }
+        return XboxEndpoints.normalizeImageUrl(posterUrl, width, height)
     }
 
-    fun getFormattedSuperHeroUrl(width: Int = 1280, height: Int = 720): String {
-        if (superHeroUrl.isBlank()) return getFormattedPosterUrl(width, height)
-        val sanitized = if (superHeroUrl.startsWith("//")) "https:$superHeroUrl" else superHeroUrl
-        return if (!sanitized.contains("?")) {
-            "$sanitized?w=$width&h=$height&format=jpg&q=85"
-        } else {
-            sanitized
+    /**
+     * Formats super hero or background art URL with HD/4K parameters
+     */
+    fun getFormattedSuperHeroUrl(width: Int = 1920, height: Int = 1080): String {
+        val target = when {
+            superHeroUrl.isNotBlank() -> superHeroUrl
+            heroUrl.isNotBlank() -> heroUrl
+            else -> posterUrl
         }
+        if (target.isBlank()) return ""
+        return XboxEndpoints.normalizeImageUrl(target, width, height)
     }
 }

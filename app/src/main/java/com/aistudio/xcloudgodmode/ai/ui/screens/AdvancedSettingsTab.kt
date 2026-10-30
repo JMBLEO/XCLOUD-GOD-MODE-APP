@@ -1,5 +1,6 @@
 package com.aistudio.xcloudgodmode.ai.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,30 +16,43 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aistudio.xcloudgodmode.ai.constants.NetworkBypassCatalog
 import com.aistudio.xcloudgodmode.ai.models.SettingsModel
+import com.aistudio.xcloudgodmode.ai.ui.theme.AppStrings
 
 @Composable
 fun AdvancedSettingsTab(
     settings: SettingsModel,
     onSettingsChanged: (SettingsModel) -> Unit
 ) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val strings = AppStrings.get(settings.appLanguage)
+
     var activeTab by remember { mutableStateOf("Red") } // Red, Controles, Sistema
     var serverSearch by remember { mutableStateOf("") }
     var ipSearch by remember { mutableStateOf("") }
 
+    var showImportDialog by remember { mutableStateOf(false) }
+    var showTouchEditor by remember { mutableStateOf(false) }
+    var importJsonText by remember { mutableStateOf("") }
+    var importError by remember { mutableStateOf<String?>(null) }
+
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).testTag("advanced_settings_tab")) {
         Text(
-            text = "Infraestructura",
+            text = strings.settingsTab,
             style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
             color = Color.White
         )
         Text(
-            text = "Configuración base del motor God Mode.",
+            text = "God Mode Master Engine Architecture & Customization.",
             style = MaterialTheme.typography.bodySmall,
             color = Color.Gray
         )
@@ -46,18 +60,24 @@ fun AdvancedSettingsTab(
         Spacer(modifier = Modifier.height(16.dp))
 
         // Sub-tabs for organization
+        val tabs = if (settings.appLanguage == "en") {
+            listOf("Red" to "Network", "Controles" to "Controls", "Sistema" to "System")
+        } else {
+            listOf("Red" to "Red", "Controles" to "Controles", "Sistema" to "Sistema")
+        }
+
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Red", "Controles", "Sistema").forEach { tab ->
+            tabs.forEach { (tabKey, tabLabel) ->
                 Button(
-                    onClick = { activeTab = tab },
+                    onClick = { activeTab = tabKey },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (activeTab == tab) Color(0xFF107C10) else Color(0xFF1C2024),
+                        containerColor = if (activeTab == tabKey) Color(0xFF107C10) else Color(0xFF1C2024),
                         contentColor = Color.White
                     ),
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text(tab, style = MaterialTheme.typography.labelMedium)
+                    Text(tabLabel, style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -67,7 +87,7 @@ fun AdvancedSettingsTab(
         LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.weight(1f)) {
             if (activeTab == "Red") {
                 item {
-                    SettingsCategoryCard(icon = Icons.Default.Public, title = "Bypass de Ubicación & Servidor") {
+                    SettingsCategoryCard(icon = Icons.Default.Public, title = strings.settingsBypass) {
                         // Server Lock
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                             Checkbox(
@@ -152,7 +172,7 @@ fun AdvancedSettingsTab(
                     }
                 }
                 item {
-                    SettingsCategoryCard(icon = Icons.Default.Stream, title = "Ingeniería de Stream") {
+                    SettingsCategoryCard(icon = Icons.Default.Stream, title = strings.settingsStreaming) {
                         Text("Perfil de Resolución Forzada", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             listOf("720p", "1080p", "1440p", "4k", "8k").forEach { res ->
@@ -179,7 +199,7 @@ fun AdvancedSettingsTab(
                 }
             } else if (activeTab == "Controles") {
                 item {
-                    SettingsCategoryCard(icon = Icons.Default.SportsEsports, title = "Controles e Integridad") {
+                    SettingsCategoryCard(icon = Icons.Default.SportsEsports, title = strings.settingsInput) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Polling Rate del Mando", modifier = Modifier.weight(1f), color = Color.White)
                             Text("${settings.pollingRateMs}ms", color = Color(0xFF4ADE80), fontWeight = FontWeight.Bold)
@@ -199,6 +219,23 @@ fun AdvancedSettingsTab(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = settings.safeNativeModeOnly, onCheckedChange = { onSettingsChanged(settings.copy(safeNativeModeOnly = it)) }, colors = CheckboxDefaults.colors(checkedColor = Color(0xFF107C10)))
                             Text("Safe M&K Mode", color = Color.White)
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Botón de acceso directo al Editor de Controles Táctiles
+                        Button(
+                            onClick = { showTouchEditor = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .testTag("open_touch_editor_button")
+                        ) {
+                            Icon(Icons.Default.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(strings.touchEditorCustomize, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
                         }
                     }
                 }
@@ -254,11 +291,11 @@ fun AdvancedSettingsTab(
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text("Escala de Interfaz", color = Color(0xFF107C10), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                        Text(strings.settingsRender, color = Color(0xFF107C10), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
                         
                         // Text Scale
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tamaño de Texto", modifier = Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            Text(strings.scaleFontLabel, modifier = Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.bodySmall)
                             Text("${settings.textScalePercent}%", color = Color(0xFF4ADE80), style = MaterialTheme.typography.labelSmall)
                         }
                         Slider(
@@ -270,7 +307,7 @@ fun AdvancedSettingsTab(
 
                         // Icon Scale
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tamaño de Iconos", modifier = Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            Text(strings.scaleIconLabel, modifier = Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.bodySmall)
                             Text("${settings.iconScalePercent}%", color = Color(0xFF4ADE80), style = MaterialTheme.typography.labelSmall)
                         }
                         Slider(
@@ -282,7 +319,7 @@ fun AdvancedSettingsTab(
 
                         // Poster Scale
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tamaño de Carátulas", modifier = Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            Text(strings.scalePosterLabel, modifier = Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.bodySmall)
                             Text("${settings.posterScalePercent}%", color = Color(0xFF4ADE80), style = MaterialTheme.typography.labelSmall)
                         }
                         Slider(
@@ -291,9 +328,170 @@ fun AdvancedSettingsTab(
                             valueRange = 80f..130f,
                             colors = SliderDefaults.colors(thumbColor = Color(0xFF107C10), activeTrackColor = Color(0xFF107C10))
                         )
+
+                        // QR Code Scale (Fluid Screen Aspect Scaling Override)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(strings.scaleQrLabel, modifier = Modifier.weight(1f), color = Color.White, style = MaterialTheme.typography.bodySmall)
+                            Text("${settings.qrScalePercent}%", color = Color(0xFF4ADE80), style = MaterialTheme.typography.labelSmall)
+                        }
+                        Slider(
+                            value = settings.qrScalePercent.toFloat(),
+                            onValueChange = { onSettingsChanged(settings.copy(qrScalePercent = it.toInt())) },
+                            valueRange = 70f..150f,
+                            colors = SliderDefaults.colors(thumbColor = Color(0xFF107C10), activeTrackColor = Color(0xFF107C10))
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(strings.settingsSystem, color = Color(0xFF107C10), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+
+                        // Dynamic Real Language Selector
+                        Text(strings.languageSelectLabel, color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(
+                                "AUTO" to strings.langAuto,
+                                "es" to "Español",
+                                "en" to "English"
+                            ).forEach { (langCode, langName) ->
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(36.dp)
+                                        .background(
+                                            if (settings.appLanguage == langCode) Color(0xFF107C10) else Color(0xFF14171A),
+                                            RoundedCornerShape(6.dp)
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (settings.appLanguage == langCode) Color(0xFF4ADE80) else Color.DarkGray,
+                                            RoundedCornerShape(6.dp)
+                                        )
+                                        .clickable { onSettingsChanged(settings.copy(appLanguage = langCode)) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(langName, color = Color.White, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+
+                        // 10-Foot Leanback Navigation Focus Toggle
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Checkbox(
+                                checked = settings.enableLeanbackFocus,
+                                onCheckedChange = { onSettingsChanged(settings.copy(enableLeanbackFocus = it)) },
+                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFF107C10))
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("10-Foot Leanback Focus Rings", color = Color.White)
+                                Text("Aura verde (#107C10) en elementos activos para navegación con mando o TV", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+
+                        // Backup & Restore (JSON)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("Respaldo & Migración de Ajustes", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    val json = settings.toJson()
+                                    clipboardManager.setText(AnnotatedString(json))
+                                    Toast.makeText(context, strings.backupExportSuccess, Toast.LENGTH_SHORT).show()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(strings.exportSettingsLabel, style = MaterialTheme.typography.labelSmall)
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    importJsonText = ""
+                                    importError = null
+                                    showImportDialog = true
+                                },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(strings.importSettingsLabel, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                     }
                 }
             }
+        }
+
+        // Import Dialog
+        if (showImportDialog) {
+            AlertDialog(
+                onDismissRequest = { showImportDialog = false },
+                title = { Text(strings.importSettingsLabel, color = Color.White) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Pega aquí la configuración JSON exportada previamente:",
+                            color = Color.LightGray,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedTextField(
+                            value = importJsonText,
+                            onValueChange = {
+                                importJsonText = it
+                                importError = null
+                            },
+                            placeholder = { Text("{\"forceServer\": ...}", color = Color.DarkGray) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(130.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF107C10),
+                                unfocusedBorderColor = Color.DarkGray
+                            ),
+                            maxLines = 6
+                        )
+                        if (importError != null) {
+                            Text(importError ?: "", color = Color(0xFFEF4444), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val parsed = SettingsModel.fromJson(importJsonText)
+                            if (parsed != null) {
+                                onSettingsChanged(parsed)
+                                Toast.makeText(context, strings.backupImportSuccess, Toast.LENGTH_SHORT).show()
+                                showImportDialog = false
+                            } else {
+                                importError = strings.backupInvalidJson
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10))
+                    ) {
+                        Text("Cargar", color = Color.White)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showImportDialog = false }) {
+                        Text("Cancelar", color = Color.Gray)
+                    }
+                },
+                containerColor = Color(0xFF1C2024),
+                shape = RoundedCornerShape(12.dp)
+            )
+        }
+
+        if (showTouchEditor) {
+            com.aistudio.xcloudgodmode.ai.ui.components.TouchControllerEditor(
+                titleId = "GLOBAL_DEFAULT",
+                gameTitle = "Perfil Global de Controles",
+                settings = settings,
+                onDismiss = { showTouchEditor = false }
+            )
         }
     }
 }

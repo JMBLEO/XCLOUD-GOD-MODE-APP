@@ -40,10 +40,13 @@ data class SettingsModel(
     val webrtcAudioDownmixMethod: String = "CENTER_VOICE_BOOST_3DB", // "ITU_R_BS775", "CENTER_VOICE_BOOST", "PASSTHROUGH"
 
     // 4. Pantalla & Escala UI
+    val appLanguage: String = "AUTO", // "AUTO", "ES", "EN"
     val enableAutoScreenScale: Boolean = true,
     val textScalePercent: Int = 100, // 85 to 160
     val iconScalePercent: Int = 100,
     val posterScalePercent: Int = 100,
+    val qrScalePercent: Int = 100, // 80 to 140
+    val enableLeanbackFocus: Boolean = true,
     val homeLayoutStyle: String = "PlayStaxBox Hybrid",
     val enableXmbWaveAnimation: Boolean = true,
     val enableKenBurnsHero: Boolean = true,
@@ -53,6 +56,11 @@ data class SettingsModel(
     val deviceOverride: String = "Auto",
     val showStats: Boolean = true,
     val hudPosition: String = "TOP", // "TOP", "BOTTOM"
+    val hudShowRtt: Boolean = true,
+    val hudShowJitter: Boolean = true,
+    val hudShowPacketLoss: Boolean = true,
+    val hudShowBitrate: Boolean = true,
+    val hudShowProfilePill: Boolean = true,
 
     // --- [B] GAME OPTIMIZER (IN-STREAM / REAL-TIME) ---
     
@@ -96,7 +104,63 @@ data class SettingsModel(
     val swapABXY: Boolean = false,
     val safeNativeModeOnly: Boolean = false,
     val userAgentProfile: String = "XboxApp/Android"
-)
+) {
+    fun toJson(): String {
+        val json = org.json.JSONObject()
+        json.put("appLanguage", appLanguage)
+        json.put("enableNetworkBypass", enableNetworkBypass)
+        json.put("bypassIp", bypassIp)
+        json.put("forceServer", forceServer)
+        json.put("targetResProfile", targetResProfile)
+        json.put("textScalePercent", textScalePercent)
+        json.put("iconScalePercent", iconScalePercent)
+        json.put("posterScalePercent", posterScalePercent)
+        json.put("qrScalePercent", qrScalePercent)
+        json.put("enableLeanbackFocus", enableLeanbackFocus)
+        json.put("hudPosition", hudPosition)
+        json.put("showStats", showStats)
+        json.put("hudShowRtt", hudShowRtt)
+        json.put("hudShowJitter", hudShowJitter)
+        json.put("hudShowPacketLoss", hudShowPacketLoss)
+        json.put("hudShowBitrate", hudShowBitrate)
+        json.put("hudShowProfilePill", hudShowProfilePill)
+        json.put("upscalerEngine", upscalerEngine)
+        json.put("fsrSharpness", fsrSharpness.toDouble())
+        json.put("aspectRatio", aspectRatio)
+        json.put("volumeBoostPercent", volumeBoostPercent)
+        return json.toString(2)
+    }
+
+    companion object {
+        fun fromJson(jsonStr: String): SettingsModel {
+            val json = org.json.JSONObject(jsonStr)
+            val defaults = SettingsModel()
+            return defaults.copy(
+                appLanguage = json.optString("appLanguage", defaults.appLanguage),
+                enableNetworkBypass = json.optBoolean("enableNetworkBypass", defaults.enableNetworkBypass),
+                bypassIp = json.optString("bypassIp", defaults.bypassIp),
+                forceServer = json.optString("forceServer", defaults.forceServer),
+                targetResProfile = json.optString("targetResProfile", defaults.targetResProfile),
+                textScalePercent = json.optInt("textScalePercent", defaults.textScalePercent),
+                iconScalePercent = json.optInt("iconScalePercent", defaults.iconScalePercent),
+                posterScalePercent = json.optInt("posterScalePercent", defaults.posterScalePercent),
+                qrScalePercent = json.optInt("qrScalePercent", defaults.qrScalePercent),
+                enableLeanbackFocus = json.optBoolean("enableLeanbackFocus", defaults.enableLeanbackFocus),
+                hudPosition = json.optString("hudPosition", defaults.hudPosition),
+                showStats = json.optBoolean("showStats", defaults.showStats),
+                hudShowRtt = json.optBoolean("hudShowRtt", defaults.hudShowRtt),
+                hudShowJitter = json.optBoolean("hudShowJitter", defaults.hudShowJitter),
+                hudShowPacketLoss = json.optBoolean("hudShowPacketLoss", defaults.hudShowPacketLoss),
+                hudShowBitrate = json.optBoolean("hudShowBitrate", defaults.hudShowBitrate),
+                hudShowProfilePill = json.optBoolean("hudShowProfilePill", defaults.hudShowProfilePill),
+                upscalerEngine = json.optString("upscalerEngine", defaults.upscalerEngine),
+                fsrSharpness = json.optDouble("fsrSharpness", defaults.fsrSharpness.toDouble()).toFloat(),
+                aspectRatio = json.optString("aspectRatio", defaults.aspectRatio),
+                volumeBoostPercent = json.optInt("volumeBoostPercent", defaults.volumeBoostPercent)
+            )
+        }
+    }
+}
 
 enum class DeviceType {
     PHONE,
