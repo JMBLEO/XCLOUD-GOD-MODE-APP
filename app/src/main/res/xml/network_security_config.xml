@@ -25,8 +25,12 @@
         <domain includeSubdomains="true">xboxservices.com</domain>
         <domain includeSubdomains="true">xboxlive.com</domain>
         <domain includeSubdomains="true">xbox.com</domain>
+        <domain includeSubdomains="true">gamepass.com</domain>
         <domain includeSubdomains="true">microsoft.com</domain>
         <domain includeSubdomains="true">s-microsoft.com</domain>
         <domain includeSubdomains="true">live.com</domain>
+        <!-- God Mode Ecosystem & Patcher Domains -->
+        <domain includeSubdomains="true">githubusercontent.com</domain>
+        <domain includeSubdomains="true">github.com</domain>
     </domain-config>
 </network-security-config>

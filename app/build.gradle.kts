@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-  namespace = "com.aistudio.xcloudgodmode.ai"
+  namespace = "com.xcloud.godmode"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
@@ -66,6 +66,13 @@ android {
     includeInApk = false
     includeInBundle = true
   }
+
+  externalNativeBuild {
+    cmake {
+      path = file("src/main/cpp/CMakeLists.txt")
+      version = "3.22.1"
+    }
+  }
 }
 
 // Ensure KSP doesn't conflict with IDE ApplicationManager during build
@@ -104,6 +111,8 @@ dependencies {
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.core.ktx)
   implementation("androidx.appcompat:appcompat:1.7.0")
+  implementation("androidx.browser:browser:1.8.0")
+  implementation("androidx.biometric:biometric:1.1.0")
   implementation("androidx.webkit:webkit:1.12.1")
   implementation("androidx.activity:activity-ktx:1.10.0")
   implementation(libs.androidx.datastore.preferences)
@@ -111,8 +120,8 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   implementation(libs.androidx.navigation.compose)
-  // implementation(libs.androidx.room.ktx)
-  // implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.room.ktx)
+  implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)
@@ -143,6 +152,7 @@ dependencies {
   implementation(libs.google.gson)
   implementation(libs.zxing.core)
   implementation(libs.androidx.work.runtime.ktx)
+  implementation(libs.oboe)
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.robolectric)
   androidTestImplementation(platform(libs.androidx.compose.bom))
@@ -152,6 +162,6 @@ dependencies {
   androidTestImplementation(libs.androidx.runner)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
-  // "ksp"(libs.androidx.room.compiler)
-  "ksp"(libs.moshi.kotlin.codegen)
+  ksp(libs.androidx.room.compiler)
+  ksp(libs.moshi.kotlin.codegen)
 }

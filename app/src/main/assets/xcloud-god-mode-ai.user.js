@@ -1,16 +1,12 @@
 // ==UserScript==
-// @name         XCloud (God Mode AI) - Native Suite Edition
-// @namespace    https://github.com/JMBLEO/XCLOUD-GOD-MODE-AI
+// @name         XCloud God Mode Native Client
+// @namespace    com.xcloud.godmode
 // @version      2.0
-// @description  Script maestro v2.0: Puente Nativo Android/Windows/webOS, HUD en capa prioritaria inmune a reescalado, Auto-Detox híbrido (JS + Nativo), Forzado 1440p/4K/8K en Cloud y XRemote, Shaders IA (Real-ESRGAN & SeedVR2), Motor Real de Zonas Muertas/Polling 4ms/Swap ABXY/Emulación M&K/Controles Táctiles Universales y UI Windows 11 Glassmorphism.
-// @author       JMBLEO
-// @license      MIT
+// @description  XCloud God Mode Native Engine Core
 // @match        https://www.xbox.com/*/*play*
 // @match        https://www.xbox.com/*/play*
 // @run-at       document-start
 // @grant        none
-// @updateURL    https://github.com/JMBLEO/XCLOUD-GOD-MODE-AI/releases/latest/download/xcloud-god-mode-ai.user.js
-// @downloadURL  https://github.com/JMBLEO/XCLOUD-GOD-MODE-AI/releases/latest/download/xcloud-god-mode-ai.user.js
 // ==/UserScript==
 
 (function () {

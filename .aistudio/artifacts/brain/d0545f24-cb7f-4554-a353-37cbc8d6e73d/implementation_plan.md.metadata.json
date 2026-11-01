@@ -1,6 +1,6 @@
 {
-  "summary":  "Plan de implementación revisado que incorpora las 4 mejoras avanzadas (10-Foot Leanback UI con focus rings para mando, caché inteligente de texturas, estadísticas WebRTC en vivo con captura de ratón/teclado, y exportación/importación JSON de ajustes), junto con el soporte bilingüe reactivo (Español Neutro e Inglés) y los módulos de extracción multimedia Xbox con TLS 1.3 estricto.",
-  "updatedAt":  "2026-10-30T02:34:13.227838931Z",
+  "summary":  "Plan maestro de arquitectura nativa v3.0 actualizado: incorpora la matriz estructural del Cinema Hybrid Launcher con carrusel D-Pad a 120Hz y fondo cinemático reactivo, la capa NDK Zero-Copy en SurfaceView con Render Pass independiente para el HUD de telemetría ImGui, el soporte nativo Picture-in-Picture (PiP 16:9), el menú guía in-stream translúcido con controles en vivo, y la arquitectura de controles táctiles de latencia ultrabaja con intercepción directa de dispatchTouchEvent hacia el motor nativo.",
+  "updatedAt":  "2026-11-01T01:28:27.787342187Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

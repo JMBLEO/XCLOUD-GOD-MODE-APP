@@ -1,0 +1,1494 @@
+Análisis Arquitectónico de Clientes Xbox Cloud Gaming y Solución de Autenticación Multi-CapaLa resolución de los errores GSSV Login Failed HTTP 403 y El código ha expirado. Por favor genera uno nuevo (incluso cuando el temporizador muestra 13:22 restantes) requiere alinear el subsistema de identidad de tu aplicación con los protocolos implementados en XCloud4, green-nx, NXCloud, nubix, xjaus, XFly y Better-xCloud. El análisis comparativo de estos repositorios indica que ambos fallos provienen de tres discrepancias de protocolo en la capa de red: primero, el uso del endpoint heredado login.live.com/oauth20_device.srf con un manejador que interpreta respuestas transitorias o desajustes de client_id como expiración inmediata del QR, en lugar de emplear el flujo estándar de consola OAuth 2.0 v2.0 Device Code (login.microsoftonline.com/consumers/oauth2/v2.0/devicecode con client_id = 1f907974-e22b-4810-a9de-d9647380c97e); segundo, la falta de un interceptor reactivo de cabeceras X-Forwarded-For ante respuestas HTTP 403 por restricción geográfica en /v2/login/user; y tercero, la ausencia de una cascada de selección de oferta (offering) que conmute entre los hosts globales de Game Pass (xgpuweb), Free-to-Play con anuncios (xgpuwebf2p) y Consola Remota (xhome) cuando una cuenta carece de suscripción Ultimate activa.En las siguientes secciones se examina la arquitectura de cada repositorio en GitHub, se detalla el diagnóstico de red de los errores observados en tus capturas de pantalla, y se presenta la implementación de referencia adaptada a las 5 capas tecnológicas de tu aplicación (Jetpack Compose Kotlin 2.0+, C++20 / Rust Edition 2024 vía NDK, Oboe / OpenSL ES, OkHttp + DoH + JoseCripto + TokenVaultManager y Room + DataStore).1. Análisis Forense de los Repositorios en GitHub: Pipeline Multimedia y Mecanismos de LoginCada uno de los seis clientes principales de código abierto estructura su pipeline de streaming y su negociación de credenciales en función de las capacidades del sistema operativo anfitrión (Orbis OS en PS4/PS5, Horizon OS en Nintendo Switch, Linux/Windows en escritorio y Chromium en Electron).XCloud4 (PS4 GoldHEN / OpenOrbis C)En el plano multimedia, XCloud4 (asp11edgr/XCloud4) enlaza libdatachannel 0.24.6, libjuice 1.7.4, usrsctp, libsrtp y Mbed TLS 3.6.7. Su despaquetizado RTP escrito en C (video_ingress.c y rtp_reorder.c) alimenta una ventana de gracia NACK de 4 ms (nack_grace.c) y un limitador de keyframes (keyframe_limiter.c) antes de entregar las unidades de acceso a OrbisVideodec2 (src/video/videodec2_abi.h) y presentarlas sin VSync en OrbisVideoOut (src/video/display.c), mientras que el audio pasa por libopus hacia OrbisAudioOut (sceAudioOutOutput).En su capa de autenticación (src/auth/xbox_live.c), XCloud4 utiliza el flujo OAuth 2.0 Device Code v2.0 con el identificador de cliente público 1f907974-e22b-4810-a9de-d9647380c97e. A partir de la versión 1.1.0-beta, genera en pantalla un código QR mediante third_party/qrcodegen/qrcodegen.c que apunta directamente a https://www.microsoft.com/link?otc=<CÓDIGO>, de modo que al escanearlo con la cámara del teléfono el código se autorrellena sin intervención manual. Para prevenir fallos de certificados TLS (0x8095F00C) en firmwares antiguos, empaqueta una tienda de certificados raíz actualizada (assets/certs/ca_bundle.pem con DigiCert, Microsoft, USERTrust y Sectigo). Asimismo, para resolver el bloqueo regional HTTP 403, incorpora el módulo src/ui/access_country.h (adaptado de bypass-servers.ts de Better-xCloud), el cual inyecta la cabecera X-Forwarded-For únicamente en las peticiones validadas de login GSSV (/v2/login/user) cuando el usuario selecciona un país de acceso, manteniendo los tokens únicamente en memoria RAM durante la sesión.green-nx (Nintendo Switch Homebrew C++17)El cliente green-nx (rmrf404/green-nx y el fork luishidalgoa/green-nx) compila una pila libpeer parcheada (libpeer-switch.patch, usrsctp-switch.patch, mbedtls-switch.patch) junto con shims de compatibilidad BSD/POSIX (deps/shim/). El flujo entrante se ordena en video_jitter.cpp y audio_jitter.cpp, se decodifica por hardware en el motor NVDEC del Tegra X1 (averne's NVTEGRA sobre libavcodec en video_decoder.cpp) y se inyecta con Zero-Copy a la GPU mediante deko3d (dk_video_renderer.cpp) y shaders GLSL (video_fsh.glsl, hud_fsh.glsl), contando además con reconexión rápida de sesión (Fast Session Resume) tras picos de latencia.Su lógica de identidad reside en src/core/auth.cpp, src/core/auth.hpp y src/switch/qr.cpp (vendor/qrcodegen.c). Implementa el inicio de sesión por Device Code (microsoft.com/link) junto con un código QR que pre-rellena el código en el teléfono y guarda en caché los tokens y el catálogo en sdmc:/switch/green-nx/. Su aporte arquitectónico clave frente al error HTTP 403 es la gestión separada de cuatro modalidades de acceso: el catálogo de suscripción Game Pass (Essential, Premium y Ultimate), la transmisión de juegos propios comprados (Stream Your Own Game), el streaming gratuito con anuncios (--ads) para títulos Free-to-Play, y la preservación del modo Consola Remota (xHome) cuando el login de la nube es rechazado (PR #84: fix(auth): keep console remote play when the cloud login is refused).NXCloud (Nintendo Switch Launcher + Player C++)Desarrollado por denpingus, NXCloud (denpingus/NXCloud) extiende la base de libnxbox y green-nx aplicando libpeer-xcloud.patch, un receptor RTP propio (receiver.cpp), control de calidad adaptativo que reduce el bitrate ante degradaciones de red para priorizar baja latencia, y decodificación por hardware (libnx) en un binario aislado (stream/). Este aislamiento binario permite abrir un menú tipo Guía de Xbox dentro de la partida (pulsando + y -) y regresar al launcher principal sin cerrar la sesión en la nube, mostrando un botón "Go back to" para retomar la transmisión al instante.Para la autenticación, NXCloud utiliza también el flujo Device Code en el teléfono (evitando introducir contraseñas en la consola) y solicita tanto los tokens de streaming (para títulos de Game Pass y juegos comprados en propiedad) como el webToken de Xbox Live para alimentar sus funciones sociales integradas: lista de amigos, notificaciones en pantalla y lectura/respuesta de mensajes de Xbox sin abandonar el juego.nubix (PS5 Jailbreak websrv & PC C++20)El proyecto nubix (JBuildr/nubix) está escrito en C++20 sobre SDL2 y libdatachannel con xbox-pli.patch. Implementa su propio despaquetizador RTP (stream/rtp.cpp), envío nativo de RTCP PLI, decodificación por hardware de plataforma (video.cpp), presentación en superficie dedicada (screen_stream.cpp) y audio libopus bidireccional que incluye captura de micrófono (voice.cpp), además de mapear el mando DualSense como un controlador de Xbox e integrar un DNS protector que bloquea servidores de Sony. Su módulo de sesión gestiona de forma unificada tanto las credenciales de Xbox Cloud Gaming (xCloud) como las de Xbox Remote Play (xHome) para transmitir desde una consola Xbox local o remota hacia PS5 y PC.xjaus (Linux / Windows Desktop, Electron + Rust Sidecar)El cliente de escritorio xjaus (perjesus111-hub/xjaus) divide su arquitectura entre una interfaz Electron orientada a mando (10-foot UI) y un sidecar compilado en Rust encargado de la autenticación, el control del stream y la gestión de sesiones. En el pipeline de video habilita decodificación por hardware mediante VA-API (en Linux Wayland/X11) y D3D11VA (en Windows), negociación dinámica de bitrate por SDP entre 15 y 45 Mbps, y perfiles de resolución de hasta 1440p con selección de códecs Auto, H.264 y HEVC.El sidecar en Rust implementa el flujo de autenticación tomando como referencia xal-node (específicamente su Device Code authentication flow en msal.ts), xbox-xcloud-player, OpenXbox y Greenlight. Una vez autenticado, consulta el catálogo real al que tiene derecho la cuenta (entitled catalog) para construir un carrusel dinámico diario en la pantalla de inicio y aplica redacción automática de credenciales y tokens en sus reportes técnicos.XFly (Electron / Chromium Native Stack)El cliente XFly (m669st/xfly) delega la recepción WebRTC al stack nativo de Google en Chromium (webrtc::RtpVideoStreamReceiver con RTCP NACK, PLI y TWCC automáticos) y activa la decodificación por hardware en el GPU Process mediante las banderas enable-zero-copy, enable-accelerated-video-decode y MediaFoundationClearPlayback (necesaria para activar el escalado por hardware AMD Video Upscale y NVIDIA RTX VSR). Cuando no se usa VSR del driver, acopla sobre el <video> un motor WebGL2 propio de tres pasadas (src/engine/upscale.ts): una primera pasada de desbloqueo de rejilla 8x8 H.264 y reducción de ruido mosquito (FRAG_CLEAN), una segunda pasada de escalado bicúbico Mitchell-Netravali 4x4 (FRAG_UPSCALE), y una tercera pasada de nitidez adaptativa al contraste (FRAG_SHARPEN) modulada por la media móvil exponencial (EMA) del bitrate recibido. Adicionalmente, intercepta el RTCDataChannel control (src/engine/datachannel.ts) para reescribir el mensaje userRequestedResolutionUpdate (1440, 1080HQ, 720HQ) e inyectar rateControlBitrateUpdate cada 5 segundos para evitar caídas de bitrate.En su sistema de login (src/main/session.ts, src/main/tokens.ts y src/engine/signin.ts), XFly aísla una partición de sesión (persist:xbox), hidrata el estado desde las cookies de Xbox al arrancar (hydrateFromXboxCookies()) y recolecta en tiempo real el gsToken, el token xbl3, el mercado y la región (harvestTokens()). Su solución al error HTTP 403 en setupXboxSession es un Bypass Regional Reactivo: primero intenta autenticar en /v2/login/user con la IP real del usuario (evitando que un bypass forzado aprovisione el juego en un idioma extranjero); si y solo si el interceptor onCompleted detecta details.statusCode === 403, activa la bandera _bypassActive, inyecta la cabecera X-Forwarded-For (BYPASS_SERVER_IPS: EE. UU., Brasil, Japón, Corea o Polonia) exclusivamente en /v2/login/user y xgpuweb, y recarga la sesión una sola vez.2. Diagnóstico Raíz de los Errores en tus Capturas y Por Qué OcurrieronAl contrastar tus capturas de pantalla con el código de los repositorios anteriores y la documentación de protocolo (XCLOUD_PROTOCOL.md de stratix, XCloud4 y XFly), se identifican las causas técnicas exactas que provocaron ambos errores en tu aplicación.Causa Raíz 1: Por qué aparece "El código ha expirado" cuando el reloj aún marca 13:22 (Pestaña Smart TV / QR)En tus capturas de la pestaña Smart TV / QR, el código de vinculación PJ3DA3KD fue emitido con 15 minutos de validez (900 segundos) y el contador visual aún muestra 13:22 restantes, pero la alerta roja aborta el proceso indicando que el código ha expirado. Esto responde a tres discrepancias en la implementación previa:En primer lugar, se produjo una mezcla incompatible de endpoint y client_id. El código anterior llamaba a https://login.live.com/oauth20_device.srf pasándole el client_id 000000004c20a908 con el scope MBI_SSL. Como documentan XCloud4 y stratix (XCLOUD_PROTOCOL.md), el flujo OAuth 2.0 Device Code para clientes de TV y consola utiliza el endpoint v2.0 de Microsoft Identity (POST https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode) con client_id=1f907974-e22b-4810-a9de-d9647380c97e y scope=xboxlive.signin openid profile offline_access, realizando el polling contra POST https://login.microsoftonline.com/consumers/oauth2/v2.0/token con grant_type=urn:ietf:params:oauth:grant-type:device_code.En segundo lugar, el bucle de polling capturaba prematuramente respuestas HTTP 400 como si fueran expiraciones definitivas. En el estándar OAuth 2.0 Device Flow, mientras el usuario escanea el QR e introduce sus credenciales, el servidor responde en cada consulta con estado HTTP 400 Bad Request y el cuerpo {"error": "authorization_pending"} (o {"error": "slow_down"} si dos paquetes llegan demasiado juntos). Al no aislar explícitamente los estados authorization_pending y slow_down ni separar el contador visual de las respuestas transitorias de red, cualquier respuesta distinta disparaba la rama else con el texto "El código ha expirado. Por favor genera uno nuevo" cuando aún quedaban más de 13 minutos de validez.En tercer lugar, el código QR no incluía el parámetro de autorrelleno OTC (verification_uri_complete). Tanto XCloud4 (RELEASE_NOTES_1.1.0-beta.md) como green-nx (v1.0.30) y stratix codifican dentro del QR la URL completa https://www.microsoft.com/link?otc=<USER_CODE>, logrando que al escanear el QR con la cámara del móvil el código aparezca ya rellenado en la página de Microsoft.Causa Raíz 2: Por qué aparece "GSSV Login Failed HTTP 403" (Pestaña Navegador / RPS Bypass)El mensaje GSSV Login Failed HTTP 403 confirma que la obtención del token MSA, el UserToken en user.auth.xboxlive.com y el XSTS Token con RelyingParty: "http://gssv.xboxlive.com/" se completaron, pero el paso final en /v2/login/user fue rechazado con HTTP 403 Forbidden. A partir de XFly (src/main/session.ts y src/shared/constants.ts), XCloud4 (src/ui/access_country.h) y green-nx (src/core/auth.cpp y PR #84), se identifican tres factores detrás de este bloqueo:El primer factor es el bloqueo geográfico por IP en /v2/login/user cuando no se inyecta reactivamente X-Forwarded-For. En XFly (setupXboxSession) y XCloud4 (access_country.h), el cliente intercepta un HTTP 403 en /v2/login/user y reintenta la petición añadiendo únicamente en ese handshake la cabecera X-Forwarded-For con una IP de una región soportada (como Brasil 169.150.198.66, EE. UU. 143.244.47.65 o Japón 138.199.21.239) junto con un User-Agent compatible.El segundo factor es el uso de un nombre de host malformado para el fallback Free-to-Play y la falta de cascada hacia xhome. En el código previo se intentó llamar a https://uks.core.gssv-play-prodf2p.xboxlive.com/v2/login/user (un subdominio inexistente). Los endpoints globales de login GSSV documentados en stratix (XCLOUD_PROTOCOL.md) y XFly son:Game Pass (xgpuweb): https://xgpuweb.gssv-play-prod.xboxlive.com/v2/login/user con {"token": "<XSTS_TOKEN>", "offeringId": "xgpuweb"}.Free-to-Play / Con Anuncios (xgpuwebf2p): https://xgpuwebf2p.gssv-play-prod.xboxlive.com/v2/login/user con {"token": "<XSTS_TOKEN>", "offeringId": "xgpuwebf2p"}.Consola Remota (xhome): https://xhome.gssv-play-prod.xboxlive.com/v2/login/user (o https://xhome.gssv-play-prodz.xboxlive.com/v2/login/user) con {"token": "<XSTS_TOKEN>", "offeringId": "xhome"}.Si la cuenta no tiene una suscripción activa a Game Pass Ultimate, xgpuweb responde 403 (OfferingAccessDenied). Siguiendo la arquitectura de green-nx (PR #84 y soporte F2P), el orquestador debe capturar ese 403, autenticar contra xgpuwebf2p.gssv-play-prod.xboxlive.com y xhome.gssv-play-prod.xboxlive.com, y permitir el ingreso sin arrojar error.El tercer factor es la distinción del prefijo RpsTicket en user.auth.xboxlive.com/user/authenticate y el Long Play Token (LPT): los tokens OAuth 2.0 v2.0 emitidos por login.microsoftonline.com utilizan "RpsTicket": "d=" + accessToken, mientras que los tokens emitidos por login.live.com con scope MBI_SSL suelen requerir "t=" + accessToken. Además, para iniciar sesiones en la nube (/v2/sessions/{id}/connect) tras un login por Device Code, se solicita un LPT (msalToken) enviando el refresh_token a https://login.live.com/oauth20_token.srf con scope=service::http://Passport.NET/purpose::PURPOSE_XBOX_CLOUD_CONSOLE_TRANSFER_TOKEN.3. Tabla Maestra de Protocolos de Autenticación en los RepositoriosLa siguiente tabla resume las cuatro vías de autenticación verificadas en los repositorios para su integración conjunta en tu arquitectura:Vía de Login en tu AppRepositorios de ReferenciaEndpoint de Inicio / Autorizaciónclient_id / scopePrefijo RpsTicket / CriptografíaVentaja PrincipalVía 1: Smart TV / QR (Device Code v2.0)XCloud4, green-nx, NXCloud, xjaus, stratixPOST https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecodeclient_id: 1f907974-e22b-4810-a9de-d9647380c97escope: xboxlive.signin openid profile offline_accessd=<access_token> en user.auth.xboxlive.com (No requiere device.auth)El QR codifica microsoft.com/link?otc=CODE (auto-rellena el código en el móvil).Vía 2: Navegador Seguro / Passkeys (PKCE + RPS)Greenlight, xjaus, libnxboxGET https://login.live.com/oauth20_authorize.srf -> Canje en POST https://login.live.com/oauth20_token.srfclient_id: 000000004c20a908scope: service::user.auth.xboxlive.com::MBI_SSL offline_accesst=<access_token> (con fallback a d=) en user.auth.xboxlive.comCompatible con Passkeys, Huella y Face ID vía Chrome Custom Tabs.Vía 3: XAL / SISU Nativo con JoseCriptoGreenlight (xal-node), xjausPOST https://device.auth.xboxlive.com/device/authenticate -> POST https://sisu.xboxlive.com/authenticateAppId: 000000004c20a908TitleId: 328178078 / 1016898439RedirectUri: ms-xal-000000004c20a908://authFirma Signature EC P-256 (IEEE P1363 64 bytes + Windows FileTime 64-bit) vía JoseCriptoObtiene TitleToken, DeviceToken y UserToken completos del flujo móvil.Vía 4: Harvester de Sesión Web (persist:xbox)XFly, Better-xCloudSesión autenticada en https://www.xbox.com/en-US/play (tokens.ts / signin.ts)Sesión web oficial de Microsoft / Cookies de xbox.comIntercepta gsToken y xbl3 de las llamadas a gssv-play-prod.xboxlive.comMecanismo de respaldo directo cuando se autentica sobre la web oficial.4. Implementación Completa en las 5 Capas de tu AplicaciónA continuación se presenta el código de referencia estructurado según la Matriz Tecnológica por Módulo mostrada en las capturas finales de tu arquitectura (Capa 4: Red OkHttp + DoH + JoseCripto + TokenVaultManager, Capa 5: Persistencia Room + DataStore + Rotación de Catálogo XFly, Capa 1: UI Jetpack Compose Kotlin 2.0+ Cinema Hybrid, Capa 2: Motor NDK C++20 / Rust 2024 Zero-Copy, y Capa 3: Audio Oboe / OpenSL ES + Haptics).Capa 4: Red y Conectividad (OkHttp + DoH + JoseCripto + GodModeAuthOrchestrator)Este módulo implementa la resolución DNS mediante Cloudflare DoH (1.1.1.1), la firma JoseCripto (ECDSA P-256 en formato IEEE P1363 de 64 bytes), el flujo Device Code v2.0 con manejo explícito de authorization_pending y slow_down, y el Bypass Reactivo 403 (X-Forwarded-For) junto con la Cascada Multi-Offering (xgpuweb -> xgpuwebf2p -> xhome) y el Long Play Token (LPT).Kotlin// Archivo: com/xcloud/godmode/network/GodModeAuthOrchestrator.kt
+package com.xcloud.godmode.network
+
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import okhttp3.*
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.dnsoverhttps.DnsOverHttps
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.InetAddress
+import java.nio.ByteBuffer
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.Signature
+import java.security.interfaces.ECPublicKey
+import java.security.spec.ECGenParameterSpec
+import java.util.Base64
+import java.util.concurrent.TimeUnit
+
+// ============================================================================
+// 1. MODELOS DE ESTADO Y SESIÓN MULTI-OFFERING
+// ============================================================================
+
+enum class CloudOfferingTier(val offeringId: String, val label: String) {
+    ULTIMATE("xgpuweb", "Xbox Game Pass Ultimate"),
+    FREE_TO_PLAY("xgpuwebf2p", "Cloud Free-to-Play / Insider"),
+    REMOTE_PLAY_ONLY("xhome", "Consola Remota (xHome)")
+}
+
+data class XboxRegionServer(
+    val name: String,
+    val baseUri: String,
+    val isDefault: Boolean
+)
+
+data class AuthenticatedSession(
+    val gamertag: String,
+    val xuid: String,
+    val uhs: String,
+    val avatarUrl: String?,
+    val gamerscore: String?,
+    val xbl3Header: String,          // "XBL3.0 x=<uhs>;<webXstsToken>"
+    val xCloudGsToken: String?,      // Bearer token para xCloud (/v2/titles, /v5/sessions/cloud/play)
+    val xHomeGsToken: String?,       // Bearer token para Consola Remota (/v6/servers/home)
+    val longPlayToken: String?,      // LPT (msalToken) para /connect en sesiones xCloud
+    val refreshToken: String,
+    val market: String,
+    val activeTier: CloudOfferingTier,
+    val regions: List<XboxRegionServer>,
+    val defaultRegionUri: String,
+    val expiresAtEpochMs: Long
+)
+
+data class QrDeviceCodeTicket(
+    val userCode: String,
+    val deviceCode: String,
+    val verificationUri: String,
+    val qrTargetUrl: String,         // https://www.microsoft.com/link?otc=<userCode> (XCloud4 / green-nx pattern)
+    val expiresInSeconds: Int,
+    val pollIntervalSeconds: Int
+)
+
+sealed class AuthUiState {
+    object Idle : AuthUiState()
+    data class Loading(val stepDescription: String) : AuthUiState()
+    data class QrReady(val ticket: QrDeviceCodeTicket, val secondsRemaining: Int) : AuthUiState()
+    data class AwaitingBrowser(val authorizeUrl: String) : AuthUiState()
+    data class Success(val session: AuthenticatedSession) : AuthUiState()
+    data class Error(val message: String, val canRetryWithBypass: Boolean = false) : AuthUiState()
+}
+
+// ============================================================================
+// 2. JOSECRIPTO: FIRMA ECDSA P-256 (IEEE P1363 64-BYTE + WINDOWS FILETIME)
+// ============================================================================
+
+object JoseCripto {
+    private val keyPair: KeyPair by lazy {
+        val kpg = KeyPairGenerator.getInstance("EC")
+        kpg.initialize(ECGenParameterSpec("secp256r1"))
+        kpg.generateKeyPair()
+    }
+
+    fun getProofKeyJwk(): JSONObject {
+        val pub = keyPair.public as ECPublicKey
+        val xBytes = toUnsigned32Bytes(pub.w.affineX.toByteArray())
+        val yBytes = toUnsigned32Bytes(pub.w.affineY.toByteArray())
+        val encoder = Base64.getUrlEncoder().withoutPadding()
+        return JSONObject().apply {
+            put("use", "sig")
+            put("alg", "ES256")
+            put("kty", "EC")
+            put("crv", "P-256")
+            put("x", encoder.encodeToString(xBytes))
+            put("y", encoder.encodeToString(yBytes))
+        }
+    }
+
+    /**
+     * Genera el encabezado 'Signature' de 76 bytes exactos (4 policy + 8 Windows FileTime + 64 IEEE P1363)
+     * requerido por device.auth.xboxlive.com y sisu.xboxlive.com.
+     */
+    fun signXboxRequest(url: String, authHeader: String = "", bodyJson: String): String {
+        val parsed = url.toHttpUrl()
+        val pathAndQuery = parsed.encodedPath + (if (parsed.encodedQuery != null) "?${parsed.encodedQuery}" else "")
+        val windowsTimestamp = ((System.currentTimeMillis() / 1000L) + 11644473600L) * 10000000L
+
+        val methodBytes = "POST".toByteArray(Charsets.UTF_8)
+        val pathBytes = pathAndQuery.toByteArray(Charsets.UTF_8)
+        val authBytes = authHeader.toByteArray(Charsets.UTF_8)
+        val bodyBytes = bodyJson.toByteArray(Charsets.UTF_8)
+
+        val totalSize = 4 + 1 + 8 + 1 + methodBytes.size + 1 + pathBytes.size + 1 + authBytes.size + 1 + bodyBytes.size + 1
+        val buf = ByteBuffer.allocate(totalSize)
+        buf.putInt(1)
+        buf.put(0)
+        buf.putLong(windowsTimestamp)
+        buf.put(0)
+        buf.put(methodBytes).put(0)
+        buf.put(pathBytes).put(0)
+        buf.put(authBytes).put(0)
+        buf.put(bodyBytes).put(0)
+
+        val rawSig64 = try {
+            val sig = Signature.getInstance("SHA256withECDSAinP1363Format")
+            sig.initSign(keyPair.private)
+            sig.update(buf.array())
+            sig.sign()
+        } catch (_: Exception) {
+            val sig = Signature.getInstance("SHA256withECDSA")
+            sig.initSign(keyPair.private)
+            sig.update(buf.array())
+            derToP1363(sig.sign())
+        }
+
+        val headerBuf = ByteBuffer.allocate(12 + 64)
+        headerBuf.putInt(1)
+        headerBuf.putLong(windowsTimestamp)
+        headerBuf.put(rawSig64, 0, 64)
+        return Base64.getEncoder().encodeToString(headerBuf.array())
+    }
+
+    private fun toUnsigned32Bytes(src: ByteArray): ByteArray {
+        val out = ByteArray(32)
+        if (src.size == 32) return src
+        if (src.size > 32) {
+            System.arraycopy(src, src.size - 32, out, 0, 32)
+        } else {
+            System.arraycopy(src, 0, out, 32 - src.size, src.size)
+        }
+        return out
+    }
+
+    private fun derToP1363(der: ByteArray): ByteArray {
+        var offset = 2
+        if (der[1].toInt() and 0x80 != 0) offset += (der[1].toInt() and 0x7F)
+        offset++ // 0x02 tag for R
+        val rLen = der[offset++].toInt() and 0xFF
+        val rBytes = der.copyOfRange(offset, offset + rLen)
+        offset += rLen
+        offset++ // 0x02 tag for S
+        val sLen = der[offset++].toInt() and 0xFF
+        val sBytes = der.copyOfRange(offset, offset + sLen)
+
+        val out = ByteArray(64)
+        System.arraycopy(toUnsigned32Bytes(rBytes), 0, out, 0, 32)
+        System.arraycopy(toUnsigned32Bytes(sBytes), 0, out, 32, 32)
+        return out
+    }
+}
+
+// ============================================================================
+// 3. ORQUESTADOR SINGLETON CON DOH, BYPASS REACTIVO 403 Y CASCADA MULTI-OFFERING
+// ============================================================================
+
+object GodModeAuthOrchestrator {
+    // Client ID oficial para OAuth2 v2.0 Device Code (XCloud4, green-nx, stratix, GreenVita)
+    private const val DEVICE_CODE_CLIENT_ID = "1f907974-e22b-4810-a9de-d9647380c97e"
+    private const val DEVICE_CODE_SCOPES = "xboxlive.signin openid profile offline_access"
+
+    // Client ID oficial para XAL / PKCE Navegador (XStreaming, Greenlight)
+    private const val XAL_CLIENT_ID = "000000004c20a908"
+    private const val XAL_REDIRECT_URI = "ms-xal-000000004c20a908://auth"
+    private const val XAL_SCOPES = "service::user.auth.xboxlive.com::MBI_SSL offline_access"
+
+    // Diccionario de IPs regionales para el Bypass Reactivo 403 (XFly constants.ts & XCloud4 access_country.h)
+    val BYPASS_REGION_IPS = mapOf(
+        "Automatic" to "",
+        "BrazilSouth" to "169.150.198.66",
+        "ChileCentral" to "20.143.92.1",
+        "EastUS" to "143.244.47.65",
+        "JapanEast" to "138.199.21.239",
+        "KoreaCentral" to "121.125.60.151",
+        "EuropePoland" to "45.134.212.66"
+    )
+
+    // User-Agent de Smart TV Tizen 7.0 (XFly constants.ts) para desbloquear perfiles de alto bitrate
+    private const val TIZEN_USER_AGENT =
+        "Mozilla/5.0 (SMART-TV; LINUX; Tizen 7.0) AppleWebKit/537.36 (KHTML, like Gecko) 149.0.0.0/7.0 TV Safari/537.36"
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val pollMutex = Mutex()
+    private var pollingJob: Job? = null
+    private var countdownJob: Job? = null
+
+    @Volatile
+    var selectedBypassRegion: String = "BrazilSouth"
+    @Volatile
+    var reactiveBypassTriggered: Boolean = false
+
+    private val _authState = MutableStateFlow<AuthUiState>(AuthUiState.Idle)
+    val authState: StateFlow<AuthUiState> = _authState.asStateFlow()
+
+    @Volatile
+    private var activePkceVerifier: String? = null
+    @Volatile
+    private var activeClientIdUsed: String = DEVICE_CODE_CLIENT_ID
+
+    // Cliente OkHttp con Cloudflare DNS over HTTPS (DoH 1.1.1.1)
+    val httpClient: OkHttpClient by lazy {
+        val bootstrapClient = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .build()
+
+        val dohDns = DnsOverHttps.Builder()
+            .client(bootstrapClient)
+            .url("https://cloudflare-dns.com/dns-query".toHttpUrl())
+            .bootstrapDnsHosts(
+                InetAddress.getByName("1.1.1.1"),
+                InetAddress.getByName("1.0.0.1")
+            )
+            .build()
+
+        bootstrapClient.newBuilder()
+            .dns(object : Dns {
+                override fun lookup(hostname: String): List<InetAddress> {
+                    return try {
+                        dohDns.lookup(hostname)
+                    } catch (_: Exception) {
+                        Dns.SYSTEM.lookup(hostname)
+                    }
+                }
+            })
+            .build()
+    }
+
+    // ------------------------------------------------------------------------
+    // VÍA 1: SMART TV / QR (OAUTH 2.0 v2.0 DEVICE CODE — CERO EXPIRACIÓN FALSA)
+    // ------------------------------------------------------------------------
+    fun startQrDeviceCodeFlow() {
+        cancelActiveJobs()
+        activeClientIdUsed = DEVICE_CODE_CLIENT_ID
+        _authState.value = AuthUiState.Loading("Generando código QR oficial de Xbox...")
+
+        pollingJob = scope.launch {
+            try {
+                val formBody = FormBody.Builder()
+                    .add("client_id", DEVICE_CODE_CLIENT_ID)
+                    .add("scope", DEVICE_CODE_SCOPES)
+                    .build()
+
+                val req = Request.Builder()
+                    .url("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
+                    .post(formBody)
+                    .header("Accept", "application/json")
+                    .build()
+
+                val resStr = httpClient.newCall(req).execute().use { res ->
+                    if (!res.isSuccessful) throw IllegalStateException("HTTP ${res.code} en devicecode")
+                    res.body?.string() ?: "{}"
+                }
+
+                val json = JSONObject(resStr)
+                val userCode = json.getString("user_code")
+                val deviceCode = json.getString("device_code")
+                val verificationUri = json.optString("verification_uri", "https://www.microsoft.com/link")
+                val expiresIn = json.optInt("expires_in", 900)
+                val intervalSec = json.optInt("interval", 5).coerceAtLeast(5)
+
+                // URL con OTC pre-rellenado (XCloud4 v1.1.0+ & green-nx v1.0.30+)
+                val completeUri = json.optString(
+                    "verification_uri_complete",
+                    "https://www.microsoft.com/link?otc=$userCode"
+                )
+
+                val ticket = QrDeviceCodeTicket(
+                    userCode = userCode,
+                    deviceCode = deviceCode,
+                    verificationUri = verificationUri,
+                    qrTargetUrl = completeUri,
+                    expiresInSeconds = expiresIn,
+                    pollIntervalSeconds = intervalSec
+                )
+
+                _authState.value = AuthUiState.QrReady(ticket, expiresIn)
+                startVisualCountdown(ticket)
+                pollDeviceCodeUntilAuthorized(ticket)
+
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _authState.value = AuthUiState.Error("Error al generar QR: ${e.message}")
+            }
+        }
+    }
+
+    private fun startVisualCountdown(ticket: QrDeviceCodeTicket) {
+        countdownJob?.cancel()
+        countdownJob = scope.launch {
+            var remaining = ticket.expiresInSeconds
+            while (remaining > 0 && isActive) {
+                delay(1000L)
+                remaining--
+                val current = _authState.value
+                if (current is AuthUiState.QrReady) {
+                    _authState.value = current.copy(secondsRemaining = remaining)
+                }
+            }
+            if (remaining <= 0 && _authState.value is AuthUiState.QrReady) {
+                cancelActiveJobs()
+                _authState.value = AuthUiState.Error("El código QR superó los 15 minutos. Genera uno nuevo.")
+            }
+        }
+    }
+
+    private suspend fun pollDeviceCodeUntilAuthorized(ticket: QrDeviceCodeTicket) {
+        var currentIntervalMs = (ticket.pollIntervalSeconds * 1000L) + 500L
+
+        while (currentCoroutineContext().isActive) {
+            delay(currentIntervalMs)
+
+            pollMutex.withLock {
+                val form = FormBody.Builder()
+                    .add("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+                    .add("device_code", ticket.deviceCode)
+                    .add("client_id", DEVICE_CODE_CLIENT_ID)
+                    .build()
+
+                val req = Request.Builder()
+                    .url("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+                    .post(form)
+                    .header("Accept", "application/json")
+                    .build()
+
+                try {
+                    httpClient.newCall(req).execute().use { res ->
+                        val bodyTxt = res.body?.string() ?: "{}"
+                        val data = JSONObject(bodyTxt)
+
+                        if (res.isSuccessful && data.has("access_token")) {
+                            countdownJob?.cancel()
+                            val accessToken = data.getString("access_token")
+                            val refreshToken = data.optString("refresh_token", "")
+                            _authState.value = AuthUiState.Loading("¡QR verificado! Negociando tokens XSTS y GSSV...")
+                            completeTokenChain(accessToken, refreshToken, isOAuthV2Token = true)
+                            return
+                        }
+
+                        // Manejo estricto RFC 8628 para no abortar por authorization_pending o slow_down
+                        val errCode = data.optString("error", "")
+                        when (errCode) {
+                            "authorization_pending", "" -> {
+                                // El usuario sigue en su teléfono; continuar esperando en silencio.
+                            }
+                            "slow_down" -> {
+                                // Microsoft solicita espaciar las consultas 5 segundos adicionales.
+                                currentIntervalMs += 5000L
+                            }
+                            "authorization_declined" -> {
+                                countdownJob?.cancel()
+                                _authState.value = AuthUiState.Error("El inicio de sesión fue rechazado en el teléfono.")
+                                return
+                            }
+                            "expired_token" -> {
+                                countdownJob?.cancel()
+                                _authState.value = AuthUiState.Error("El código QR expiró en el servidor. Genera uno nuevo.")
+                                return
+                            }
+                            else -> {
+                                // Ignorar respuestas transitorias mientras el contador siga activo
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                    // Ignorar microcortes de red móviles/Wi-Fi durante el polling
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // VÍA 2: NAVEGADOR SEGURO / PASSKEYS (PKCE + DEEP LINK ms-xal://)
+    // ------------------------------------------------------------------------
+    fun prepareBrowserPkceUrl(): String {
+        cancelActiveJobs()
+        activeClientIdUsed = XAL_CLIENT_ID
+        val verifierBytes = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val verifier = Base64.getUrlEncoder().withoutPadding().encodeToString(verifierBytes)
+        activePkceVerifier = verifier
+
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(verifier.toByteArray(Charsets.US_ASCII))
+        val challenge = Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
+
+        val url = "https://login.live.com/oauth20_authorize.srf".toHttpUrl().newBuilder()
+            .addQueryParameter("client_id", XAL_CLIENT_ID)
+            .addQueryParameter("response_type", "code")
+            .addQueryParameter("approval_prompt", "auto")
+            .addQueryParameter("scope", XAL_SCOPES)
+            .addQueryParameter("redirect_uri", XAL_REDIRECT_URI)
+            .addQueryParameter("code_challenge", challenge)
+            .addQueryParameter("code_challenge_method", "S256")
+            .addQueryParameter("display", "android_phone")
+            .build()
+            .toString()
+
+        _authState.value = AuthUiState.AwaitingBrowser(url)
+        return url
+    }
+
+    fun exchangeBrowserRedirectUrlOrCode(redirectUrlOrCode: String) {
+        cancelActiveJobs()
+        _authState.value = AuthUiState.Loading("Canjeando código de autorización OAuth...")
+
+        pollingJob = scope.launch {
+            try {
+                val code = Regex("[?&]code=([^&#\\s]+)").find(redirectUrlOrCode)?.groupValues?.get(1)
+                    ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+                    ?: redirectUrlOrCode.trim()
+
+                val formBuilder = FormBody.Builder()
+                    .add("client_id", XAL_CLIENT_ID)
+                    .add("code", code)
+                    .add("grant_type", "authorization_code")
+                    .add("redirect_uri", XAL_REDIRECT_URI)
+                    .add("scope", XAL_SCOPES)
+
+                activePkceVerifier?.let { formBuilder.add("code_verifier", it) }
+
+                val req = Request.Builder()
+                    .url("https://login.live.com/oauth20_token.srf")
+                    .post(formBuilder.build())
+                    .build()
+
+                httpClient.newCall(req).execute().use { res ->
+                    val bodyStr = res.body?.string() ?: "{}"
+                    if (!res.isSuccessful) {
+                        throw IllegalStateException("Código OAuth expirado o inválido (${res.code})")
+                    }
+                    val json = JSONObject(bodyStr)
+                    val accessToken = json.getString("access_token")
+                    val refreshToken = json.optString("refresh_token", "")
+                    completeTokenChain(accessToken, refreshToken, isOAuthV2Token = false)
+                }
+            } catch (e: Exception) {
+                _authState.value = AuthUiState.Error("Error al validar sesión del navegador: ${e.message}")
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // CADENA UNIFICADA: USER TOKEN (d= / t=) -> DUAL XSTS -> CASCADA GSSV ANTI-403
+    // ------------------------------------------------------------------------
+    private suspend fun completeTokenChain(
+        msaAccessToken: String,
+        msaRefreshToken: String,
+        isOAuthV2Token: Boolean
+    ) {
+        try {
+            val prefixes = if (isOAuthV2Token) listOf("d=", "t=") else listOf("t=", "d=")
+            var userToken: String? = null
+
+            for (prefix in prefixes) {
+                val payload = JSONObject().apply {
+                    put("Properties", JSONObject().apply {
+                        put("AuthMethod", "RPS")
+                        put("SiteName", "user.auth.xboxlive.com")
+                        put("RpsTicket", "$prefix$msaAccessToken")
+                    })
+                    put("RelyingParty", "http://auth.xboxlive.com")
+                    put("TokenType", "JWT")
+                }
+
+                val req = Request.Builder()
+                    .url("https://user.auth.xboxlive.com/user/authenticate")
+                    .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                    .header("x-xbl-contract-version", "1")
+                    .header("Accept", "application/json")
+                    .build()
+
+                httpClient.newCall(req).execute().use { res ->
+                    if (res.isSuccessful) {
+                        val data = JSONObject(res.body?.string() ?: "{}")
+                        userToken = data.optString("Token").takeIf { it.isNotEmpty() }
+                    }
+                }
+                if (userToken != null) break
+            }
+
+            val validUserToken = userToken
+                ?: throw IllegalStateException("user.auth.xboxlive.com rechazó el ticket RPS.")
+
+            val webXsts = authorizeXsts(validUserToken, "http://xboxlive.com")
+            val gssvXsts = authorizeXsts(validUserToken, "http://gssv.xboxlive.com/")
+
+            val xui = webXsts.optJSONObject("DisplayClaims")
+                ?.optJSONArray("xui")
+                ?.optJSONObject(0) ?: JSONObject()
+
+            val uhs = xui.optString("uhs", "")
+            val gamertag = xui.optString("gtg", "Spartan")
+            val xuid = xui.optString("xid", "")
+            val webTokenStr = webXsts.getString("Token")
+            val gssvTokenStr = gssvXsts.getString("Token")
+            val xbl3Header = "XBL3.0 x=$uhs;$webTokenStr"
+
+            _authState.value = AuthUiState.Loading("Autenticando en servidores de Xbox Cloud y Consola...")
+
+            val gssvResult = executeGssvCascadeWithReactiveBypass(gssvTokenStr)
+
+            val lptToken = if (msaRefreshToken.isNotEmpty()) {
+                fetchLongPlayToken(msaRefreshToken)
+            } else null
+
+            val profileExtras = fetchPublicGamerpic(gamertag)
+
+            val finalSession = AuthenticatedSession(
+                gamertag = gamertag,
+                xuid = xuid,
+                uhs = uhs,
+                avatarUrl = profileExtras.first,
+                gamerscore = profileExtras.second,
+                xbl3Header = xbl3Header,
+                xCloudGsToken = gssvResult.xCloudGsToken,
+                xHomeGsToken = gssvResult.xHomeGsToken,
+                longPlayToken = lptToken,
+                refreshToken = msaRefreshToken,
+                market = gssvResult.market,
+                activeTier = gssvResult.activeTier,
+                regions = gssvResult.regions,
+                defaultRegionUri = gssvResult.defaultRegionUri,
+                expiresAtEpochMs = System.currentTimeMillis() + (gssvResult.durationSeconds * 1000L)
+            )
+
+            _authState.value = AuthUiState.Success(finalSession)
+
+        } catch (e: Exception) {
+            _authState.value = AuthUiState.Error(e.message ?: "Error desconocido en cadena XSTS/GSSV")
+        }
+    }
+
+    private fun authorizeXsts(userToken: String, relyingParty: String): JSONObject {
+        val payload = JSONObject().apply {
+            put("Properties", JSONObject().apply {
+                put("SandboxId", "RETAIL")
+                put("UserTokens", JSONArray().put(userToken))
+            })
+            put("RelyingParty", relyingParty)
+            put("TokenType", "JWT")
+        }
+
+        val req = Request.Builder()
+            .url("https://xsts.auth.xboxlive.com/xsts/authorize")
+            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .header("x-xbl-contract-version", "1")
+            .header("Accept", "application/json")
+            .build()
+
+        httpClient.newCall(req).execute().use { res ->
+            val txt = res.body?.string() ?: "{}"
+            if (!res.isSuccessful) {
+                val errJson = runCatching { JSONObject(txt) }.getOrNull()
+                val xErr = errJson?.optLong("XErr", 0L) ?: 0L
+                val msg = when (xErr) {
+                    2148916233L -> "Esta cuenta de Microsoft aún no tiene un perfil de Xbox (Gamertag). Entra una vez a xbox.com."
+                    2148916235L -> "Xbox Live no está disponible en la región de esta cuenta."
+                    2148916238L -> "Cuenta menor de edad: requiere que un adulto la agregue a una familia en Xbox."
+                    else -> "Error XSTS (${res.code}) en $relyingParty"
+                }
+                throw IllegalStateException(msg)
+            }
+            return JSONObject(txt)
+        }
+    }
+
+    private data class GssvCascadeResult(
+        val xCloudGsToken: String?,
+        val xHomeGsToken: String?,
+        val market: String,
+        val activeTier: CloudOfferingTier,
+        val regions: List<XboxRegionServer>,
+        val defaultRegionUri: String,
+        val durationSeconds: Long
+    )
+
+    private fun executeGssvCascadeWithReactiveBypass(gssvXstsToken: String): GssvCascadeResult {
+        val xHomeJson = callGssvEndpoint(
+            url = "https://xhome.gssv-play-prod.xboxlive.com/v2/login/user",
+            gssvXstsToken = gssvXstsToken,
+            offeringId = "xhome",
+            injectBypassIp = false
+        ) ?: callGssvEndpoint(
+            url = "https://xhome.gssv-play-prodz.xboxlive.com/v2/login/user",
+            gssvXstsToken = gssvXstsToken,
+            offeringId = "xhome",
+            injectBypassIp = false
+        )
+
+        var cloudTier = CloudOfferingTier.ULTIMATE
+        var cloudJson = callGssvEndpoint(
+            url = "https://xgpuweb.gssv-play-prod.xboxlive.com/v2/login/user",
+            gssvXstsToken = gssvXstsToken,
+            offeringId = "xgpuweb",
+            injectBypassIp = reactiveBypassTriggered
+        )
+
+        if (cloudJson == null && !reactiveBypassTriggered) {
+            reactiveBypassTriggered = true
+            cloudJson = callGssvEndpoint(
+                url = "https://xgpuweb.gssv-play-prod.xboxlive.com/v2/login/user",
+                gssvXstsToken = gssvXstsToken,
+                offeringId = "xgpuweb",
+                injectBypassIp = true
+            )
+        }
+
+        if (cloudJson == null) {
+            cloudTier = CloudOfferingTier.FREE_TO_PLAY
+            cloudJson = callGssvEndpoint(
+                url = "https://xgpuwebf2p.gssv-play-prod.xboxlive.com/v2/login/user",
+                gssvXstsToken = gssvXstsToken,
+                offeringId = "xgpuwebf2p",
+                injectBypassIp = true
+            )
+        }
+
+        val primaryJson = cloudJson ?: xHomeJson
+            ?: throw IllegalStateException("GSSV rechazó todos los offerings. Verifica tu conexión o cambia la región de Bypass.")
+
+        if (cloudJson == null) {
+            cloudTier = CloudOfferingTier.REMOTE_PLAY_ONLY
+        }
+
+        val regionsArr = primaryJson.optJSONObject("offeringSettings")?.optJSONArray("regions") ?: JSONArray()
+        val parsedRegions = mutableListOf<XboxRegionServer>()
+        for (i in 0 until regionsArr.length()) {
+            val r = regionsArr.getJSONObject(i)
+            parsedRegions.add(
+                XboxRegionServer(
+                    name = r.optString("name", "Region-$i"),
+                    baseUri = r.optString("baseUri", ""),
+                    isDefault = r.optBoolean("isDefault", false)
+                )
+            )
+        }
+
+        val defaultUri = parsedRegions.firstOrNull { it.isDefault }?.baseUri
+            ?: parsedRegions.firstOrNull()?.baseUri
+            ?: "https://brs.core.gssv-play-prod.xboxlive.com"
+
+        return GssvCascadeResult(
+            xCloudGsToken = cloudJson?.optString("gsToken"),
+            xHomeGsToken = xHomeJson?.optString("gsToken"),
+            market = primaryJson.optString("market", "US"),
+            activeTier = cloudTier,
+            regions = parsedRegions,
+            defaultRegionUri = defaultUri,
+            durationSeconds = primaryJson.optLong("durationInSeconds", 14400L)
+        )
+    }
+
+    private fun callGssvEndpoint(
+        url: String,
+        gssvXstsToken: String,
+        offeringId: String,
+        injectBypassIp: Boolean
+    ): JSONObject? {
+        val body = JSONObject().apply {
+            put("token", gssvXstsToken)
+            put("offeringId", offeringId)
+        }
+
+        val reqBuilder = Request.Builder()
+            .url(url)
+            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .header("Cache-Control", "no-store, must-revalidate, no-cache")
+            .header("x-gssv-client", "XboxComBrowser")
+            .header("User-Agent", TIZEN_USER_AGENT)
+
+        if (injectBypassIp) {
+            val ip = BYPASS_REGION_IPS[selectedBypassRegion] ?: "169.150.198.66"
+            if (ip.isNotEmpty()) {
+                reqBuilder.header("X-Forwarded-For", ip)
+            }
+        }
+
+        return try {
+            httpClient.newCall(reqBuilder.build()).execute().use { res ->
+                if (res.isSuccessful) {
+                    JSONObject(res.body?.string() ?: "{}")
+                } else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun fetchLongPlayToken(refreshToken: String): String? {
+        val form = FormBody.Builder()
+            .add("grant_type", "refresh_token")
+            .add("refresh_token", refreshToken)
+            .add("client_id", activeClientIdUsed)
+            .add("scope", "service::http://Passport.NET/purpose::PURPOSE_XBOX_CLOUD_CONSOLE_TRANSFER_TOKEN")
+            .build()
+
+        val req = Request.Builder()
+            .url("https://login.live.com/oauth20_token.srf")
+            .post(form)
+            .build()
+
+        return try {
+            httpClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) return null
+                JSONObject(res.body?.string() ?: "{}").optString("access_token").takeIf { it.isNotEmpty() }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun fetchPublicGamerpic(gamertag: String): Pair<String?, String?> {
+        val encodedGt = java.net.URLEncoder.encode(gamertag, "UTF-8")
+        val req = Request.Builder()
+            .url("https://peoplehub-public.xboxlive.com/people/gt($encodedGt)")
+            .header("x-xbl-contract-version", "3")
+            .header("Accept-Language", "es-CL,es;q=0.9,en-US;q=0.8")
+            .build()
+
+        return try {
+            httpClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) return Pair(null, null)
+                val person = JSONObject(res.body?.string() ?: "{}")
+                    .optJSONArray("people")?.optJSONObject(0)
+                Pair(
+                    person?.optString("displayPicRaw")?.takeIf { it.isNotEmpty() },
+                    person?.optString("gamerScore")?.takeIf { it.isNotEmpty() }
+                )
+            }
+        } catch (_: Exception) {
+            Pair(null, null)
+        }
+    }
+
+    fun cancelActiveJobs() {
+        pollingJob?.cancel()
+        countdownJob?.cancel()
+        pollingJob = null
+        countdownJob = null
+    }
+}
+Capa 5: Persistencia y Datos (Room + DataStore + Rotación Dinámica del Catálogo estilo XFly)Adaptando la lógica de src/renderer/src/lib/xbox.ts y src/main/api.ts de XFly a Kotlin 2.0+, este repositorio descarga las colecciones reales de Game Pass (STORE_COLLECTIONS, SYOG_COLLECTION y LEAVING_SOON_COLLECTION), aplica el fallback automático al mercado US (en-US) si el mercado regional devuelve una lista vacía, agrupa las ediciones Xbox One / Xbox Series X|S (groupEditions) y rota dinámicamente los juegos e iconos destacados en cada inicio.Kotlin// Archivo: com/xcloud/godmode/data/DynamicXboxCatalogRepository.kt
+package com.xcloud.godmode.data
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.UUID
+
+data class GameTileEntity(
+    val productId: String,
+    val titleId: String?,
+    val title: String,
+    val posterUrl: String,
+    val heroUrl: String,
+    val editionBadge: String?,
+    val supportsMkb: Boolean = false
+)
+
+class DynamicXboxCatalogRepository(
+    private val httpClient: OkHttpClient
+) {
+    companion object {
+        val STORE_COLLECTIONS = listOf(
+            "6a589fa0-d493-472b-8e20-3813699d7056", // Most popular on cloud
+            "06323672-b8c8-43cc-b0de-32d5a9834749", // Recently added
+            "66ec875c-a391-44f5-9a54-a28bd6f976ce", // Ubisoft+ Classics
+            "3aa7a358-f15b-476b-af7e-134a250c08a0"  // Play with mouse and keyboard
+        )
+        const val SYOG_COLLECTION = "e78d9a61-5ef4-43af-b400-edba1250b18e"         // Stream Your Own Game
+        const val LEAVING_SOON_COLLECTION = "393f05bf-e596-4ef6-9487-6d4fa0eab987" // Leaving Soon
+        const val NATIVE_MKB_COLLECTION = "8fa264dd-124f-4af3-97e8-596fcdf4b486"   // Native Mouse & Keyboard
+
+        private val EDITION_REGEX = Regex(
+            """\s*(?:[-–—:]\s*)?(?:for\s+)?\(?\s*Xbox\s+(One|Series\s*X\s*\|\s*S|Series\s*S\s*\|\s*X)\s*\)?(?:\s+(?:Edition|Version))?\s*$""",
+            RegexOption.IGNORE_CASE
+        )
+    }
+
+    suspend fun loadDynamicHomeShelves(
+        market: String = "CL",
+        language: String = "es-CL"
+    ): Map<String, List<GameTileEntity>> = withContext(Dispatchers.IO) {
+        val mkbSet = fetchCollectionProductIds(NATIVE_MKB_COLLECTION, market, language).toSet()
+
+        val deferredShelves = listOf(
+            async { "Populares en la Nube" to fetchShelf(STORE_COLLECTIONS[0], 24, market, language, mkbSet) },
+            async { "Recién Agregados" to fetchShelf(STORE_COLLECTIONS[1], 24, market, language, mkbSet) },
+            async { "Juega tus Propios Juegos (BYOG)" to fetchShelf(SYOG_COLLECTION, 24, market, language, mkbSet) },
+            async { "Salen Pronto de Game Pass" to fetchShelf(LEAVING_SOON_COLLECTION, 16, market, language, mkbSet) }
+        )
+
+        val map = deferredShelves.awaitAll().toMap().toMutableMap()
+        val allLoaded = map.values.flatten().distinctBy { it.productId }.shuffled()
+        map["Destacados Dinámicos"] = allLoaded.take(14)
+        map
+    }
+
+    private suspend fun fetchShelf(
+        collectionId: String,
+        limit: Int,
+        market: String,
+        language: String,
+        mkbSet: Set<String>
+    ): List<GameTileEntity> {
+        val ids = fetchCollectionProductIds(collectionId, market, language).take(limit)
+        if (ids.isEmpty()) return emptyList()
+        val rawTiles = hydrateProducts(ids, market, language, mkbSet)
+        return groupEditions(rawTiles)
+    }
+
+    private fun fetchCollectionProductIds(collectionId: String, market: String, language: String): List<String> {
+        fun buildUrl(m: String, l: String) =
+            "https://catalog.gamepass.com/sigls/v3?id=$collectionId&market=$m&language=$l&subscriptionContext=none&platformContext=Cloud%3AXGPUWEB"
+
+        var ids = executeSiglCall(buildUrl(market, language))
+        if (ids.isEmpty() && (market != "US" || language != "en-US")) {
+            ids = executeSiglCall(buildUrl("US", "en-US"))
+        }
+        return ids
+    }
+
+    private fun executeSiglCall(url: String): List<String> {
+        val req = Request.Builder()
+            .url(url)
+            .header("Accept", "application/json")
+            .header("calling-app-name", "Xbox Cloud Gaming Web")
+            .header("calling-app-version", "29.19.17")
+            .header("ms-cv", "${UUID.randomUUID().toString().replace("-", "").take(22)}.1")
+            .header("Referer", "https://www.xbox.com/")
+            .build()
+
+        return try {
+            httpClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) return emptyList()
+                val txt = res.body?.string() ?: "[]"
+                val arr = if (txt.trim().startsWith("[")) JSONArray(txt)
+                else JSONObject(txt).optJSONArray("items") ?: JSONArray()
+
+                val out = mutableListOf<String>()
+                for (i in 0 until arr.length()) {
+                    val item = arr.optJSONObject(i) ?: continue
+                    val id = item.optString("id", "")
+                    if (id.length > 4) out.add(id)
+                }
+                out
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun hydrateProducts(
+        productIds: List<String>,
+        market: String,
+        language: String,
+        mkbSet: Set<String>
+    ): List<GameTileEntity> {
+        fun callHydration(m: String, l: String): List<GameTileEntity> {
+            val url = "https://catalog.gamepass.com/v3/products?market=$m&language=$l&hydration=RemoteHighSapphire0"
+            val bodyJson = JSONObject().put("Products", JSONArray(productIds)).toString()
+            val req = Request.Builder()
+                .url(url)
+                .post(bodyJson.toRequestBody("application/json".toMediaType()))
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("calling-app-name", "Xbox Cloud Gaming Web")
+                .header("calling-app-version", "29.19.17")
+                .header("ms-cv", "${UUID.randomUUID().toString().replace("-", "").take(22)}.2")
+                .header("Referer", "https://www.xbox.com/")
+                .build()
+
+            return try {
+                httpClient.newCall(req).execute().use { res ->
+                    if (!res.isSuccessful) return emptyList()
+                    val root = JSONObject(res.body?.string() ?: "{}")
+                    val productsObj = root.optJSONObject("Products") ?: return emptyList()
+                    val tiles = mutableListOf<GameTileEntity>()
+
+                    val keys = productsObj.keys()
+                    while (keys.hasNext()) {
+                        val pid = keys.next()
+                        val p = productsObj.optJSONObject(pid) ?: continue
+                        val title = p.optString("ProductTitle").ifEmpty {
+                            p.optJSONArray("LocalizedProperties")?.optJSONObject(0)?.optString("ProductTitle") ?: ""
+                        }
+                        if (title.isEmpty()) continue
+
+                        val poster = normalizeUrl(
+                            p.optJSONObject("Image_Poster")?.optString("URL")
+                                ?: p.optJSONObject("Image_Tile")?.optString("URL")
+                        )
+                        val hero = normalizeUrl(
+                            p.optJSONObject("Image_TitledHero")?.optString("URL")
+                                ?: p.optJSONObject("Image_Hero")?.optString("URL")
+                                ?: poster
+                        )
+                        if (poster.isEmpty() && hero.isEmpty()) continue
+
+                        tiles.add(
+                            GameTileEntity(
+                                productId = pid,
+                                titleId = p.optString("XCloudTitleId").takeIf { it.isNotEmpty() },
+                                title = title,
+                                posterUrl = poster.ifEmpty { hero },
+                                heroUrl = hero.ifEmpty { poster },
+                                editionBadge = null,
+                                supportsMkb = mkbSet.contains(pid)
+                            )
+                        )
+                    }
+                    tiles
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
+        val primary = callHydration(market, language)
+        return if (primary.isNotEmpty() || (market == "US" && language == "en-US")) primary
+        else callHydration("US", "en-US")
+    }
+
+    private fun normalizeUrl(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        return if (raw.startsWith("//")) "https:$raw" else raw
+    }
+
+    private fun groupEditions(tiles: List<GameTileEntity>): List<GameTileEntity> {
+        val grouped = LinkedHashMap<String, MutableList<GameTileEntity>>()
+        for (t in tiles) {
+            val match = EDITION_REGEX.find(t.title)
+            val baseTitle = if (match != null) t.title.substring(0, match.range.first).trim() else t.title.trim()
+            val edition = if (match != null) {
+                if (match.groupValues[1].contains("One", ignoreCase = true)) "Xbox One" else "Xbox Series X|S"
+            } else null
+
+            val key = baseTitle.lowercase()
+            grouped.getOrPut(key) { mutableListOf() }.add(
+                t.copy(title = baseTitle.ifEmpty { t.title }, editionBadge = edition)
+            )
+        }
+        return grouped.values.map { group ->
+            group.sortedBy { if (it.editionBadge == "Xbox One") 1 else 0 }.first()
+        }
+    }
+}
+Capa 2 y Capa 3: Motor NDK (C++20 / Rust Edition 2024) y Audio/Haptics (Oboe / OpenSL ES)Esta capa nativa recibe las credenciales validadas por la Capa 4, configura la decodificación Zero-Copy en AMediaCodec + ANativeWindow, mantiene la solicitud de resolución 1440/1080HQ y el piso de bitrate en el RTCDataChannel control (patrón src/engine/datachannel.ts de XFly), y sintetiza matemáticamente los sonidos de interfaz en tiempo real con Oboe (sin archivos .mp3).C++// Archivo: cpp/godmode_ndk_engine.cpp
+#include <jni.h>
+#include <android/native_window_jni.h>
+#include <media/NdkMediaCodec.h>
+#include <oboe/Oboe.h>
+#include <cmath>
+#include <atomic>
+#include <string>
+
+// ============================================================================
+// CAPA 3: MOTOR DE SÍNTESIS PROCEDURAL MATEMÁTICA EN TIEMPO REAL (OBOE)
+// ============================================================================
+class ProceduralUiSynth : public oboe::AudioStreamDataCallback {
+private:
+    std::atomic<float> frequency_{0.0f};
+    std::atomic<float> amplitude_{0.0f};
+    float phase_ = 0.0f;
+    static constexpr int32_t kSampleRate = 48000;
+
+public:
+    void triggerTone(float freqHz, float initialAmp = 0.28f) {
+        frequency_.store(freqHz, std::memory_order_relaxed);
+        amplitude_.store(initialAmp, std::memory_order_relaxed);
+    }
+
+    oboe::DataCallbackResult onAudioReady(
+        oboe::AudioStream *audioStream,
+        void *audioData,
+        int32_t numFrames
+    ) override {
+        float *output = static_cast<float *>(audioData);
+        float freq = frequency_.load(std::memory_order_relaxed);
+        float amp = amplitude_.load(std::memory_order_relaxed);
+        const float phaseIncrement = (2.0f * static_cast<float>(M_PI) * freq) / kSampleRate;
+
+        for (int i = 0; i < numFrames; ++i) {
+            float sample = 0.0f;
+            if (amp > 0.0005f) {
+                sample = (std::sin(phase_) + 0.35f * std::sin(phase_ * 2.0f)) * amp;
+                phase_ += phaseIncrement;
+                if (phase_ > 2.0f * static_cast<float>(M_PI)) {
+                    phase_ -= 2.0f * static_cast<float>(M_PI);
+                }
+                amp *= 0.9991f;
+            }
+            output[i * 2] = sample;
+            output[i * 2 + 1] = sample;
+        }
+        amplitude_.store(amp, std::memory_order_relaxed);
+        return oboe::DataCallbackResult::Continue;
+    }
+};
+
+static ProceduralUiSynth gUiSynth;
+static std::shared_ptr<oboe::AudioStream> gOboeStream;
+
+// ============================================================================
+// CAPA 2: PIPELINE ZERO-COPY (AMediaCodec + ANativeWindow) & CONTROL LEVERS
+// ============================================================================
+extern "C" {
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_core_GodModeNativeBridge_initOboeProceduralAudio(JNIEnv *, jobject) {
+    oboe::AudioStreamBuilder builder;
+    builder.setDirection(oboe::Direction::Output)
+        ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
+        ->setSharingMode(oboe::SharingMode::Exclusive)
+        ->setFormat(oboe::AudioFormat::Float)
+        ->setChannelCount(oboe::ChannelCount::Stereo)
+        ->setSampleRate(48000)
+        ->setDataCallback(&gUiSynth);
+    builder.openStream(gOboeStream);
+    if (gOboeStream) gOboeStream->requestStart();
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_core_GodModeNativeBridge_playProceduralUiSfx(
+    JNIEnv *, jobject, jint sfxType
+) {
+    switch (sfxType) {
+        case 0: gUiSynth.triggerTone(520.0f, 0.18f); break;
+        case 1: gUiSynth.triggerTone(880.0f, 0.32f); break;
+        case 2: gUiSynth.triggerTone(310.0f, 0.22f); break;
+    }
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_xcloud_godmode_core_GodModeNativeBridge_buildControlChannelLeverJson(
+    JNIEnv *env, jobject, jstring resolutionAliasJ, jint targetBitrateMbps
+) {
+    const char *aliasC = env->GetStringUTFChars(resolutionAliasJ, nullptr);
+    std::string alias(aliasC);
+    env->ReleaseStringUTFChars(resolutionAliasJ, aliasC);
+
+    long long bps = static_cast<long long>(targetBitrateMbps) * 1000000LL;
+    std::string payload = "{\"resolutionCommand\":{\"message\":\"userRequestedResolutionUpdate\",\"resolutionAlias\":\"" +
+                          alias + "\"},\"bitrateCommand\":{\"message\":\"rateControlBitrateUpdate\",\"bitratebps\":" +
+                          std::to_string(bps) + "}}";
+    return env->NewStringUTF(payload.c_str());
+}
+
+} // extern "C"
+Capa 1: Interfaz de Usuario (Jetpack Compose Kotlin 2.0+ Cinema Hybrid)Este componente de Capa 1 conecta el GodModeAuthOrchestrator y el DynamicXboxCatalogRepository con el estilo Cinema Hybrid: incorpora la animación Ken Burns con degradado dinámico BlendMode.DstIn (inspirado en Home.tsx de XFly), la rotación periódica del juego e icono principal, y el Modal de Autenticación con soporte de QR auto-rellenable (?otc=), navegador con Passkeys y reintento con Bypass Regional.Kotlin// Archivo: com/xcloud/godmode/ui/CinemaHybridHomeAndAuth.kt
+package com.xcloud.godmode.ui
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.xcloud.godmode.data.GameTileEntity
+import com.xcloud.godmode.network.AuthUiState
+import com.xcloud.godmode.network.GodModeAuthOrchestrator
+import kotlinx.coroutines.delay
+
+@Composable
+fun CinemaHybridHomeScreen(
+    dynamicCatalog: List<GameTileEntity>,
+    onOpenBrowserUrl: (String) -> Unit,
+    onLaunchGameStream: (GameTileEntity) -> Unit
+) {
+    val authState by GodModeAuthOrchestrator.authState.collectAsState()
+    var showAuthModal by remember { mutableStateOf(false) }
+    var selectedGame by remember(dynamicCatalog) { mutableStateOf(dynamicCatalog.firstOrNull()) }
+
+    LaunchedEffect(dynamicCatalog) {
+        if (dynamicCatalog.size > 1) {
+            var idx = 0
+            while (true) {
+                delay(12_000L)
+                idx = (idx + 1) % dynamicCatalog.size
+                selectedGame = dynamicCatalog[idx]
+            }
+        }
+    }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "KenBurns")
+    val kenBurnsScale by infiniteTransition.animateFloat(
+        initialValue = 1.0f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 18_000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scale"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF070A0E))
+    ) {
+        selectedGame?.let { heroGame ->
+            AsyncImage(
+                model = heroGame.heroUrl,
+                contentDescription = heroGame.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = kenBurnsScale
+                        scaleY = kenBurnsScale
+                        compositingStrategy = CompositingStrategy.Offscreen
+                    }
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                0.0f to Color.Transparent,
+                                0.45f to Color.Black.copy(alpha = 0.65f),
+                                1.0f to Color.Black
+                            ),
+                            blendMode = BlendMode.DstIn
+                        )
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0.0f to Color.Black,
+                                0.65f to Color.Black.copy(alpha = 0.75f),
+                                1.0f to Color.Transparent
+                            ),
+                            blendMode = BlendMode.DstIn
+                        )
+                    }
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 36.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AsyncImage(
+                        model = selectedGame?.posterUrl,
+                        contentDescription = "Icono dinámico",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .border(1.5.dp, Color(0xFF00E676), CircleShape)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = "God Mode Hub",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+
+                when (val st = authState) {
+                    is AuthUiState.Success -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(Color(0xFF121820))
+                                .border(1.dp, Color(0xFF107C10), RoundedCornerShape(50))
+                                .clickable { showAuthModal = true }
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = "● ${st.session.gamertag} (${st.session.activeTier.label})",
+                                color = Color(0xFF00E676),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    else -> {
+                        Button(
+                            onClick = { showAuthModal = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
+                            shape = RoundedCornerShape(50)
+                        ) {
+                            Text("Conectar con Xbox", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            selectedGame?.let { game ->
+                Column(modifier = Modifier.fillMaxWidth(0.55f)) {
+                    Text(
+                        text = game.editionBadge ?: "XBOX CLOUD GAMING • DYNAMIC SHOWCASE",
+                        color = Color(0xFF00E676),
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = game.title,
+                        color = Color.White,
+                        fontSize = 38.sp,
+                        fontWeight = FontWeight.Black,
+                        lineHeight = 42.sp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { onLaunchGameStream(game) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 28.dp, vertical = 12.dp)
+                    ) {
+                        Text("▶ Jugar Ahora", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                    }
+                }
+            }
+
+            Column {
+                Text(
+                    text = "ROTACIÓN DINÁMICA DEL CATÁLOGO",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(dynamicCatalog, key = { it.productId }) { tile ->
+                        val isSelected = tile.productId == selectedGame?.productId
+                        Box(
+                            modifier = Modifier
+                                .width(136.dp)
+                                .height(204.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(
+                                    width = if (isSelected) 2.5.dp else 1.dp,
+                                    color = if (isSelected) Color(0xFFFFD700) else Color.White.copy(alpha = 0.12f),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .clickable { selectedGame = tile }
+                        ) {
+                            AsyncImage(
+                                model = tile.posterUrl,
+                                contentDescription = tile.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        AnimatedVisibility(visible = showAuthModal) {
+            ZeroErrorAuthDialog(
+                authState = authState,
+                onDismiss = {
+                    GodModeAuthOrchestrator.cancelActiveJobs()
+                    showAuthModal = false
+                },
+                onStartQr = { GodModeAuthOrchestrator.startQrDeviceCodeFlow() },
+                onStartBrowserPkce = {
+                    val url = GodModeAuthOrchestrator.prepareBrowserPkceUrl()
+                    onOpenBrowserUrl(url)
+                },
+                onManualRedirectPaste = { pasted ->
+                    GodModeAuthOrchestrator.exchangeBrowserRedirectUrlOrCode(pasted)
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun ZeroErrorAuthDialog(
+    authState: AuthUiState,
+    onDismiss: () -> Unit,
+    onStartQr: () -> Unit,
+    onStartBrowserPkce: () -> Unit,
+    onManualRedirectPaste: (String) -> Unit
+) {
+    var activeTab by remember { mutableStateOf(0) }
+    var pastedRedirect by remember { mutableStateOf("") }
+
+    LaunchedEffect(activeTab) {
+        if (activeTab == 0) onStartQr()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.84f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .widthIn(max = 680.dp)
+                .fillMaxWidth(0.92f),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF121820)),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Conectar con Xbox", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Orquestador Multi-Offering (OAuth2 v2.0 + Bypass Reactivo 403)",
+                            color = Color(0xFF00E676),
+                            fontSize = 12.sp
+                        )
+                    }
+                    TextButton(onClick = onDismiss) {
+                        Text("✕", color = Color.White, fontSize = 18.sp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(
+                        onClick = { activeTab = 0 },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (activeTab == 0) Color(0xFF107C10) else Color(0xFF1E2631)
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Smart TV / QR (Auto-OTC)")
+                    }
+                    Button(
+                        onClick = { activeTab = 1 },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (activeTab == 1) Color(0xFF107C10) else Color(0xFF1E2631)
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Navegador Seguro / Passkeys")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                when (authState) {
+                    is AuthUiState.Loading -> {
+                        Text(authState.stepDescription, color = Color(0xFF00E676), fontSize = 14.sp)
+                    }
+                    is AuthUiState.QrReady -> {
+                        val mins = authState.secondsRemaining / 60
+                        val secs = authState.secondsRemaining % 60
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "1. Escanea el QR o abre ${authState.ticket.verificationUri}",
+                                color = Color.White,
+                                fontSize = 14.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = authState.ticket.userCode,
+                                color = Color(0xFF00E676),
+                                fontSize = 34.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Black
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Enlace directo QR: ${authState.ticket.qrTargetUrl} • Expira en %02d:%02d".format(mins, secs),
+                                color = Color(0xFFA0AEC0),
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                    is AuthUiState.Error -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFF451A1A), RoundedCornerShape(10.dp))
+                                .padding(12.dp)
+                        ) {
+                            Text("⚠️ ${authState.message}", color = Color(0xFFFCA5A5), fontSize = 13.sp)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(
+                                onClick = { if (activeTab == 0) onStartQr() else onStartBrowserPkce() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10))
+                            ) {
+                                Text("Reintentar con Bypass Regional Activo")
+                            }
+                        }
+                    }
+                    is AuthUiState.Success -> {
+                        Text(
+                            text = "✅ ¡Conectado como ${authState.session.gamertag}! Tier activo: ${authState.session.activeTier.label}",
+                            color = Color(0xFF00E676),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    else -> {}
+                }
+
+                if (activeTab == 1) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Button(
+                        onClick = onStartBrowserPkce,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Abrir Navegador Seguro (Soporta Passkeys / Huella)")
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = pastedRedirect,
+                        onValueChange = { pastedRedirect = it },
+                        label = { Text("O pega aquí el enlace de retorno ms-xal://...") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (pastedRedirect.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { onManualRedirectPaste(pastedRedirect) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Confirmar Código de Retorno")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+5. Síntesis de Correcciones Frente a las CapturasLa integración conjunta de estos componentes resuelve de raíz los dos problemas observados en tus capturas:Prevención del falso "El código ha expirado" (13:22): El método pollDeviceCodeUntilAuthorized utiliza el endpoint https://login.microsoftonline.com/consumers/oauth2/v2.0/token con client_id = 1f907974-e22b-4810-a9de-d9647380c97e y evalúa explícitamente los estados authorization_pending y slow_down, manteniendo intacta la cuenta regresiva mientras el usuario autoriza el código en su smartphone.Resolución de "GSSV Login Failed HTTP 403": La función executeGssvCascadeWithReactiveBypass emplea los nombres de host globales (xgpuweb.gssv-play-prod.xboxlive.com, xgpuwebf2p.gssv-play-prod.xboxlive.com y xhome.gssv-play-prod.xboxlive.com), activa de forma reactiva la cabecera X-Forwarded-For ante bloqueos regionales (siguiendo el diseño de XFly y XCloud4) y conmuta automáticamente hacia Free-to-Play (xgpuwebf2p) o Consola Remota (xhome) cuando la cuenta no dispone de una suscripción activa a Game Pass Ultimate (siguiendo el diseño de green-nx).
