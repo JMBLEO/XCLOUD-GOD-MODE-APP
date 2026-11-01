@@ -403,33 +403,27 @@ fun GameDetailsModal(
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Row(verticalAlignment = Alignment.Top) {
-                                // Rating Badge Box
+                                // Official Rating Badge Box
+                                val officialRatingUrl: String = remember(game.rating, game.ratingIconUrl) {
+                                    resolveOfficialRatingIcon(game.rating, game.ratingIconUrl)
+                                }
                                 Surface(
                                     color = Color.Black,
-                                    border = androidx.compose.foundation.BorderStroke(2.dp, Color.White),
-                                    shape = RoundedCornerShape(4.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
+                                    shape = RoundedCornerShape(6.dp),
                                     modifier = Modifier
-                                        .width(52.dp)
-                                        .height(60.dp)
+                                        .width(54.dp)
+                                        .height(68.dp)
+                                        .testTag("official_rating_badge")
                                 ) {
-                                    Column(
-                                        modifier = Modifier.fillMaxSize(),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.Center
-                                    ) {
-                                        Text(
-                                            text = if (game.rating.contains("17", ignoreCase = true) || game.rating.contains("Maduro", ignoreCase = true)) "M" else "T",
-                                            fontWeight = FontWeight.Black,
-                                            fontSize = 24.sp,
-                                            color = Color.White
-                                        )
-                                        Text(
-                                            text = "ESRB",
-                                            fontSize = 7.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White
-                                        )
-                                    }
+                                    AsyncImage(
+                                        model = officialRatingUrl,
+                                        contentDescription = game.rating,
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(3.dp)
+                                    )
                                 }
 
                                 Spacer(modifier = Modifier.width(14.dp))
@@ -524,3 +518,36 @@ fun GameDetailsModal(
         }
     }
 }
+
+/**
+ * Resolves high-resolution official rating badges from CDN for ESRB and PEGI.
+ */
+fun resolveOfficialRatingIcon(rating: String, iconUrl: String): String {
+    if (iconUrl.isNotBlank()) return iconUrl
+    val lower = rating.lowercase()
+    return when {
+        lower.contains("everyone 10+") || lower.contains("e10+") ->
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2c/ESRB_2013_Everyone_10%2B.svg/240px-ESRB_2013_Everyone_10%2B.svg.png"
+        lower.contains("teen") || lower.contains("maduro 13") || lower == "t" ->
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/ESRB_2013_Teen.svg/240px-ESRB_2013_Teen.svg.png"
+        lower.contains("mature") || lower.contains("maduro 17+") || lower.contains("esrb m") || lower == "m" ->
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/ESRB_2013_Mature.svg/240px-ESRB_2013_Mature.svg.png"
+        lower.contains("adult") || lower.contains("ao") ->
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/4/46/ESRB_2013_Adults_Only.svg/240px-ESRB_2013_Adults_Only.svg.png"
+        lower.contains("pending") || lower.contains("rp") ->
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/ESRB_2013_Rating_Pending.svg/240px-ESRB_2013_Rating_Pending.svg.png"
+        lower.contains("pegi 18") ->
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/PEGI_18.svg/240px-PEGI_18.svg.png"
+        lower.contains("pegi 16") ->
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/PEGI_16.svg/240px-PEGI_16.svg.png"
+        lower.contains("pegi 12") ->
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/2/24/PEGI_12.svg/240px-PEGI_12.svg.png"
+        lower.contains("pegi 7") ->
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/6/60/PEGI_7.svg/240px-PEGI_7.svg.png"
+        lower.contains("pegi 3") ->
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/PEGI_3.svg/240px-PEGI_3.svg.png"
+        else ->
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/ESRB_2013_Everyone.svg/240px-ESRB_2013_Everyone.svg.png"
+    }
+}
+

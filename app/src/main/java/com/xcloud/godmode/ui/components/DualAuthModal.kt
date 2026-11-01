@@ -43,16 +43,24 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.xcloud.godmode.models.SettingsModel
 import com.xcloud.godmode.network.XboxFullAuthManager
+import com.xcloud.godmode.network.IndependentXboxAuthManager
+import com.xcloud.godmode.network.IndependentClientProfile
+import com.xcloud.godmode.network.CrossPlatformFirstPartyAuth
+import com.xcloud.godmode.network.LanCompanionAndCookieHydrator
 import com.xcloud.godmode.ui.theme.AppStrings
 import com.xcloud.godmode.viewmodels.HomeViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 enum class AuthMenuScreen {
-    MAIN,   // 4 friendly options menu
-    QR,     // Real-time QR Code flow
-    CODE,   // 8-character device code for microsoft.com/link
-    RESCUE  // External Browser with rescue manual input
+    MAIN,           // Master options menu
+    DESKTOP_FLOW,   // Option 1: Direct Desktop Flow (oauth20_desktop.srf)
+    QR,             // Option 2: Real-time QR Code flow
+    CODE,           // Option 3: 8-character device code for microsoft.com/link
+    LOOPBACK,       // Option 4: Localhost Loopback Interceptor (127.0.0.1:49215)
+    CROSS_PLATFORM, // Option 5: Cross-Platform First-Party Auth
+    LAN_RELAY,      // Option 6: LAN Companion Relay & Cookies
+    RESCUE          // Option 7: External Browser with rescue manual input
 }
 
 enum class OrchestratorStatus {
@@ -165,6 +173,8 @@ fun DualAuthModal(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var pendingAuth by remember { mutableStateOf<XboxFullAuthManager.PendingAuthContext?>(null) }
     var manualUrlInput by remember { mutableStateOf("") }
+    var desktopAuthUrl by remember { mutableStateOf("") }
+    var desktopPastedUrl by remember { mutableStateOf("") }
     var isSubmitting by remember { mutableStateOf(false) }
 
     // Visual Countdown Timer state for Device Code (QR and 8-digit code)
@@ -457,25 +467,25 @@ fun DualAuthModal(
                                     modifier = Modifier.padding(bottom = 4.dp)
                                 )
 
-                                // Opción 1: Iniciar sesión aquí (BiometricPrompt + Chrome Custom Tabs)
+                                // Opción 1: Conexión Directa de Escritorio (Inmune a secuestro de apps oficiales)
                                 OptionCard(
-                                    icon = "📲",
-                                    title = strings.loginOptionHere,
-                                    subtitle = strings.loginOptionHereDesc,
+                                    icon = "⚡",
+                                    title = "Conexión Directa de Escritorio",
+                                    subtitle = "oauth20_desktop.srf (000000004C12AE6F). Inmune a interferencia de la app móvil oficial y con renovación a 90 días.",
                                     badge = "RECOMENDADO",
                                     badgeColor = Color(0xFF107C10),
-                                    testTag = "option_cct",
+                                    testTag = "option_desktop_direct",
                                     onClick = {
-                                        // Execute BiometricPrompt check before launching browser
                                         BiometricPromptHelper.authenticate(
                                             context = context,
                                             title = "Verificación de Seguridad (Passkey)",
                                             subtitle = "Confirma tu identidad biométrica para acceder a tu cuenta de Xbox",
                                             onSuccess = {
-                                                val url = authManager.generateStandardLoginUrl()
+                                                val url = IndependentXboxAuthManager.buildAuthorizeUrl(IndependentClientProfile.XBOX_CORE_DESKTOP)
+                                                desktopAuthUrl = url
                                                 launchSecureBrowser(url)
-                                                currentScreen = AuthMenuScreen.RESCUE
-                                                statusMessage = strings.waitingForAuth
+                                                currentScreen = AuthMenuScreen.DESKTOP_FLOW
+                                                statusMessage = "Esperando autorización de escritorio..."
                                             },
                                             onError = { error ->
                                                 errorMessage = "Verificación biométrica: $error"
@@ -484,11 +494,13 @@ fun DualAuthModal(
                                     }
                                 )
 
-                                // Opción 2: Escanear Código QR
+                                // Opción 2: Escanear Código QR (Auto-OTC)
                                 OptionCard(
                                     icon = "📱",
                                     title = strings.loginOptionQr,
                                     subtitle = strings.loginOptionQrDesc,
+                                    badge = "AUTO-OTC",
+                                    badgeColor = Color(0xFF0284C7),
                                     testTag = "option_qr",
                                     onClick = {
                                         currentScreen = AuthMenuScreen.QR
@@ -496,7 +508,7 @@ fun DualAuthModal(
                                     }
                                 )
 
-                                // Opción 3: Usar código en otro dispositivo (microsoft.com/link)
+                                // Opción 3: Código de Consola (microsoft.com/link)
                                 OptionCard(
                                     icon = "⌨️",
                                     title = strings.loginOptionCode,
@@ -512,11 +524,61 @@ fun DualAuthModal(
                                     }
                                 )
 
-                                // Opción 4: Navegador Externo (Modo Rescate)
+                                // Opción 4: Interceptor Loopback Local (127.0.0.1:49215)
+                                OptionCard(
+                                    icon = "🔄",
+                                    title = "Interceptor Loopback Local",
+                                    subtitle = "Inicia un micro-servidor local en el puerto 49215 para capturar el token en 0 clics sin copiar enlaces.",
+                                    badge = "1-CLIC",
+                                    badgeColor = Color(0xFF8B5CF6),
+                                    testTag = "option_loopback",
+                                    onClick = {
+                                        currentScreen = AuthMenuScreen.LOOPBACK
+                                        authStatus = OrchestratorStatus.LOADING
+                                        statusMessage = "Iniciando servidor local en 127.0.0.1:49215..."
+                                        coroutineScope.launch {
+                                            try {
+                                                val loopbackUrl = IndependentXboxAuthManager.buildAuthorizeUrl(IndependentClientProfile.GODMODE_LOCAL_LOOPBACK)
+                                                launchSecureBrowser(loopbackUrl)
+                                                val callbackPath = IndependentXboxAuthManager.awaitLoopbackRedirect(49215)
+                                                processCode("http://127.0.0.1:49215$callbackPath")
+                                            } catch (e: Exception) {
+                                                authStatus = OrchestratorStatus.ERROR
+                                                errorMessage = "Error en loopback: ${e.message}"
+                                            }
+                                        }
+                                    }
+                                )
+
+                                // Opción 5: Perfil Cross-Platform First-Party
+                                OptionCard(
+                                    icon = "🛡️",
+                                    title = "Perfil Cross-Platform First-Party",
+                                    subtitle = "Genera firmas criptográficas Proof-of-Possession con JoseCripto para iOS, Switch o Win32.",
+                                    testTag = "option_crossplatform",
+                                    onClick = {
+                                        currentScreen = AuthMenuScreen.CROSS_PLATFORM
+                                    }
+                                )
+
+                                // Opción 6: Sincronización LAN y Cookies
+                                OptionCard(
+                                    icon = "📡",
+                                    title = "Sincronización LAN y Cookies",
+                                    subtitle = "Rehidrata cookies de sesión web existentes o recibe credenciales vía Wi-Fi local desde otro dispositivo.",
+                                    testTag = "option_lan_sync",
+                                    onClick = {
+                                        currentScreen = AuthMenuScreen.LAN_RELAY
+                                    }
+                                )
+
+                                // Opción 7: Navegador Externo (Modo Rescate)
                                 OptionCard(
                                     icon = "🌐",
                                     title = strings.loginOptionRescue,
                                     subtitle = strings.loginOptionRescueDesc,
+                                    badge = "RESCATE",
+                                    badgeColor = Color(0xFFD97706),
                                     testTag = "option_rescue",
                                     onClick = {
                                         val url = authManager.generateStandardLoginUrl()
@@ -865,6 +927,237 @@ fun DualAuthModal(
                                             }
                                         }
                                     }
+                                }
+                            }
+                        }
+
+                        AuthMenuScreen.DESKTOP_FLOW -> {
+                            // 1. VISTA FLUJO DE ESCRITORIO DIRECTO (oauth20_desktop.srf)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .verticalScroll(rememberScrollState()),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                Icon(Icons.Default.Bolt, contentDescription = null, tint = Color(0xFF4ADE80), modifier = Modifier.size(48.dp))
+                                Text(
+                                    text = "Conexión Directa de Escritorio",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Hemos abierto el portal oficial de Microsoft en modo escritorio. Este flujo no puede ser interceptado por aplicaciones oficiales externas.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.LightGray,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Button(
+                                    onClick = {
+                                        val url = if (desktopAuthUrl.isNotBlank()) desktopAuthUrl
+                                        else IndependentXboxAuthManager.buildAuthorizeUrl(IndependentClientProfile.XBOX_CORE_DESKTOP)
+                                        launchSecureBrowser(url)
+                                    },
+                                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Abrir Portal de Microsoft en Navegador", fontWeight = FontWeight.Bold)
+                                }
+
+                                HorizontalDivider(color = Color(0xFF1F242D), modifier = Modifier.padding(vertical = 4.dp))
+
+                                Surface(
+                                    color = Color.Black.copy(alpha = 0.35f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2A313D)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(
+                                            text = "Pega aquí la URL final tras iniciar sesión (o código de retorno):",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color.LightGray
+                                        )
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            OutlinedTextField(
+                                                value = desktopPastedUrl,
+                                                onValueChange = {
+                                                    desktopPastedUrl = it
+                                                    if (it.contains("access_token=") || it.contains("code=")) {
+                                                        processCode(it)
+                                                    }
+                                                },
+                                                placeholder = { Text("https://login.live.com/oauth20_desktop.srf#...", style = MaterialTheme.typography.bodySmall, color = Color.Gray) },
+                                                modifier = Modifier.weight(1f).testTag("desktop_url_input"),
+                                                singleLine = true,
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    focusedBorderColor = Color(0xFF107C10),
+                                                    unfocusedBorderColor = Color(0xFF333A42),
+                                                    focusedTextColor = Color.White,
+                                                    unfocusedTextColor = Color.White
+                                                )
+                                            )
+
+                                            Button(
+                                                onClick = { processCode(desktopPastedUrl) },
+                                                enabled = desktopPastedUrl.isNotBlank() && !isSubmitting,
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
+                                                shape = RoundedCornerShape(8.dp),
+                                                modifier = Modifier.testTag("confirm_desktop_button")
+                                            ) {
+                                                Text("Validar")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        AuthMenuScreen.LOOPBACK -> {
+                            // 4. VISTA INTERCEPTOR LOOPBACK LOCAL (127.0.0.1:49215)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                CircularProgressIndicator(color = Color(0xFF8B5CF6), strokeWidth = 3.dp)
+                                Text(
+                                    text = "Servidor Loopback Activo en 127.0.0.1:49215",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "God Mode está escuchando en segundo plano. Cuando termines el login en el navegador, el servidor local interceptará las credenciales automáticamente.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.LightGray,
+                                    textAlign = TextAlign.Center
+                                )
+                                Button(
+                                    onClick = {
+                                        val loopbackUrl = IndependentXboxAuthManager.buildAuthorizeUrl(IndependentClientProfile.GODMODE_LOCAL_LOOPBACK)
+                                        launchSecureBrowser(loopbackUrl)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6))
+                                ) {
+                                    Text("Reabrir Ventana de Loopback")
+                                }
+                            }
+                        }
+
+                        AuthMenuScreen.CROSS_PLATFORM -> {
+                            // 5. VISTA PERFIL CROSS-PLATFORM FIRST-PARTY (JoseCripto)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .verticalScroll(rememberScrollState()),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                Icon(Icons.Default.Shield, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(44.dp))
+                                Text(
+                                    text = "Autenticación First-Party JoseCripto",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Genera firmas criptográficas Proof-of-Possession basadas en ECDSA P-256 (IEEE P1363) para registrar tokens de dispositivo.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.LightGray,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Button(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            try {
+                                                authStatus = OrchestratorStatus.LOADING
+                                                statusMessage = "Firmando dispositivo con JoseCripto..."
+                                                CrossPlatformFirstPartyAuth.registerDeviceToken()
+                                                statusMessage = "Dispositivo registrado con éxito. Abriendo portal..."
+                                                delay(800)
+                                                val url = IndependentXboxAuthManager.buildAuthorizeUrl(IndependentClientProfile.XBOX_CORE_DESKTOP)
+                                                desktopAuthUrl = url
+                                                launchSecureBrowser(url)
+                                                currentScreen = AuthMenuScreen.DESKTOP_FLOW
+                                            } catch (e: Exception) {
+                                                authStatus = OrchestratorStatus.ERROR
+                                                errorMessage = "Error First-Party: ${e.message}"
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                                ) {
+                                    Text("Iniciar Handshake JoseCripto", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        AuthMenuScreen.LAN_RELAY -> {
+                            // 6. VISTA SINCRONIZACIÓN LAN Y COOKIES
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .verticalScroll(rememberScrollState()),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                Icon(Icons.Default.Wifi, contentDescription = null, tint = Color(0xFF00E676), modifier = Modifier.size(44.dp))
+                                Text(
+                                    text = "Sincronización LAN y Cookies",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Rehidrata sesiones existentes desde las cookies de WebView o recibe credenciales de forma inalámbrica desde tu teléfono en la misma red Wi-Fi.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.LightGray,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Button(
+                                    onClick = {
+                                        val cookies = LanCompanionAndCookieHydrator.tryHydrateFromSystemCookies()
+                                        if (cookies.isNotEmpty()) {
+                                            errorMessage = null
+                                            statusMessage = "Se detectaron ${cookies.size} cookies de sesión activas."
+                                        } else {
+                                            errorMessage = "No se encontraron cookies activas de Xbox en este dispositivo."
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E2631))
+                                ) {
+                                    Text("Rehidratar desde Cookies del Sistema")
+                                }
+
+                                Button(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            try {
+                                                statusMessage = "Esperando sincronización LAN en puerto 49216..."
+                                                val token = LanCompanionAndCookieHydrator.awaitCompanionTokenPush(49216)
+                                                processCode(token)
+                                            } catch (e: Exception) {
+                                                errorMessage = "Error de sincronización LAN: ${e.message}"
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10))
+                                ) {
+                                    Text("Esperar Vinculación Wi-Fi Local (Puerto 49216)")
                                 }
                             }
                         }

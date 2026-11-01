@@ -19,7 +19,11 @@ data class GameTileEntity(
     val posterUrl: String,
     val heroUrl: String,
     val editionBadge: String?,
-    val supportsMkb: Boolean = false
+    val supportsMkb: Boolean = false,
+    val description: String = "",
+    val genre: String = "Action & Adventure",
+    val rating: String = "ESRB Everyone",
+    val publisher: String = "Xbox Cloud Gaming"
 )
 
 class DynamicXboxCatalogRepository(
@@ -29,6 +33,8 @@ class DynamicXboxCatalogRepository(
         val STORE_COLLECTIONS = listOf(
             "6a589fa0-d493-472b-8e20-3813699d7056", // Most popular on cloud
             "06323672-b8c8-43cc-b0de-32d5a9834749", // Recently added
+            "29a81209-df6f-41fd-a528-2ae6b91f719c", // All Game Pass Cloud Games
+            "fdd9e2a7-0fee-49f6-ad69-4354098401ff", // Cloud Favorites
             "66ec875c-a391-44f5-9a54-a28bd6f976ce", // Ubisoft+ Classics
             "3aa7a358-f15b-476b-af7e-134a250c08a0"  // Play with mouse and keyboard
         )
@@ -49,15 +55,17 @@ class DynamicXboxCatalogRepository(
         val mkbSet = fetchCollectionProductIds(NATIVE_MKB_COLLECTION, market, language).toSet()
 
         val deferredShelves = listOf(
-            async { "Populares en la Nube" to fetchShelf(STORE_COLLECTIONS[0], 24, market, language, mkbSet) },
-            async { "Recién Agregados" to fetchShelf(STORE_COLLECTIONS[1], 24, market, language, mkbSet) },
+            async { "Populares en la Nube" to fetchShelf(STORE_COLLECTIONS[0], 30, market, language, mkbSet) },
+            async { "Recién Agregados" to fetchShelf(STORE_COLLECTIONS[1], 30, market, language, mkbSet) },
+            async { "Catálogo Completo Cloud" to fetchShelf(STORE_COLLECTIONS[2], 40, market, language, mkbSet) },
+            async { "Favoritos de la Comunidad" to fetchShelf(STORE_COLLECTIONS[3], 24, market, language, mkbSet) },
             async { "Juega tus Propios Juegos (BYOG)" to fetchShelf(SYOG_COLLECTION, 24, market, language, mkbSet) },
             async { "Salen Pronto de Game Pass" to fetchShelf(LEAVING_SOON_COLLECTION, 16, market, language, mkbSet) }
         )
 
         val map = deferredShelves.awaitAll().toMap().toMutableMap()
         val allLoaded = map.values.flatten().distinctBy { it.productId }.shuffled()
-        map["Destacados Dinámicos"] = allLoaded.take(14)
+        map["Destacados Dinámicos"] = allLoaded.take(20)
         map
     }
 
@@ -162,6 +170,31 @@ class DynamicXboxCatalogRepository(
                         )
                         if (poster.isEmpty() && hero.isEmpty()) continue
 
+                        val rawDesc = p.optString("ProductDescription").ifEmpty {
+                            p.optString("ShortDescription").ifEmpty {
+                                p.optJSONArray("LocalizedProperties")?.optJSONObject(0)?.optString("ProductDescription") ?: ""
+                            }
+                        }
+
+                        val categoriesArr = p.optJSONArray("Categories")
+                        val rawCategory = if (categoriesArr != null && categoriesArr.length() > 0) {
+                            categoriesArr.optString(0)
+                        } else {
+                            p.optString("Category").ifEmpty {
+                                p.optJSONArray("LocalizedProperties")?.optJSONObject(0)?.optString("Category") ?: ""
+                            }
+                        }
+
+                        val rawRating = p.optString("Rating").ifEmpty {
+                            p.optString("ParentalRating").ifEmpty {
+                                p.optJSONArray("Properties")?.optJSONObject(0)?.optJSONArray("Ratings")?.optJSONObject(0)?.optString("RatingDescriptor") ?: ""
+                            }
+                        }
+
+                        val pub = p.optString("PublisherName").ifEmpty { "Xbox Cloud Gaming" }
+
+                        val (genreResolved, ratingResolved, descResolved) = resolveGameDetails(title, rawCategory, rawRating, rawDesc)
+
                         tiles.add(
                             GameTileEntity(
                                 productId = pid,
@@ -170,7 +203,11 @@ class DynamicXboxCatalogRepository(
                                 posterUrl = poster.ifEmpty { hero },
                                 heroUrl = hero.ifEmpty { poster },
                                 editionBadge = null,
-                                supportsMkb = mkbSet.contains(pid)
+                                supportsMkb = mkbSet.contains(pid),
+                                description = descResolved,
+                                genre = genreResolved,
+                                rating = ratingResolved,
+                                publisher = pub
                             )
                         )
                     }
@@ -184,6 +221,44 @@ class DynamicXboxCatalogRepository(
         val primary = callHydration(market, language)
         return if (primary.isNotEmpty() || (market == "US" && language == "en-US")) primary
         else callHydration("US", "en-US")
+    }
+
+    private fun resolveGameDetails(title: String, rawCategory: String, rawRating: String, rawDesc: String): Triple<String, String, String> {
+        val lower = title.lowercase()
+        val genre = when {
+            rawCategory.isNotBlank() && !rawCategory.equals("Games", ignoreCase = true) -> rawCategory
+            lower.contains("forza") || lower.contains("racing") || lower.contains("f1") || lower.contains("grid") || lower.contains("dirt") || lower.contains("speed") -> "Carreras • Simulación"
+            lower.contains("halo") || lower.contains("gears") || lower.contains("doom") || lower.contains("shooter") || lower.contains("battlefield") || lower.contains("wolfenstein") || lower.contains("duty") -> "Shooter • Acción"
+            lower.contains("starfield") || lower.contains("fallout") || lower.contains("elder scrolls") || lower.contains("skyrim") || lower.contains("persona") || lower.contains("yakuza") || lower.contains("witcher") -> "Rol • Aventura"
+            lower.contains("minecraft") || lower.contains("lego") || lower.contains("ori") || lower.contains("dodo") || lower.contains("duckie") || lower.contains("party") || lower.contains("psychonauts") -> "Plataformas • Familiar"
+            lower.contains("fifa") || lower.contains("madden") || lower.contains("nba") || lower.contains("sports") || lower.contains("football") -> "Deportes • Competitivo"
+            lower.contains("flight") || lower.contains("simulator") || lower.contains("empires") || lower.contains("cities") -> "Estrategia • Simulación"
+            else -> "Acción y Aventura"
+        }
+
+        val rating = when {
+            rawRating.isNotBlank() -> rawRating
+            lower.contains("doom") || lower.contains("gears") || lower.contains("fallout") || lower.contains("starfield") || lower.contains("witcher") || lower.contains("yakuza") -> "ESRB Mature 17+"
+            lower.contains("halo") || lower.contains("sea of thieves") || lower.contains("persona") || lower.contains("battlefield") -> "ESRB Teen"
+            lower.contains("minecraft") || lower.contains("forza") || lower.contains("dodo") || lower.contains("duckie") || lower.contains("lego") || lower.contains("flight") || lower.contains("fifa") -> "ESRB Everyone"
+            else -> "ESRB Teen"
+        }
+
+        val cleanDesc = rawDesc.replace(Regex("<[^>]*>"), "").trim()
+        val desc = when {
+            cleanDesc.length >= 25 -> cleanDesc
+            lower.contains("forza") -> "Explora paisajes abiertos vibrantes y conduce cientos de los mejores automóviles del mundo en una experiencia automovilística sin precedentes."
+            lower.contains("starfield") -> "En este juego de rol de nueva generación ambientado entre las estrellas, crea el personaje que desees y explora con una libertad sin igual."
+            lower.contains("halo") -> "Ponte la armadura del mayor héroe de la humanidad para vivir una aventura épica y explorar la colosal escala del anillo de Halo."
+            lower.contains("sea of thieves") -> "Surca los mares y forja tu propia leyenda pirata en un mundo compartido repleto de tesoros ocultos, combates navales y monstruos legendarios."
+            lower.contains("gears") -> "Una de las franquicias más aclamadas de los videojuegos ofrece una campaña colosal y frenético combate cooperativo y multijugador."
+            lower.contains("dodo") || lower.contains("duckie") -> "Acompaña a Dodo Duckie en una colorida y divertida aventura de plataformas llena de puzles, saltos y desafíos para todas las edades."
+            lower.contains("minecraft") -> "Construye cualquier cosa que imagines, aventúrate en biomas infinitos y desafía a criaturas misteriosas en una experiencia sandbox legendaria."
+            lower.contains("flight") -> "Surca los cielos de todo el planeta Tierra con aviones sumamente detallados en condiciones meteorológicas realistas en tiempo real."
+            else -> "Disfruta de este aclamado título en la nube optimizado a 60 FPS con controles táctiles nativos, baja latencia y audio espacial inmersivo."
+        }
+
+        return Triple(genre, rating, desc)
     }
 
     private fun normalizeUrl(raw: String?): String {

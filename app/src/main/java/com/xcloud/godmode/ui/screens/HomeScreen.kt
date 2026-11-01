@@ -152,44 +152,83 @@ fun HomeScreen(
                 )
             },
             bottomBar = {
-                Column {
-                    // Unified Navigation Bar (Solución Púrpura/Azul integrada en scroll)
-                    NavigationBar(
-                        containerColor = Color.Black.copy(alpha = 0.7f),
-                        contentColor = Color.White,
-                        modifier = Modifier.height(64.dp)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Floating Ghost / Translucent Mica Navigation Bar (Modo Mica Fantasma)
+                    Surface(
+                        shape = RoundedCornerShape(32.dp),
+                        color = Color(0xFF090D13).copy(alpha = 0.40f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+                        shadowElevation = 0.dp,
+                        modifier = Modifier
+                            .widthIn(max = 480.dp)
+                            .fillMaxWidth()
+                            .height(58.dp)
+                            .testTag("ghost_mica_bottom_bar")
                     ) {
-                        tabs.forEachIndexed { index, title ->
-                            NavigationBarItem(
-                                selected = selectedTab == index,
-                                onClick = { 
-                                    selectedTab = index 
-                                    com.xcloud.godmode.audio.GodModeSoundEngine.play(com.xcloud.godmode.audio.SoundEventType.TAB)
-                                },
-                                icon = {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            tabs.forEachIndexed { index, title ->
+                                val isSelected = selectedTab == index
+                                val iconVector = when (index) {
+                                    0 -> Icons.Default.Cloud
+                                    1 -> Icons.Default.Computer
+                                    else -> Icons.Default.Settings
+                                }
+
+                                Row(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(24.dp))
+                                        .background(
+                                            if (isSelected) chameleonColor.copy(alpha = 0.22f) else Color.Transparent
+                                        )
+                                        .clickable {
+                                            selectedTab = index
+                                            com.xcloud.godmode.audio.GodModeSoundEngine.play(com.xcloud.godmode.audio.SoundEventType.TAB)
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Icon(
-                                        imageVector = when (index) {
-                                            0 -> Icons.Default.Cloud
-                                            1 -> Icons.Default.Computer
-                                            else -> Icons.Default.Settings
-                                        },
-                                        contentDescription = title
+                                        imageVector = iconVector,
+                                        contentDescription = title,
+                                        tint = if (isSelected) chameleonColor else Color.LightGray.copy(alpha = 0.70f),
+                                        modifier = Modifier.size(20.dp)
                                     )
-                                },
-                                label = { Text(title, style = MaterialTheme.typography.labelSmall) },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = chameleonColor,
-                                    indicatorColor = chameleonColor.copy(alpha = 0.2f)
-                                )
-                            )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal),
+                                        color = if (isSelected) Color.White else Color.LightGray.copy(alpha = 0.75f)
+                                    )
+                                }
+                            }
                         }
                     }
-                    // Brand-aware Contextual Prompts (Solución Celeste)
-                    GamepadContextualPromptsBar(controller = activeController)
+
+                    // Contextual Prompts Bar (Translucent pill when gamepad is connected)
+                    if (activeController != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        GamepadContextualPromptsBar(controller = activeController)
+                    }
                 }
             }
         ) { innerPadding ->
-            Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .padding(top = innerPadding.calculateTopPadding())
+                    .fillMaxSize()
+            ) {
                 when (selectedTab) {
                     0 -> XCloudLibraryTab(
                         viewModel = viewModel,
@@ -335,14 +374,17 @@ fun GamepadContextualPromptsBar(controller: com.xcloud.godmode.viewmodels.HomeVi
         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.8f))
-                .padding(horizontal = 24.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF090D13).copy(alpha = 0.45f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
+            modifier = Modifier.padding(horizontal = 24.dp)
         ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
             val name = controller?.name?.lowercase() ?: ""
             when {
                 name.contains("ps") || name.contains("sony") || name.contains("dual") -> {
@@ -366,6 +408,7 @@ fun GamepadContextualPromptsBar(controller: com.xcloud.godmode.viewmodels.HomeVi
             }
         }
     }
+}
 }
 
 @Composable
@@ -434,8 +477,19 @@ fun XCloudLibraryTab(
         // Hero Carousel (Moved above Search per video request)
         if (searchQuery.isBlank() && displayGames.isNotEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                val featured = displayGames.take(6).map { g ->
-                    CarouselFeaturedItem(g.id, g.title, g.description, g.genre, g.getFormattedSuperHeroUrl(1920, 1080), g.rating)
+                val featured = remember(displayGames) {
+                    val distinctGenres = displayGames.distinctBy { it.genre.lowercase() }.take(8)
+                    val pool = if (distinctGenres.size >= 4) distinctGenres else displayGames.take(8)
+                    pool.map { g ->
+                        CarouselFeaturedItem(
+                            id = g.id,
+                            title = g.title,
+                            subtitle = g.description.ifBlank { "Aventura inmersiva en la nube optimizada para Xbox Cloud Gaming a 60 FPS con baja latencia." },
+                            category = g.genre.ifBlank { "Acción y Aventura" },
+                            backdropUrl = g.getFormattedSuperHeroUrl(1920, 1080),
+                            rating = g.rating.ifBlank { "ESRB Everyone" }
+                        )
+                    }
                 }
                 AdaptiveHeroCarousel(items = featured, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) { f ->
                     games.find { it.id == f.id }?.let { onGameSelected(it) }

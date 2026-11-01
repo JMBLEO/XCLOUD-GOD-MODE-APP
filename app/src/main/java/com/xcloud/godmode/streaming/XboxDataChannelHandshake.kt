@@ -32,7 +32,7 @@ class XboxDataChannelHandshake(
         val type = msg.optString("type")
 
         if (type == "HandshakeAck") {
-            // 1. Notificar configuración de UI del sistema y dimensiones fijadas (Resolution Pinning estilo green-nx)
+            // 1. Notificar configuración de UI del sistema y dimensiones fijadas (Resolution Pinning)
             sendSystemUiAndDimensionsConfiguration(targetWidth, targetHeight)
             // 2. Despertar el flujo de video en el canal 'control'
             wakeUpVideoAndGamepadOnControlChannel()

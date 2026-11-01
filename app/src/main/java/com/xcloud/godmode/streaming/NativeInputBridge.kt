@@ -76,10 +76,54 @@ class NativeInputBridge(
             if (!isRawTouchEnabled) return
             bridge.processRawTouch(pointerId, x, y, action, screenWidth, screenHeight)
         }
+
+        fun dispatchButton(slot: Int = 0, buttonMask: Int, isPressed: Boolean) {
+            activeInstance?.setButtonState(slot, buttonMask, isPressed)
+        }
+
+        fun dispatchStick(slot: Int = 0, isLeft: Boolean, x: Float, y: Float) {
+            activeInstance?.setThumbstick(slot, isLeft, x, y)
+        }
+
+        fun dispatchTrigger(slot: Int = 0, isLeft: Boolean, value: Float) {
+            activeInstance?.setTrigger(slot, isLeft, value)
+        }
     }
 
     init {
         activeInstance = this
+    }
+
+    fun setButtonState(slot: Int = 0, buttonMask: Int, isPressed: Boolean) {
+        if (slot !in 0..7) return
+        val state = controllers[slot]
+        state.buttons = if (isPressed) state.buttons or buttonMask else state.buttons and buttonMask.inv()
+        state.lastUpdateNano = System.nanoTime()
+    }
+
+    fun setThumbstick(slot: Int = 0, isLeft: Boolean, x: Float, y: Float) {
+        if (slot !in 0..7) return
+        val state = controllers[slot]
+        val (normX, normY) = applyRadialDeadzone(x, y, state.deadzone)
+        if (isLeft) {
+            state.leftStickX = normX
+            state.leftStickY = normY
+        } else {
+            state.rightStickX = normX
+            state.rightStickY = normY
+        }
+        state.lastUpdateNano = System.nanoTime()
+    }
+
+    fun setTrigger(slot: Int = 0, isLeft: Boolean, value: Float) {
+        if (slot !in 0..7) return
+        val state = controllers[slot]
+        if (isLeft) {
+            state.leftTrigger = value.coerceIn(0f, 1f)
+        } else {
+            state.rightTrigger = value.coerceIn(0f, 1f)
+        }
+        state.lastUpdateNano = System.nanoTime()
     }
 
     private var touchOriginX = 0f

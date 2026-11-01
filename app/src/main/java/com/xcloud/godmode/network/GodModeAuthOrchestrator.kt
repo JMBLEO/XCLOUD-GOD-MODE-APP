@@ -55,7 +55,7 @@ data class QrDeviceCodeTicket(
     val userCode: String,
     val deviceCode: String,
     val verificationUri: String,
-    val qrTargetUrl: String,         // https://www.microsoft.com/link?otc=<userCode> (XCloud4 / green-nx pattern)
+    val qrTargetUrl: String,         // https://www.microsoft.com/link?otc=<userCode>
     val expiresInSeconds: Int,
     val pollIntervalSeconds: Int
 )
@@ -74,16 +74,16 @@ sealed class AuthUiState {
 // ============================================================================
 
 object GodModeAuthOrchestrator {
-    // Client ID oficial para OAuth2 v2.0 Device Code (XCloud4, green-nx, stratix, GreenVita)
+    // Client ID oficial para OAuth2 v2.0 Device Code
     private const val DEVICE_CODE_CLIENT_ID = "1f907974-e22b-4810-a9de-d9647380c97e"
     private const val DEVICE_CODE_SCOPES = "xboxlive.signin openid profile offline_access"
 
-    // Client ID oficial para XAL / PKCE Navegador (XStreaming, Greenlight)
+    // Client ID oficial para XAL / PKCE Navegador
     private const val XAL_CLIENT_ID = "000000004c20a908"
     private const val XAL_REDIRECT_URI = "ms-xal-000000004c20a908://auth"
     private const val XAL_SCOPES = "service::user.auth.xboxlive.com::MBI_SSL offline_access"
 
-    // Diccionario de IPs regionales para el Bypass Reactivo 403 (XFly constants.ts & XCloud4 access_country.h)
+    // Diccionario de IPs regionales para el Bypass Reactivo 403
     val BYPASS_REGION_IPS = mapOf(
         "Automatic" to "",
         "BrazilSouth" to "169.150.198.66",
@@ -94,7 +94,7 @@ object GodModeAuthOrchestrator {
         "EuropePoland" to "45.134.212.66"
     )
 
-    // User-Agent de Smart TV Tizen 7.0 (XFly constants.ts) para desbloquear perfiles de alto bitrate
+    // User-Agent de Smart TV Tizen 7.0 para desbloquear perfiles de alto bitrate
     private const val TIZEN_USER_AGENT =
         "Mozilla/5.0 (SMART-TV; LINUX; Tizen 7.0) AppleWebKit/537.36 (KHTML, like Gecko) 149.0.0.0/7.0 TV Safari/537.36"
 
@@ -186,7 +186,7 @@ object GodModeAuthOrchestrator {
                 val expiresIn = json.optInt("expires_in", 900)
                 val intervalSec = json.optInt("interval", 5).coerceAtLeast(5)
 
-                // URL con OTC pre-rellenado (XCloud4 v1.1.0+ & green-nx v1.0.30+)
+                // URL con OTC pre-rellenado
                 val completeUri = json.optString(
                     "verification_uri_complete",
                     "https://www.microsoft.com/link?otc=$userCode"

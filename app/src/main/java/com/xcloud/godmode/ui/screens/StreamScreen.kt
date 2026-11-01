@@ -42,6 +42,8 @@ import org.webrtc.SurfaceViewRenderer
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import android.view.MotionEvent
 import com.xcloud.godmode.ui.components.StreamStatusOverlay
+import com.xcloud.godmode.ui.components.GodModeTelemetryOverlay
+import com.xcloud.godmode.ui.components.GodModeTouchControlsOverlay
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -71,7 +73,10 @@ fun StreamScreen(
     var showQuickMenu by remember { mutableStateOf(false) }
     var showInStreamGameBar by remember { mutableStateOf(false) }
     var isVsyncOff by remember { mutableStateOf(settings.vsyncOff) }
-    var isTouchControlsEnabled by remember { mutableStateOf(false) }
+    val isTv = remember {
+        context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
+    }
+    var isTouchControlsEnabled by remember { mutableStateOf(!isTv) }
     var isMinimizingToHub by remember { mutableStateOf(false) }
     var showServerInfoDialog by remember { mutableStateOf(false) }
     var showAchievementsOverlay by remember { mutableStateOf(false) }
@@ -411,6 +416,27 @@ fun StreamScreen(
                 )
             }
 
+            // Toggle Controles Táctiles Translúcidos
+            IconButton(
+                onClick = {
+                    isTouchControlsEnabled = !isTouchControlsEnabled
+                    com.xcloud.godmode.streaming.NativeInputBridge.isRawTouchEnabled = isTouchControlsEnabled
+                    Toast.makeText(
+                        context,
+                        if (isTouchControlsEnabled) "🎮 Controles táctiles activados" else "🛑 Controles táctiles desactivados",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                },
+                colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.65f)),
+                modifier = Modifier.testTag("stream_touch_toggle_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.SportsEsports,
+                    contentDescription = "Controles Táctiles Translúcidos",
+                    tint = if (isTouchControlsEnabled) Color(0xFF107C10) else Color.White
+                )
+            }
+
             // Touch Controller Editor Toggle (God Mode Touch Layout)
             IconButton(
                 onClick = { showTouchEditor = true },
@@ -455,22 +481,24 @@ fun StreamScreen(
             }
         }
 
-        // Latency & Bitrate HUD (God Mode Script Style - Superior o Inferior apegado al límite)
+        // GodModeTelemetryOverlay: Real-time network latency, FPS, resolution, CPU & GPU HUD
         if (isHudVisible) {
-            LatencyHUD(
+            GodModeTelemetryOverlay(
                 streamManager = streamManager,
-                position = hudPosition,
-                showFps = showFps,
-                showRtt = showRtt,
-                showJitter = showJitter,
-                showLoss = showLoss,
-                showBitrate = showBitrate,
-                showProfilePill = showProfilePill,
-                fsrEnabled = fsrEnabled,
-                fsrSharpness = fsrSharpness,
-                aspectRatio = selectedAspectRatio,
-                volumeBoost = volumeBoost,
-                modifier = Modifier.align(if (hudPosition == "BOTTOM") Alignment.BottomStart else Alignment.TopStart)
+                settings = settings,
+                videoCodec = settings.videoCodec,
+                resolutionLabel = if (selectedAspectRatio == "Stretch") "Pantalla Completa" else "$selectedAspectRatio (1080p 60 FPS)",
+                modifier = Modifier.align(if (hudPosition == "BOTTOM") Alignment.BottomStart else Alignment.TopStart),
+                onDismiss = { isHudVisible = false }
+            )
+        }
+
+        // GodModeTouchControlsOverlay: Translucent on-screen gamepad (D-Pad, Dual Joysticks, ABXY, Triggers)
+        if (isTouchControlsEnabled) {
+            GodModeTouchControlsOverlay(
+                initialOpacity = 0.65f,
+                hapticsEnabled = true,
+                onClose = { isTouchControlsEnabled = false }
             )
         }
 
