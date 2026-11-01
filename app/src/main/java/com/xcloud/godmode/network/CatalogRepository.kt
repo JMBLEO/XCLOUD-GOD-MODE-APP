@@ -55,8 +55,9 @@ class CatalogRepository(
                 "https://store-images.s-microsoft.com/image/apps.47030.14330850369313893.a687698c-b891-44f6-9576-fe28978ce915.ce613c75-aac4-4721-9941-6a254d061488"
             ),
             rating = "ESRB Teen",
-            capabilities = listOf("Control Táctil Nativo", "Multijugador Online", "120 FPS"),
+            capabilities = listOf("Control Táctil Nativo", "Multijugador Online", "120 FPS", "Jugar con Teclado y Ratón"),
             languages = listOf("Español", "Inglés", "Portugués"),
+            isOwned = true,
             chameleonRgb = Triple(56, 189, 248)
         ),
         GameModel(
@@ -169,7 +170,9 @@ class CatalogRepository(
                         heroUrl = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/$appId/library_hero.jpg",
                         superHeroUrl = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/$appId/library_hero.jpg",
                         logoUrl = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/$appId/header.jpg",
-                        chameleonRgb = deriveColorFromTitle(name)
+                        chameleonRgb = deriveColorFromTitle(name),
+                        editionType = getEditionType(name),
+                        rating = resolveESRBFromTitle(name)
                     )
                 )
             }
@@ -177,6 +180,43 @@ class CatalogRepository(
         } catch (e: Exception) {
             Log.w(TAG, "Steam search error: ${e.message}")
             return@withContext emptyList()
+        }
+    }
+
+    private fun resolveESRBFromTitle(title: String): String {
+        val lower = title.lowercase()
+        return when {
+            // Mature 17+ Keywords
+            lower.contains("doom") || lower.contains("gears") || lower.contains("fallout") || 
+            lower.contains("starfield") || lower.contains("resident") || lower.contains("evil") || 
+            lower.contains("cyberpunk") || lower.contains("mortal") || lower.contains("dead") || 
+            lower.contains("killer") || lower.contains("witcher") || lower.contains("yakuza") || 
+            lower.contains("gta") || lower.contains("wolfenstein") || lower.contains("diablo") || 
+            lower.contains("remnant") || lower.contains("scorn") || lower.contains("call of duty") ||
+            lower.contains("atomic heart") || lower.contains("lies of p") || lower.contains("hellblade") ||
+            lower.contains("sniper") || lower.contains("payday") || lower.contains("hitman") ||
+            lower.contains("conan") || lower.contains("warhammer") || lower.contains("mass effect") ||
+            lower.contains("valor mortis") -> "ESRB Mature 17+"
+
+            // Teen Keywords
+            lower.contains("halo") || lower.contains("sea of thieves") || lower.contains("destiny") || 
+            lower.contains("battlefield") || lower.contains("street fighter") || lower.contains("tekken") || 
+            lower.contains("dragon ball") || lower.contains("naruto") || lower.contains("one piece") || 
+            lower.contains("persona") || lower.contains("monster hunter") || lower.contains("injustice") ||
+            lower.contains("rainbow 6") || lower.contains("siege") ||
+            lower.contains("ark") || lower.contains("valheim") || lower.contains("overwatch") ||
+            lower.contains("fortnite") || lower.contains("apex") || lower.contains("warframe") -> "ESRB Teen"
+
+            // Everyone Keywords
+            lower.contains("minecraft") || lower.contains("forza") || lower.contains("flight") || 
+            lower.contains("fifa") || lower.contains("madden") || lower.contains("lego") || 
+            lower.contains("ori") || lower.contains("psychonauts") || lower.contains("paw patrol") || 
+            lower.contains("peppa") || lower.contains("bluey") || lower.contains("rush") ||
+            lower.contains("f1") || lower.contains("powerwash") || lower.contains("goat") ||
+            lower.contains("unravel") || lower.contains("stardew") || lower.contains("cities") ||
+            lower.contains("slime rancher") || lower.contains("disney") || lower.contains("cars") -> "ESRB Everyone"
+            
+            else -> "ESRB Everyone 10+"
         }
     }
 
@@ -216,7 +256,7 @@ class CatalogRepository(
                 }
             }
 
-            // Case 2: Public fetching (fallback or if auth failed to yield enough results)
+            // Case 2: Public fetching (fallback)
             if (hydratedGames.isEmpty()) {
                 val siglUrl = "https://catalog.gamepass.com/sigls/v2?id=29a81209-df6f-41fd-a528-2ae6b91f719c&language=es-CL&market=CL"
                 val req = Request.Builder().url(siglUrl).build()
@@ -224,7 +264,7 @@ class CatalogRepository(
                 if (resp.isSuccessful) {
                     val siglArray = JSONArray(resp.body?.string() ?: "[]")
                     val ids = mutableListOf<String>()
-                    for (i in 0 until minOf(siglArray.length(), 30)) {
+                    for (i in 0 until minOf(siglArray.length(), 40)) {
                         val item = siglArray.optJSONObject(i)
                         val id = item?.optString("id")
                         if (!id.isNullOrBlank()) ids.add(id)
@@ -258,36 +298,23 @@ class CatalogRepository(
                                 id = tile.productId,
                                 title = tile.title,
                                 genre = tile.genre,
-                                rating = tile.rating,
+                                rating = resolveESRBFromTitle(tile.title),
                                 publisher = tile.publisher,
                                 description = tile.description,
                                 posterUrl = tile.posterUrl,
                                 heroUrl = tile.heroUrl,
                                 superHeroUrl = tile.heroUrl,
-                                capabilities = if (tile.supportsMkb) listOf("Jugar con Teclado y Ratón", "Control Táctil Nativo") else listOf("Control Táctil Nativo"),
+                                capabilities = if (tile.supportsMkb) listOf("Jugar con Teclado y Ratón", "Control Táctil Nativo", "Xbox Series X|S") else listOf("Control Táctil Nativo", "Xbox Series X|S"),
                                 isGamePass = true,
-                                chameleonRgb = deriveColorFromTitle(tile.title)
+                                chameleonRgb = deriveColorFromTitle(tile.title),
+                                editionType = getEditionType(tile.title),
+                                subscriptionTier = getSubscriptionTier(tile.title)
                             )
                         )
                     }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Dynamic catalog shelves integration: ${e.message}")
-            }
-
-            // Persistence: Cache results
-            if (hydratedGames.isNotEmpty() && db != null) {
-                hydratedGames.forEach { game ->
-                    db.dao().cacheGame(
-                        com.xcloud.godmode.models.GameCacheEntry(
-                            titleId = game.id,
-                            title = game.title,
-                            posterUrl = game.posterUrl,
-                            heroUrl = game.heroUrl,
-                            description = game.description
-                        )
-                    )
-                }
             }
 
             // Merge with defaults
@@ -362,9 +389,63 @@ class CatalogRepository(
             screenshots = screenshots,
             rating = ratingResolved,
             ratingIconUrl = if (ratingIcon.startsWith("//")) "https:$ratingIcon" else ratingIcon,
-            isGamePass = true,
-            chameleonRgb = deriveColorFromTitle(title)
+            chameleonRgb = deriveColorFromTitle(title),
+            editionType = getEditionType(title),
+            subscriptionTier = getSubscriptionTier(title),
+            supportsTouch = title.lowercase().contains("halo") || title.lowercase().contains("gears") || title.lowercase().contains("forza") || title.lowercase().contains("sea of thieves") || title.lowercase().contains("minecraft") || title.lowercase().contains("dodo"),
+            supportsMkb = title.lowercase().contains("halo") || title.lowercase().contains("flight") || title.lowercase().contains("age of") || title.lowercase().contains("cities") || title.lowercase().contains("starfield"),
+            isSeriesOptimized = true // Most cloud games are optimized
         )
+    }
+
+    private fun getSubscriptionTier(title: String): String {
+        val lower = title.lowercase()
+        return when {
+            lower.contains("ea play") -> "EA PLAY · ULTIMATE"
+            lower.contains("ubisoft") -> "UBISOFT+ · ULTIMATE"
+            lower.contains("pc") || lower.contains("windows") -> "ULTIMATE · PC"
+            else -> "ULTIMATE · PREMIUM"
+        }
+    }
+
+    private fun getEditionType(title: String): String? {
+        val lower = title.lowercase()
+        
+        // Anti-Double Suffix Logic
+        if (lower.contains("edition") || lower.contains("versión") || lower.contains("ultimate") || 
+            lower.contains("premium") || lower.contains("deluxe") || lower.contains("goty") || 
+            lower.contains("complete") || lower.contains("definitive") || lower.contains("gold") ||
+            lower.contains("master") || lower.contains("collection")) return null
+
+        return when {
+            lower.contains("forza") || lower.contains("horizon") || lower.contains("halo") || 
+            lower.contains("gears") || lower.contains("sea of thieves") || lower.contains("state of decay") -> "Ultimate"
+            
+            lower.contains("witcher") || lower.contains("cyberpunk") || lower.contains("elden") || 
+            lower.contains("souls") || lower.contains("sekiro") || lower.contains("resident evil") -> "Game of the Year"
+            
+            lower.contains("starfield") || lower.contains("fallout") || lower.contains("scrolls") || 
+            lower.contains("doom") || lower.contains("wolfenstein") || lower.contains("atomic heart") -> "Premium"
+            
+            lower.contains("mortal kombat") || lower.contains("street fighter") || lower.contains("tekken") || 
+            lower.contains("control") || lower.contains("hitman") || lower.contains("remedy") -> "Definitive"
+            
+            lower.contains("ark") || lower.contains("valheim") || lower.contains("survival") || 
+            lower.contains("conan") || lower.contains("atlas") -> "Ultimate Survivor"
+            
+            lower.contains("siege") || lower.contains("rainbow") || lower.contains("battlefield") || 
+            lower.contains("division") || lower.contains("ghost recon") -> "Gold"
+            
+            lower.contains("persona") || lower.contains("yakuza") || lower.contains("dragon") || 
+            lower.contains("monster hunter") -> "Deluxe"
+            
+            lower.contains("minecraft") || lower.contains("lego") -> "Master Collection"
+            
+            lower.contains("fifa") || lower.contains("madden") || lower.contains("football") || 
+            lower.contains("fc 2") -> "Ultimate Team"
+            
+            else -> null 
+        }
     }
 
     private fun parseGamePassProduct(json: JSONObject): GameModel {
@@ -399,7 +480,12 @@ class CatalogRepository(
             heroUrl = hero,
             superHeroUrl = hero,
             screenshots = screenshots,
-            chameleonRgb = deriveColorFromTitle(title)
+            chameleonRgb = deriveColorFromTitle(title),
+            editionType = getEditionType(title),
+            subscriptionTier = getSubscriptionTier(title),
+            supportsTouch = title.lowercase().contains("halo") || title.lowercase().contains("gears") || title.lowercase().contains("forza") || title.lowercase().contains("sea of thieves") || title.lowercase().contains("minecraft") || title.lowercase().contains("dodo"),
+            supportsMkb = title.lowercase().contains("halo") || title.lowercase().contains("flight") || title.lowercase().contains("age of") || title.lowercase().contains("cities") || title.lowercase().contains("starfield"),
+            isSeriesOptimized = true
         )
     }
 
@@ -416,13 +502,7 @@ class CatalogRepository(
             else -> "Acción y Aventura"
         }
 
-        val rating = when {
-            rawRating.isNotBlank() -> rawRating
-            lower.contains("doom") || lower.contains("gears") || lower.contains("fallout") || lower.contains("starfield") || lower.contains("witcher") || lower.contains("yakuza") -> "ESRB Mature 17+"
-            lower.contains("halo") || lower.contains("sea of thieves") || lower.contains("persona") || lower.contains("battlefield") -> "ESRB Teen"
-            lower.contains("minecraft") || lower.contains("forza") || lower.contains("dodo") || lower.contains("duckie") || lower.contains("lego") || lower.contains("flight") || lower.contains("fifa") -> "ESRB Everyone"
-            else -> "ESRB Teen"
-        }
+        val rating = resolveESRBFromTitle(title)
 
         val cleanDesc = rawDesc.replace(Regex("<[^>]*>"), "").trim()
         val desc = when {

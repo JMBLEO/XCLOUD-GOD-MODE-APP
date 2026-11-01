@@ -18,9 +18,11 @@ import com.xcloud.godmode.services.StreamSessionHolder
 import com.xcloud.godmode.network.TokenVaultManager
 import com.xcloud.godmode.network.XboxFullAuthManager
 import com.xcloud.godmode.network.XboxSessionProfile
+import androidx.datastore.preferences.core.longPreferencesKey
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 private val Context.dataStore by preferencesDataStore(name = "user_preferences")
 
@@ -31,6 +33,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val vault = TokenVaultManager(context)
     private val FAVORITES_KEY = stringSetPreferencesKey("favorites")
     private val SESSION_KEY = stringSetPreferencesKey("xbox_session")
+    private val CAROUSEL_LAST_SHOWN_PREFIX = "carousel_shown_"
 
     // Search query
     private val _searchQuery = MutableStateFlow("")
@@ -116,8 +119,41 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 game.genre.contains(query, ignoreCase = true) ||
                 game.publisher.contains(query, ignoreCase = true)
             }
-            .sortedBy { !it.isFavorite }
+            .sortedByDescending { it.isFavorite }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Hero Carousel Rotation Logic (48h Cooldown)
+    private val _carouselItems = MutableStateFlow<List<GameModel>>(emptyList())
+    val carouselItems: StateFlow<List<GameModel>> = _carouselItems.asStateFlow()
+
+    private fun updateCarouselSelection(games: List<GameModel>) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val fortyEightHoursMs = TimeUnit.HOURS.toMillis(48)
+            
+            val prefs = context.dataStore.data.first()
+            val filteredForCarousel = games.filter { game ->
+                val lastShown = prefs[longPreferencesKey(CAROUSEL_LAST_SHOWN_PREFIX + game.id)] ?: 0L
+                (now - lastShown) > fortyEightHoursMs
+            }
+
+            val finalSelection = if (filteredForCarousel.size >= 5) {
+                filteredForCarousel.shuffled().take(8)
+            } else {
+                // If pool is too small, reset or just take shuffled raw
+                games.shuffled().take(8)
+            }
+
+            // Record display time
+            context.dataStore.edit { p ->
+                finalSelection.forEach { game ->
+                    p[longPreferencesKey(CAROUSEL_LAST_SHOWN_PREFIX + game.id)] = now
+                }
+            }
+            
+            _carouselItems.value = finalSelection
+        }
+    }
 
     // Layer 1: Best Server Suggestion by History (Reactive)
     val bestServerSuggestion: StateFlow<String?> = db.dao().getAllTelemetry()
@@ -237,6 +273,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (live.isNotEmpty()) {
                     _rawGames.value = live
+                    updateCarouselSelection(live)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Error loading catalog: ${e.message}")

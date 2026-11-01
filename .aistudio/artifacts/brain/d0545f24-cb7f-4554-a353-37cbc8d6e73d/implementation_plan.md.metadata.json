@@ -1,6 +1,6 @@
 {
-  "summary":  "Plan maestro de arquitectura nativa v3.0 actualizado: incorpora la matriz estructural del Cinema Hybrid Launcher con carrusel D-Pad a 120Hz y fondo cinemático reactivo, la capa NDK Zero-Copy en SurfaceView con Render Pass independiente para el HUD de telemetría ImGui, el soporte nativo Picture-in-Picture (PiP 16:9), el menú guía in-stream translúcido con controles en vivo, y la arquitectura de controles táctiles de latencia ultrabaja con intercepción directa de dispatchTouchEvent hacia el motor nativo.",
-  "updatedAt":  "2026-11-01T01:28:27.787342187Z",
+  "summary":  "Plan de implementación técnica consolidado y alineado con la arquitectura canónica de 5 capas del cliente \"God Mode\" y las 10 extensiones de blindaje de stream. Define con precisión el aislamiento absoluto del stream respecto a UI/persistencia preexistente, integrando QoS DiffServ (EF 46 / AF41 34), Wi-Fi WMM, mitigación de Buffer Bloat (dRTT/dt), Watchdog ICE/DTLS a 1200ms, A/V Sync Bluetooth (±5ms), descarga térmica WebGPU/LSFG, Ghost HUD desacoplado, Touch De-jitter elíptico, Secure RAM Vault y sanitización Zero-Trace post-sesión.",
+  "updatedAt":  "2026-11-01T16:27:12.210753199Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

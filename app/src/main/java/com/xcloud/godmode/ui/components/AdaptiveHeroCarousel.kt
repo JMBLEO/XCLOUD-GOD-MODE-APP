@@ -20,6 +20,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,8 +40,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import coil.compose.AsyncImage
+import com.xcloud.godmode.constants.XboxAssetsCodex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.material3.Icon
 import kotlin.math.absoluteValue
 
 /**
@@ -57,7 +61,10 @@ data class CarouselFeaturedItem(
     val subtitle: String,
     val category: String,
     val backdropUrl: String,
-    val rating: String = "4K HDR"
+    val rating: String = "4K HDR",
+    val isGamePass: Boolean = true,
+    val isOwned: Boolean = false,
+    val capabilities: List<String> = emptyList()
 )
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -267,28 +274,117 @@ private fun CarouselPageItem(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Surface(
-                    color = Color(0xFF107C10),
-                    shape = RoundedCornerShape(4.dp)
-                ) {
-                    Text(
-                        text = item.category.uppercase(),
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
+                if (item.category.isNotBlank()) {
+                    Surface(
+                        color = Color.Transparent, // Strictly transparent as requested
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier.wrapContentWidth()
+                    ) {
+                        Text(
+                            text = item.category.uppercase(),
+                            color = Color(0xFF107C10), // Move green to text to avoid "bar" artifact
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    }
                 }
 
-                Surface(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(4.dp),
-                    border = BorderStroke(1.dp, Color(0xFF4ADE80).copy(alpha = 0.5f))
-                ) {
-                    Text(
-                        text = item.rating,
-                        color = Color(0xFF4ADE80),
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                if (item.rating.isNotBlank()) {
+                    Surface(
+                        color = Color.Transparent,
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(1.dp, Color(0xFF4ADE80).copy(alpha = 0.5f)),
+                        modifier = Modifier.wrapContentWidth()
+                    ) {
+                        Text(
+                            text = item.rating,
+                            color = Color(0xFF4ADE80),
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                // Official Badges
+                if (item.isGamePass) {
+                    Surface(
+                        color = Color.Transparent,
+                        shape = RoundedCornerShape(4.dp),
+                        modifier = Modifier.height(22.dp).wrapContentWidth()
+                    ) {
+                        Icon(
+                            imageVector = XboxUnifiedIcons.GamePass,
+                            contentDescription = "Game Pass",
+                            tint = Color(0xFF107C10),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp).fillMaxHeight()
+                        )
+                    }
+                }
+                
+                // icon-container (Adaptive Render - width: max-content, background: transparent)
+                val hasController = item.capabilities.any { it.contains("Mando", true) || it.contains("Controller", true) || it.contains("Gamepad", true) }
+                val hasTouch = item.capabilities.any { it.contains("Táctil", true) || it.contains("Touch", true) }
+                val hasMkb = item.capabilities.any { it.contains("Teclado", true) || it.contains("Mouse", true) || it.contains("Mkb", true) }
+                
+                if (hasController || hasTouch || hasMkb) {
+                    Row(
+                        modifier = Modifier
+                            .wrapContentWidth()
+                            .background(Color.Transparent) 
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (hasController) {
+                            Icon(
+                                imageVector = XboxUnifiedIcons.Controller,
+                                contentDescription = "Control",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        
+                        if (hasTouch) {
+                            Icon(
+                                imageVector = XboxUnifiedIcons.Touch,
+                                contentDescription = "Táctil",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        
+                        if (hasMkb) {
+                            Icon(
+                                imageVector = XboxUnifiedIcons.Keyboard,
+                                contentDescription = "Teclado y Mouse",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+
+                if (item.capabilities.any { it.contains("Series", ignoreCase = true) }) {
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.7f),
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.5f)),
+                        modifier = Modifier.height(22.dp)
+                    ) {
+                        AsyncImage(
+                            model = XboxAssetsCodex.SystemIcons.SERIES_X_S,
+                            contentDescription = "Series X|S",
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 3.dp).fillMaxHeight(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                }
+                if (item.isOwned) {
+                    Icon(
+                        imageVector = XboxUnifiedIcons.Owned,
+                        contentDescription = "Propiedad",
+                        tint = Color(0xFF4ADE80),
+                        modifier = Modifier.size(24.dp).background(Color.Black.copy(alpha = 0.7f), CircleShape).padding(3.dp)
                     )
                 }
             }

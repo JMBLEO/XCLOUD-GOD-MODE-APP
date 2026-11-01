@@ -8,6 +8,9 @@ find_library(android-lib android)
 find_library(jnigraphics-lib jnigraphics)
 find_library(mediandk-lib mediandk)
 
+# Find Oboe for low-latency audio
+find_package(oboe REQUIRED CONFIG)
+
 # Add the main native library
 add_library(godmode_native SHARED
         NativeStreamBridge.cpp
@@ -17,6 +20,7 @@ add_library(godmode_native SHARED
         stream/RtpH265Depacketizer.cpp
         stream/RtpAV1Depacketizer.cpp
         stream/RtpVVCDepacketizer.cpp
+        audio/GodModeAudioEngine.cpp
 )
 
 # Include directories
@@ -31,6 +35,7 @@ target_link_libraries(godmode_native
         ${android-lib}
         ${jnigraphics-lib}
         ${mediandk-lib}
+        oboe::oboe
         EGL
         GLESv3
 )

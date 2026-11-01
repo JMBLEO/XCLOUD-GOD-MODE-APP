@@ -1,6 +1,8 @@
 package com.xcloud.godmode.streaming
 
 import android.content.Context
+import android.media.AudioManager
+import android.net.wifi.WifiManager
 import android.util.Log
 import org.json.JSONObject
 import org.webrtc.*
@@ -16,6 +18,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import kotlinx.coroutines.*
+
+import org.webrtc.audio.JavaAudioDeviceModule
+import org.webrtc.audio.JavaAudioDeviceModule.AudioSamples
+import java.nio.ByteBuffer
 
 /**
  * WebRTCStreamManager handles the WebRTC connection to the Xbox Cloud Gaming servers.
@@ -33,6 +39,10 @@ class WebRTCStreamManager(
     private var dataChannel: DataChannel? = null
     private var audioTrack: AudioTrack? = null
     private var audioSource: AudioSource? = null
+    
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var watchdogJob: Job? = null
+    private var lastTrafficMs = System.currentTimeMillis()
     
     private val gamepadStates = mutableMapOf<Int, ByteArray>() // Slot -> Last Packet
     
@@ -59,8 +69,14 @@ class WebRTCStreamManager(
         val fps: Int = 0
     )
 
+    val bitrateController = AdaptiveBitrateController(context)
     private val _stats = MutableStateFlow(StreamStats())
     val stats: StateFlow<StreamStats> = _stats.asStateFlow()
+
+    fun updateTelemetry(rtt: Int, jitter: Double, packetLoss: Double, bitrate: Int, fps: Int) {
+        _stats.value = StreamStats(rtt, jitter, packetLoss, bitrate, fps)
+        bitrateController.onTelemetryTick(packetLoss.toFloat(), rtt)
+    }
 
     fun createOfferSync(targetWidth: Int, targetHeight: Int, maxBitrateKbps: Int): String? {
         val countDownLatch = java.util.concurrent.CountDownLatch(1)
@@ -229,11 +245,30 @@ class WebRTCStreamManager(
 
         val defaultVideoEncoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
 
+        val adm = JavaAudioDeviceModule.builder(context)
+            .setSamplesReadyCallback { samples: AudioSamples ->
+                if (isConnected()) {
+                    val data = samples.data
+                    val shortArray = ShortArray(data.size / 2)
+                    java.nio.ByteBuffer.wrap(data)
+                        .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                        .asShortBuffer()
+                        .get(shortArray)
+                    NativeStreamBridge.injectAudio(shortArray, shortArray.size / samples.channelCount)
+                }
+            }
+            .setUseHardwareAcousticEchoCanceler(false)
+            .setUseHardwareNoiseSuppressor(false)
+            .createAudioDeviceModule()
+
         peerConnectionFactory = PeerConnectionFactory.builder()
             .setOptions(options)
+            .setAudioDeviceModule(adm)
             .setVideoDecoderFactory(godModeDecoderFactory)
             .setVideoEncoderFactory(defaultVideoEncoderFactory)
             .createPeerConnectionFactory()
+        
+        adm.release()
     }
 
     fun setVideoSink(sink: VideoSink) {
@@ -241,11 +276,42 @@ class WebRTCStreamManager(
     }
 
     fun startStream(gsToken: String, sessionPath: String, titleId: String? = null) {
-        // Now handled by GssvSignalingOrchestrator for robust flow
-        // but we keep it as a shortcut for the UI if needed
         this.activeGsToken = gsToken
         this.activeSessionPath = sessionPath
-        
+
+        // Extensión 3: Adquisición de Wi-Fi WMM Low-Latency Lock (<2ms contención en router)
+        try {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "GodModeLowLatencyLock")?.apply {
+                setReferenceCounted(false)
+                acquire()
+                Log.d(TAG, "Wi-Fi WMM Full Low-Latency Lock acquired")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not acquire Wi-Fi WMM Lock: ${e.message}")
+        }
+
+        // Extensión 4: Compensación Dinámica de Latencia A/V Bluetooth
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            val isBtActive = audioManager?.isBluetoothA2dpOn == true || audioManager?.isBluetoothScoOn == true
+            if (isBtActive) {
+                // Compensación temporal negativa de 125 ms para sincronía de labios/audio en mandos/auriculares BT
+                NativeStreamBridge.setPtsOffsetUs(-125_000L)
+                Log.i(TAG, "Bluetooth Audio activo: compensación A/V PTS configurada a -125ms")
+            } else {
+                NativeStreamBridge.setPtsOffsetUs(0L)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error checking Bluetooth audio delay: ${e.message}")
+        }
+
+        // Extensión 9: Aislamiento en Bóveda de Memoria Segura C++
+        NativeStreamBridge.storeSecureToken(gsToken.toByteArray())
+        NativeStreamBridge.startAudio()
+
+        // Iniciar Watchdog de enlace SCTP/ICE (Extensión 2 y 5)
+        startConnectionWatchdog()
         
         // Use the orchestrator internally
         val orchestrator = GssvSignalingOrchestrator(okHttpClient)
@@ -259,6 +325,28 @@ class WebRTCStreamManager(
         
         scope.launch {
             orchestrator.startCloudStream(config, this@WebRTCStreamManager)
+        }
+    }
+
+    private fun startConnectionWatchdog() {
+        watchdogJob?.cancel()
+        lastTrafficMs = System.currentTimeMillis()
+        watchdogJob = scope.launch(Dispatchers.Default) {
+            while (isActive) {
+                delay(500) // Heartbeat interval
+                val now = System.currentTimeMillis()
+                val isChanOpen = dataChannel?.state() == DataChannel.State.OPEN
+                if (isChanOpen) {
+                    // Send lightweight keepalive ping on control channel
+                    sendMessage("control", "{\"type\":\"ping\",\"ts\":$now}")
+                }
+                // Si transcurren >1200 ms sin paquetes útiles mientras estamos conectados, auto-reparar ICE
+                if (isChanOpen && (now - lastTrafficMs) > 1200L) {
+                    Log.w(TAG, "Watchdog de Enlace: Sin tráfico útil durante ${now - lastTrafficMs}ms. Disparando Fast ICE Restart...")
+                    restartIce()
+                    lastTrafficMs = now // Reset watchdog counter
+                }
+            }
         }
     }
 
@@ -320,6 +408,7 @@ class WebRTCStreamManager(
             }
             override fun onMessage(buffer: DataChannel.Buffer?) {
                 if (buffer == null) return
+                lastTrafficMs = System.currentTimeMillis()
                 val remaining = buffer.data.remaining()
                 if (remaining >= 4) {
                     val bytes = ByteArray(remaining)
@@ -398,6 +487,18 @@ class WebRTCStreamManager(
 
     fun stopStream() {
         executor.execute {
+            watchdogJob?.cancel()
+            watchdogJob = null
+            try {
+                if (wifiLock?.isHeld == true) {
+                    wifiLock?.release()
+                }
+                wifiLock = null
+            } catch (e: Exception) {
+                Log.w(TAG, "Error releasing Wi-Fi lock: ${e.message}")
+            }
+            bitrateController.release()
+            NativeStreamBridge.stopAudio()
             com.xcloud.godmode.audio.OboeAudioBridge.stopCapture()
             hapticEngine.stopAllVibrations()
             peerConnection?.dispose()
@@ -409,6 +510,18 @@ class WebRTCStreamManager(
             controlChannel?.dispose()
             controlChannel = null
             localCandidates.clear()
+            
+            // Extensión 10: Zero-Trace Execution Audit & Memory Sanitization
+            NativeStreamBridge.zeroTraceShutdown()
+
+            // Purga de directorios caché en frío
+            try {
+                context.cacheDir?.deleteRecursively()
+                context.externalCacheDir?.deleteRecursively()
+                Log.d(TAG, "Zero-Trace: Cold cache purged successfully")
+            } catch (e: Exception) {
+                Log.w(TAG, "Cache purge warning: ${e.message}")
+            }
         }
     }
 }

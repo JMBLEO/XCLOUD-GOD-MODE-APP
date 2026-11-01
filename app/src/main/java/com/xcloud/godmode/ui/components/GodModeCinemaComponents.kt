@@ -64,12 +64,17 @@ fun GodModeCinemaBackground(
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // 1. Base Layer: The Hero Art with Ken Burns
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
+        val context = LocalContext.current
+        val imageRequest = remember(heroUrl) {
+            ImageRequest.Builder(context)
                 .data(heroUrl)
                 .crossfade(600)
-                .build(),
+                .build()
+        }
+
+        // 1. Base Layer: The Hero Art with Ken Burns
+        AsyncImage(
+            model = imageRequest,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier

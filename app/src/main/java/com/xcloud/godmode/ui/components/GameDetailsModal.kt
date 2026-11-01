@@ -28,6 +28,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.xcloud.godmode.constants.XboxAssetsCodex
 import com.xcloud.godmode.models.GameModel
 
 @Composable
@@ -111,16 +112,25 @@ fun GameDetailsModal(
                                         setMediaController(controller)
                                         setOnPreparedListener { mp ->
                                             mp.isLooping = true
-                                            start()
+                                            // Only start if we are still active in the UI
+                                            if (isTrailerPlaying) start()
+                                        }
+                                        setOnErrorListener { _, _, _ ->
+                                            // Handle errors silently to avoid crashes in headless environments
+                                            true 
                                         }
                                     }
                                 },
                                 onRelease = { videoView ->
                                     try {
                                         videoView.stopPlayback()
+                                        videoView.setOnPreparedListener(null)
+                                        videoView.setOnErrorListener(null)
+                                        videoView.setOnCompletionListener(null)
+                                        videoView.setVideoURI(null)
                                         videoView.suspend()
                                     } catch (e: Exception) {
-                                        // Ignore release exceptions
+                                        // Ignore release exceptions in background threads
                                     }
                                 }
                             )
@@ -148,12 +158,15 @@ fun GameDetailsModal(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "XBOX GAME PASS",
+                                text = game.subscriptionTier,
                                 style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.2.sp
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 1.1.sp
                                 ),
-                                color = Color.White
+                                color = Color.White,
+                                modifier = Modifier
+                                    .background(Color(0xFF107C10), RoundedCornerShape(2.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         } else if (game.isOwned) {
                             Surface(
@@ -174,18 +187,18 @@ fun GameDetailsModal(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     // B. Title & Transparent Logo
-                    if (game.logoUrl.isNotBlank()) {
+                    if (game.logoUrl.isNotBlank() && !game.title.contains("STEAM", ignoreCase = true)) {
                         AsyncImage(
                             model = game.logoUrl,
-                            contentDescription = game.title,
+                            contentDescription = game.getFullTitle(),
                             contentScale = ContentScale.Fit,
                             modifier = Modifier
-                                .height(64.dp)
-                                .widthIn(max = 280.dp)
+                                .height(72.dp)
+                                .widthIn(max = 320.dp)
                         )
                     } else {
                         Text(
-                            text = game.title,
+                            text = game.getFullTitle(),
                             style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Black),
                             color = Color.White
                         )
@@ -205,31 +218,30 @@ fun GameDetailsModal(
                     // D. Compatibility: Jugar con mando / teclado
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Text(
                             text = strings.compatibleWith,
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFCBD5E1)
                         )
-                        Icon(
-                            imageVector = Icons.Default.SportsEsports,
+                        AsyncImage(
+                            model = XboxAssetsCodex.SystemIcons.CONTROLLER,
                             contentDescription = strings.controller,
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(22.dp)
                         )
-                        Icon(
-                            imageVector = Icons.Default.Keyboard,
-                            contentDescription = strings.mouseKeyboard,
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        if (game.capabilities.any { it.contains("Táctil", ignoreCase = true) }) {
-                            Icon(
-                                imageVector = Icons.Default.TouchApp,
+                        if (game.supportsMkb) {
+                            AsyncImage(
+                                model = XboxAssetsCodex.SystemIcons.KEYBOARD_MOUSE,
+                                contentDescription = strings.mouseKeyboard,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        if (game.supportsTouch) {
+                            AsyncImage(
+                                model = XboxAssetsCodex.SystemIcons.TOUCH,
                                 contentDescription = strings.touch,
-                                tint = Color(0xFF4ADE80),
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
@@ -297,7 +309,7 @@ fun GameDetailsModal(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = strings.subscriptionNotice,
+                            text = if (game.isGamePass) "Requiere suscripción activa de Xbox Game Pass Ultimate o juego F2P compatible" else "Este juego forma parte de tu colección personal o es un título gratuito.",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFCBD5E1)
                         )
@@ -327,7 +339,7 @@ fun GameDetailsModal(
                                     color = Color.White
                                 )
                                 Text(
-                                    text = strings.allIncludedSubscription,
+                                    text = if (game.isGamePass) "Incluido con Game Pass" else "Jugar desde la Nube",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Color(0xFFE2E8F0)
                                 )
@@ -387,8 +399,8 @@ fun GameDetailsModal(
                             .height(44.dp)
                             .testTag("game_details_customize_touch_button")
                     ) {
-                        Icon(Icons.Default.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
+                        AsyncImage(model = XboxAssetsCodex.SystemIcons.TOUCH, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
                         Text(strings.touchEditorCustomize, style = MaterialTheme.typography.labelMedium)
                     }
 
@@ -410,7 +422,7 @@ fun GameDetailsModal(
                                 Surface(
                                     color = Color.Black,
                                     border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White),
-                                    shape = RoundedCornerShape(6.dp),
+                                    shape = RoundedCornerShape(2.dp),
                                     modifier = Modifier
                                         .width(54.dp)
                                         .height(68.dp)
@@ -523,31 +535,19 @@ fun GameDetailsModal(
  * Resolves high-resolution official rating badges from CDN for ESRB and PEGI.
  */
 fun resolveOfficialRatingIcon(rating: String, iconUrl: String): String {
-    if (iconUrl.isNotBlank()) return iconUrl
+    if (iconUrl.isNotBlank() && iconUrl.contains("microsoft")) return iconUrl
     val lower = rating.lowercase()
     return when {
-        lower.contains("everyone 10+") || lower.contains("e10+") ->
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2c/ESRB_2013_Everyone_10%2B.svg/240px-ESRB_2013_Everyone_10%2B.svg.png"
-        lower.contains("teen") || lower.contains("maduro 13") || lower == "t" ->
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/ESRB_2013_Teen.svg/240px-ESRB_2013_Teen.svg.png"
+        lower.contains("everyone 10+") || lower.contains("e10") || lower.contains("10+") ->
+            XboxAssetsCodex.AgeRatings.ESRB.E10
         lower.contains("mature") || lower.contains("maduro 17+") || lower.contains("esrb m") || lower == "m" ->
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/ESRB_2013_Mature.svg/240px-ESRB_2013_Mature.svg.png"
-        lower.contains("adult") || lower.contains("ao") ->
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/4/46/ESRB_2013_Adults_Only.svg/240px-ESRB_2013_Adults_Only.svg.png"
-        lower.contains("pending") || lower.contains("rp") ->
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/ESRB_2013_Rating_Pending.svg/240px-ESRB_2013_Rating_Pending.svg.png"
-        lower.contains("pegi 18") ->
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/PEGI_18.svg/240px-PEGI_18.svg.png"
-        lower.contains("pegi 16") ->
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/PEGI_16.svg/240px-PEGI_16.svg.png"
-        lower.contains("pegi 12") ->
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/2/24/PEGI_12.svg/240px-PEGI_12.svg.png"
-        lower.contains("pegi 7") ->
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/6/60/PEGI_7.svg/240px-PEGI_7.svg.png"
-        lower.contains("pegi 3") ->
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/PEGI_3.svg/240px-PEGI_3.svg.png"
+            XboxAssetsCodex.AgeRatings.ESRB.M
+        lower.contains("teen") || lower.contains("adolescente") || lower.contains("esrb t") || lower == "t" ->
+            XboxAssetsCodex.AgeRatings.ESRB.T
+        lower.contains("everyone") || lower == "e" ->
+            XboxAssetsCodex.AgeRatings.ESRB.E
         else ->
-            "https://upload.wikimedia.org/wikipedia/commons/thumb/0/05/ESRB_2013_Everyone.svg/240px-ESRB_2013_Everyone.svg.png"
+            XboxAssetsCodex.AgeRatings.ESRB.E // Default to high-res everyone if uncertain
     }
 }
 

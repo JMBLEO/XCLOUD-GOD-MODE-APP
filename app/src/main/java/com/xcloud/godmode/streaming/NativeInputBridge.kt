@@ -128,6 +128,8 @@ class NativeInputBridge(
 
     private var touchOriginX = 0f
     private var touchOriginY = 0f
+    private var touchSmoothedX = 0f
+    private var touchSmoothedY = 0f
 
     fun processRawTouch(pointerId: Int, x: Float, y: Float, action: Int, screenWidth: Int, screenHeight: Int) {
         val state = controllers[0]
@@ -135,6 +137,8 @@ class NativeInputBridge(
 
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_CANCEL) {
             if (x < screenWidth * 0.5f) {
+                touchSmoothedX = 0f
+                touchSmoothedY = 0f
                 state.leftStickX = 0f
                 state.leftStickY = 0f
             } else {
@@ -145,18 +149,23 @@ class NativeInputBridge(
             return
         }
 
-        // Left half: Virtual thumbstick
+        // Left half: Virtual thumbstick with Elliptical Deadzone and EMA De-jitter
         if (x < screenWidth * 0.45f) {
             if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
                 touchOriginX = x
                 touchOriginY = y
+                touchSmoothedX = 0f
+                touchSmoothedY = 0f
             }
             val radius = 120f
             val dx = (x - touchOriginX).coerceIn(-radius, radius) / radius
             val dy = (y - touchOriginY).coerceIn(-radius, radius) / radius
-            val (normX, normY) = applyRadialDeadzone(dx, dy, state.deadzone)
-            state.leftStickX = normX
-            state.leftStickY = normY
+            val (normX, normY) = applyEllipticalDeadzone(dx, dy, state.deadzone, state.deadzone * 0.9f)
+            // EMA Trajectory smoothing (Extensión 8: Touch De-jitter)
+            touchSmoothedX = (touchSmoothedX * 0.3f) + (normX * 0.7f)
+            touchSmoothedY = (touchSmoothedY * 0.3f) + (normY * 0.7f)
+            state.leftStickX = touchSmoothedX.coerceIn(-1f, 1f)
+            state.leftStickY = touchSmoothedY.coerceIn(-1f, 1f)
         } else if (y < screenHeight * 0.3f) {
             // Upper area: Triggers & Bumpers
             if (x < screenWidth * 0.25f) {
@@ -216,11 +225,17 @@ class NativeInputBridge(
                             hasActiveChange = true
                             lastSentPacketHash[slot] = stateHash
                             val packet = buildGamepadPacket(slot, state)
-                            channel.send(DataChannel.Buffer(packet, true))
+                            channel.send(DataChannel.Buffer(packet.duplicate(), true))
+                            try {
+                                NativeStreamBridge.pushRawInput(packet.array(), packet.limit())
+                            } catch (ignored: Throwable) {}
                         } else if (idleCount % 15 == 0) {
                             // Enviar keepalive a 15Hz para mantener el watchdog de xCloud activo
                             val packet = buildGamepadPacket(slot, state)
-                            channel.send(DataChannel.Buffer(packet, true))
+                            channel.send(DataChannel.Buffer(packet.duplicate(), true))
+                            try {
+                                NativeStreamBridge.pushRawInput(packet.array(), packet.limit())
+                            } catch (ignored: Throwable) {}
                         }
                     }
                 }
@@ -393,18 +408,46 @@ class NativeInputBridge(
     }
 
     /**
-     * Emulación MKB: Traduce deltas de ratón (movementX, movementY) a stick derecho con suavizado
+     * Emulación MKB: Traduce deltas de ratón (movementX, movementY) a stick derecho con suavizado Kalman
      */
     fun onMouseDelta(deltaX: Float, deltaY: Float, slot: Int = 0) {
         if (!isMkbEnabled || slot !in 0..7) return
         val state = controllers[slot]
 
-        // Suavizado exponencial (EMA smoothing)
-        mouseSmoothX = (mouseSmoothX * 0.4f) + (deltaX * mouseSensitivity * 0.05f * 0.6f)
-        mouseSmoothY = (mouseSmoothY * 0.4f) + (deltaY * mouseSensitivity * 0.05f * 0.6f)
+        try {
+            val smoothed = NativeStreamBridge.smoothMouseDelta(deltaX * mouseSensitivity * 0.05f, deltaY * mouseSensitivity * 0.05f)
+            mouseSmoothX = smoothed[0]
+            mouseSmoothY = smoothed[1]
+        } catch (e: Throwable) {
+            // Suavizado exponencial fallback (EMA smoothing)
+            mouseSmoothX = (mouseSmoothX * 0.4f) + (deltaX * mouseSensitivity * 0.05f * 0.6f)
+            mouseSmoothY = (mouseSmoothY * 0.4f) + (deltaY * mouseSensitivity * 0.05f * 0.6f)
+        }
 
         state.rightStickX = mouseSmoothX.coerceIn(-1f, 1f)
         state.rightStickY = mouseSmoothY.coerceIn(-1f, 1f)
+    }
+
+    /**
+     * Algoritmo de Zona Muerta Concéntrica y Elíptica (Extensión 8)
+     * Permite umbrales asimétricos X/Y para evitar derivas diagonales involuntarias.
+     */
+    private fun applyEllipticalDeadzone(x: Float, y: Float, deadzoneX: Float, deadzoneY: Float): Pair<Float, Float> {
+        val normalizedX = if (deadzoneX > 0f) x / deadzoneX else x
+        val normalizedY = if (deadzoneY > 0f) y / deadzoneY else y
+        val distance = sqrt((normalizedX * normalizedX) + (normalizedY * normalizedY))
+
+        if (distance < 1.0f) return Pair(0f, 0f)
+
+        // Rescaling radial
+        val rawMagnitude = sqrt((x * x) + (y * y)).coerceAtMost(1.0f)
+        val avgDeadzone = (deadzoneX + deadzoneY) * 0.5f
+        val scaledMagnitude = ((rawMagnitude - avgDeadzone) / (1f - avgDeadzone)).coerceIn(0f, 1f)
+        val angle = Math.atan2(y.toDouble(), x.toDouble())
+
+        val finalX = (cos(angle) * scaledMagnitude).toFloat()
+        val finalY = (sin(angle) * scaledMagnitude).toFloat()
+        return Pair(finalX, finalY)
     }
 
     /**

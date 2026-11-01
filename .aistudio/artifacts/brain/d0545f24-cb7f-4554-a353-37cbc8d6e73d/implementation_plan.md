@@ -1,146 +1,100 @@
-# God Mode v3.0: Arquitectura Nativa de Ultra-Baja Latencia (C++20 / Rust NDK, Zero-Copy Pipeline & Cinema Hybrid Launcher)
-
-Motor de cloud gaming y consola remota de alto rendimiento que desacopla la ruta crítica de streaming de la máquina virtual Android mediante un pipeline multimedia zero-copy en C++20 y Rust, eliminando pausas de recolección de basura (GC), unificando el renderizado de interfaz y video en una superficie acelerada por hardware con Render Passes independientes para video y telemetría HUD, integrando el lanzador cinemático *Cinema Hybrid* a 120Hz, soporte nativo Picture-in-Picture (PiP) y control táctil directo por intercepción de eventos de hardware.
-
-## Decisiones Críticas y Revisión del Usuario
+# Plan de Implementación Técnica Consolidado: Arquitectura de 5 Capas y Blindaje Extremo del Stream Pipeline ("God Mode")
 
 > [!IMPORTANT]
-> A continuación se consolidan las especificaciones arquitectónicas aprobadas y las extensiones estructurales incorporadas en esta revisión:
-
-- **Lanzador Cinemático *Cinema Hybrid* a 120Hz**: Interfaz de consola con barra lateral retráctil (`SideNavigationRail`), carrusel espacial con navegación fluida por D-Pad (`Modifier.focusable()` con `interactionSource`), borde de enfoque dorado (`#FFD700`) con escalado a 1.06x sin recomposiciones costosas, fondo cinemático reactivo con degradado horizontal oscuro al arte del juego enfocado, barra de atajos dinámicos de mando en la base (A Detalles, ZR Jugar, X Favorito, Y Buscar) y modales de acción rápida contextuales.
-- **Barra de Navegación Fantasma / Modo Mica Flotante**: Píldora translúcida flotante con efecto mica (`Color(0xFF090D13).copy(alpha = 0.40f)` y borde fino `Color.White.copy(alpha = 0.14f)`), permitiendo que la cuadrícula de carátulas y el fondo cinemático trasluzcan y se deslicen de forma fluida por debajo de las opciones.
-- **Icono Oficial de Calificación de Contenido**: Carga de insignias oficiales en alta resolución (ESRB y PEGI) mediante `resolveOfficialRatingIcon` desde el CDN oficial de Microsoft Store y Wikimedia, reemplazando los cuadros de texto dibujados manualmente.
-- **Arquitectura de Autenticación Independiente Multi-Capa (Inmune a Secuestro de Intent / Deep Links)**:
-  - **Opción 1 (Recomendada)**: Conexión Directa de Escritorio con `oauth20_desktop.srf` (`000000004C12AE6F`), extracción automática de tokens y renovación silenciosa a 90 días, inmune a interferencia por aplicaciones móviles instaladas.
-  - **Opción 2**: Escanear Código QR con auto-relleno OTC (`microsoft.com/link?otc=...`) y cuenta regresiva sincronizada de 15 minutos sin falsas expiraciones.
-  - **Opción 3**: Código de Consola (microsoft.com/link) con código alfanumérico en gran formato.
-  - **Opción 4**: Interceptor Loopback Local (`127.0.0.1:49215`) con microservidor integrado para captura en un solo clic.
-  - **Opción 5**: Perfil Cross-Platform First-Party con firmas Proof-of-Possession generadas por `JoseCripto` (ECDSA P-256 en formato IEEE P1363).
-  - **Opción 6**: Sincronización LAN Companion y rehidratación de cookies de sesión existentes.
-  - **Opción 7**: Navegador Externo (Modo Rescate).
-- **Capa NDK Zero-Copy y HUD Desacoplado**: Renderizado del stream mediante `AndroidView` vinculado a un `SurfaceView` que entrega su `ANativeWindow` directamente a `AMediaCodec` asíncrono en C++20. La telemetría HUD (resolución, FPS, bitrate, RTT y latencia local de decodificación) se procesa mediante una pasada EGL/OpenGL ES independiente sobre la misma superficie, impidiendo que los filtros de escalado del video (FSR / CAS) distorsionen el texto de telemetría.
-- **Picture-in-Picture (PiP 16:9) y Menú Guía ("Go Back To")**: Integración nativa de `onUserLeaveHint` con `PictureInPictureParams` en relación 16:9 para mantener la sesión de juego activa al navegar por el sistema operativo, y panel lateral translúcido *Glassmorphism* in-stream para gestionar amigos, logros TrueAchievements y ajustes en vivo (V-Sync, háptica, giroscopio) sin destruir el socket WebRTC.
-- **Controles Táctiles de Latencia Cero (Raw Touch Bypass)**: Evasión de la jerarquía de eventos de Android (`ViewRootImpl`) sobrescribiendo `dispatchTouchEvent` a nivel del contenedor raíz para inyectar coordenadas crudas (X, Y, presión) directamente a `NativeInputBridge` en C++/Rust, empaquetando y transmitiendo el estado al DataChannel en menos de 2ms con corrección radial de zonas muertas.
-- **Red y Control de Congestión Extremo**: BBRv2 en Rust, reordenamiento RTP nativo con gracia NACK dinámica, inyección SDP desbloqueada (`b=AS:50000` / `b=TIAS:50000000`), QoS DSCP `0x2E`, FEC adaptativo y supervivencia GSSV multi-offering (`xgpuweb`, `xgpucatalog`, `xgpuwebf2p`, `xhome`).
-- **Aislamiento de Kernel y Hardware**: CPU Core Pinning a núcleos de rendimiento (P-Cores), audio directo AAudio/Oboe exclusivo en `SCHED_FIFO`, espacialización binaural HRTF 5.1, colas SPSC mutex-free y watchdog anti-ANR de reinicio en <16ms.
+> **Directiva de Integridad y Aislamiento Estricto:** La ejecución de este plan se concentra **exclusivamente en el pipeline de streaming** (decodificación zero-copy, audio Oboe, periféricos a 250 Hz, control de congestión, QoS de red, sincronización A/V y sanitización volátil). Todos los componentes de las Capas 1, 4 y 5 preexistentes (Lanzador Cinema Hybrid, Modo Mica, insignias oficiales ESRB/PEGI, autenticación de 7 vías y catálogo dinámico) se mantienen 100% inalterados e inmutables.
 
 ---
 
-## 1. Visión General y Concepto Central
+## 1. Alineación Arquitectónica Canónica por Capas
 
-### Qué Hace la Aplicación
-God Mode v3.0 es una plataforma cliente nativa e independiente para Xbox Cloud Gaming y Xbox Remote Play optimizada para smartphones, tablets, consolas portátiles y Android TV. Integra un lanzador cinemático de consola a 120 FPS con navegación espacial por D-Pad, decodificación por hardware zero-copy (AV1, HEVC Main 10, VVC, LCEVC) directamente sobre `ANativeWindow`, telemetría HUD con Render Pass independiente, modo Picture-in-Picture sin desconexión, y controles físicos y táctiles de respuesta instantánea.
+El ecosistema nativo se organiza en una matriz de 5 capas funcionales estrictamente desacopladas, complementadas por el submódulo aislado de inteligencia artificial:
 
-### Audiencia Objetivo
-Jugadores que buscan una experiencia de consola de salón y portátil de nivel competitivo, exigiendo la mínima latencia de fotograma posible, negros puros en pantallas OLED, navegación táctil o con mando sin demoras, y continuidad ininterrumpida de sus sesiones de juego.
-
-### Propuesta de Valor Clave
-- **Determinismo Libre de GC**: Ruta crítica de red, video, audio y entrada ejecutada en C++20 y Rust.
-- **Fidelidad Visual y Rendimiento**: Presentación inmediata VSync-Off (`eglSwapInterval(0)`), shaders CAS y soporte HDR10+ / Dolby Vision.
-- **Ergonomía de Consola**: Interfaz 10-foot UI optimizada para control total sin tocar la pantalla, con modales de acción rápida y fondos reactivos inmersivos.
-
----
-
-## 2. Experiencia de Usuario y Diseño Visual
-
-### 2.1. El Lanzador Cinemático *Cinema Hybrid* (Home / Hub)
-
-- **Fondo Cinemático Reactivo**: Al navegar y cambiar el foco entre títulos en el carrusel (ej. *Forza Horizon 5*, *Starfield*), el fondo completo de la aplicación transiciona suavemente hacia el Key Art del juego enfocado, fusionado con un degradado horizontal oscuro (`#070A0E` a transparente) para asegurar una legibilidad impecable de los textos y tarjetas.
-- **Navegación Espacial y Filtrado**:
-  - **Barra Lateral Colapsable (`SideNavigationRail`)**: Iconos limpios para "Inicio (Cloud Gaming)", "Mis Consolas (xHome)" y "Configuración", expandiéndose elegantemente al recibir el foco.
-  - **Píldoras de Filtrado Rápido**: Selectores horizontales inmediatamente debajo del buscador ("Todos", "Recientes", "Optimizados Series X|S", "Multijugador", "Juegos Propios / BYOG").
-  - **Filas de Contenido**: "Continuar Partida / Jump back in" para reanudación instantánea y "Cloud Gaming" para el catálogo general.
-- **Tarjetas de Juego con Enfoque a 120Hz**:
-  - Efecto de foco animado a 1.06x (`animateFloatAsState`) al recibir selección por D-Pad.
-  - **Borde de Enfoque Dorado (`#FFD700`)**: Contorno dorado de 2dp con esquinas redondeadas (`RoundedCornerShape(12.dp)`), eliminando recomposiciones pesadas mediante `Modifier.focusable(interactionSource)`.
-- **Barra de Atajos de Mando Inferior**: Barra persistente en la parte inferior con prompts dinámicos adaptados al mando conectado (`(A) Detalles`, `(ZR) Jugar`, `(X) Favorito`, `(Y) Buscar`).
-- **Modales de Acción Rápida**: Al pulsar 'A' en un título, se despliega un diálogo flotante centrado con desenfoque de fondo ("Jugar ahora", "Añadir a favoritos", "Ver detalles", "Cancelar"), permitiendo iniciar la partida en un toque.
-
-### 2.2. Reproductor Nativo Zero-Copy y Menú Guía In-Stream
-
-- **Superficie de Video Directa (`NativeStreamView`)**: Contenedor `SurfaceView` cuya superficie nativa es entregada a C++20, permitiendo que `AMediaCodec` escriba los fotogramas decodificados directamente en el hardware de visualización.
-- **HUD de Telemetría Flotante**: Barra superior derecha renderizada en una pasada EGL/OpenGL ES independiente sobre la superficie, mostrando en microsegundos:
-  ```text
-  1440p · 60 fps · 45.2 Mbps · rtt 18 ms · local 4 ms
-  ```
-- **Menú Guía In-Game ("Go Back To")**: Panel lateral translúcido con efecto *Glassmorphism* invocado mediante el botón Nexus / Home del mando o gesto lateral, que suspende el envío de inputs pero mantiene el socket WebRTC activo en segundo plano, con pestañas:
-  - **Juego**: Reanudar o salir de la sesión activa.
-  - **Amigos y Logros**: Lista de amigos en línea y progreso TrueAchievements.
-  - **Configuración en Vivo**: Toggles para V-Sync (activar/desactivar), selector de Vibración (Háptica 4 canales), Motion Aiming (Giroscopio) y Controles Táctiles (On/Off).
-
-### 2.3. Controles Táctiles de Latencia Cero
-
-- **Layout Ergonómico**: Joysticks virtuales translúcidos y botones ABXY en la zona inferior derecha; gatillos superiores (LT, LB, RT, RB) en disposición de fácil alcance índice/pulgar; botones L3/R3 adyacentes a los analógicos.
-- **Captura Cruda en `dispatchTouchEvent`**: Intercepción directa que elude el pipeline de eventos de Android, enviando punteros multitáctiles (ID, X, Y, acción) a `NativeInputBridge` para su conversión analógica y despacho WebRTC en menos de 2ms.
+| Capa Arquitectónica | Tecnologías Clave | Estado y Alcance en esta Iteración |
+| :--- | :--- | :--- |
+| **Capa 1: Presentación e Interfaz** | Jetpack Compose, Material Design 3, Coil Compose | **Inmutable / Preservada:** Lanzador Cinema Hybrid (120 Hz), píldora flotante translúcida Modo Mica (`#090D13`), insignias oficiales ESRB/PEGI y controles táctiles. |
+| **Capa 2: Motor Multimedia NDK & Zero-Copy** | C++20, Android NDK, AMediaCodec, ANativeWindow, EGL, OpenGL ES 3.2 | **Foco Principal (Stream):** Decodificación hardware directa sin copias en RAM, render pass separado para telemetría, soporte multi-códec (AV1, HEVC, VVC, LCEVC, SVC) y búfer SPSC a 250 Hz. |
+| **Capa 3: Audio de Baja Latencia & Háptica** | Oboe C++, AAudio, OpenSL ES, Android Vibrator | **Foco Principal (Stream):** Canal exclusivo `SCHED_FIFO`, ráfagas adaptativas, filtro Biquad a 120 Hz para haptics, Opus PLC y compensación dinámica de PTS para Bluetooth ($\pm 5\text{ ms}$). |
+| **Capa 4: Red, Conectividad & Protocolos** | OkHttp, DoH 1.1.1.1, WebRTC, JoseCripto, DiffServ QoS | **Foco Principal (Stream):** Priorización DSCP (EF 46 / AF41 34), Wi-Fi WMM Low-Latency, mitigación de Buffer Bloat ($\frac{dRTT}{dt}$), Watchdog ICE/DTLS (1200 ms), FlexFEC-03 y bypass anti-relay. *(Autenticación 7-vías permanece inalterada).* |
+| **Capa 5: Persistencia, Estado & Sanitización** | Room Database, DataStore, Android Keystore, C++ Memory Vault | **Foco Principal (Stream):** Secure RAM Vault cifrado en C++ (AES-GCM), sanitización Zero-Trace post-sesión (`memset_s`) y purga de directorios caché en frío. *(Base de datos Room y catálogo dinámico permanecen inalterados).* |
+| **Submódulo Especializado: IA Operativa** | Firebase AI Logic / Gemini API (`com.xcloud.godmode.ai`) | **Aislado:** Asistencia y optimización gráfica desacoplada de la ruta crítica de streaming. |
 
 ---
 
-## 3. Decisiones Arquitectónicas y Compromisos Técnicos
-
-### Decisión 1: Pipeline Zero-Copy y Render Passes Separados (Video vs HUD)
-- **Enfoque**: `AMediaCodec` asíncrono escribe directamente a `ANativeWindow`. La telemetría HUD y la interfaz superpuesta se dibujan mediante shaders en una pasada separada con EGL / OpenGL ES.
-- **Razón**: Los algoritmos de escalado espacial y nitidez de video (CAS / FSR) provocan artefactos y borrosidad en textos y tipografías pequeñas. Separar los pases garantiza video mejorado y texto de telemetría a resolución nativa cristalina.
-
-### Decisión 2: Multitarea Picture-in-Picture (PiP 16:9) Nativo
-- **Enfoque**: Manejo de `onUserLeaveHint` en `MainActivity` para configurar `PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()` y pasar a modo PiP.
-- **Razón**: Permite al usuario consultar mensajes en el teléfono o navegar al Home sin que el sistema operativo congele o destruya la sesión WebRTC, evitando reingresar a colas de espera en los servidores.
-
-### Decisión 3: Intercepción Cruda de Toques Táctiles
-- **Enfoque**: Sobrescritura de `dispatchTouchEvent` en el contenedor principal con envío directo por JNI a la lógica de entrada nativa en C++/Rust.
-- **Razón**: El enrutamiento convencional a través del árbol de vistas de Android (`ViewRootImpl`) agrega entre 15ms y 25ms de latencia de entrada. El puente directo garantiza paridad de respuesta con un mando físico (inferior a 4ms).
-
-### Decisión 4: Gestión de Estado Desacoplada (`StreamingSettings` & `AudioSettings`)
-- **Enfoque**: Estados inmutables expuestos vía StateFlow que sincronizan proactivamente la resolución (1440p QHD / 1080p), bitrate (hasta 50+ Mbps), códec preferido (HEVC/AV1/VVC) y ganancia de audio con el orquestador nativo en Rust.
-
----
-
-## 4. Arquitectura del Sistema y Flujo de Componentes
+## 2. Diagrama del Sistema: Flujo Multimedia y Blindaje Extremo (Extensiones 1 a 10)
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│               GOD MODE CINEMA HYBRID CLIENT (v3.0)                     │
-└──────────────────────────────────┬─────────────────────────────────────┘
-                                   │
-       ┌───────────────────────────┴───────────────────────────┐
-       ▼                                                       ▼
- ┌───────────────────────────────────────┐   ┌───────────────────────────────────────┐
- │        CAPA VISUAL Y LAUNCHER         │   │          MOTOR NATIVO NDK             │
- │         (Jetpack Compose UI)          │   │           (C++20 & Rust)              │
- ├───────────────────────────────────────┤   ├───────────────────────────────────────┤
- │ • CinemaHybridLauncher (120Hz D-Pad)  │   │ • AMediaCodec Asíncrono Zero-Copy     │
- │ • Fondo Dinámico con Key Art Reactivo │   │ • Frame Pacing VSync-Off Inmediato    │
- │ • GameCardFocusable (Borde Dorado)    │   │ • Shader Render Pass HUD Separado     │
- │ • SideNavigationRail y Modales        │◄─►│ • Reordenamiento RTP & BBRv2 Congest. │
- │ • Menú Guía Translúcido In-Stream     │   │ • AAudio / Oboe Direct (SCHED_FIFO)   │
- │ • Picture-in-Picture (PiP 16:9)       │   │ • Sondeo de Mandos 250Hz & Curvas L2  │
- │ • Zero-Latency Raw Touch Dispatch     │   │ • CPU Core Pinning a P-Cores          │
- └───────────────────────────────────────┘   └───────────────────────────────────────┘
-                                   │
-                                   ▼
- ┌───────────────────────────────────────────────────────────────────┐
- │               CASCADA DE AUTENTICACIÓN MULTI-OFFERING             │
- ├───────────────────────────────────────────────────────────────────┤
- │ • OAuth 2.0 Device Code con Generación QR en Pantalla             │
- │ • Intercambio XBL RPS & Tokens XSTS Duales                        │
- │ • Smart Fallback Concurrente: xgpuweb ➔ byod ➔ f2p ➔ xhome        │
- │ • Fast Session Resume (<3s) & TokenVault Cifrado AES-256-GCM      │
- └───────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                   PIPELINE DE STREAMING HOLÍSTICO NATIVO "GOD MODE"                              │
+└──────────────────────────────────────────────┬───────────────────────────────────────────────────┘
+                                               │
+     ┌───────────────────┬─────────────────────┼─────────────────────┬───────────────────┐
+     ▼                   ▼                     ▼                     ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│ ENRUTAMIENTO,   │ │ DECODIFICACIÓN  │ │ CONTROLADORES,  │ │ AUDIO OBOE,     │ │ SEGURIDAD,      │
+│ QoS & WATCHDOG  │ │ ZERO-COPY & GPU │ │ TOUCH & SPSC    │ │ SYNC & HAPTICS  │ │ AUDIT & GHOST   │
+│ (Ext. 1, 2, 3,5)│ │ (Ext. 6)        │ │ (Ext. 8)        │ │ (Ext. 4)        │ │ (Ext. 7, 9, 10) │
+├─────────────────┤ ├─────────────────┤ ├─────────────────┤ ├─────────────────┤ ├─────────────────┤
+│• DiffServ QoS   │ │• AMediaCodec    │ │• Ring Buffer    │ │• Oboe LowLatency│ │• Secure RAM     │
+│  EF 46 / AF41 34│ │  Zero-Copy HW   │ │  SPSC C++ 250Hz │ │  Adaptive Bursts│ │  Vault (C++ AES)│
+│• Wi-Fi WMM Lock │ │• EGL Fence Sync │ │• Kalman Filter  │ │• A/V Sync (PTS  │ │• Zero-Trace     │
+│• Buffer Bloat   │ │• Dynamic NN     │ │  Mouse Aiming   │ │  Compensación)  │ │  Shutdown Memset│
+│  dRTT/dt Mon.   │ │  Offload (>42°C)│ │• Touch De-jitter│ │• Opus PLC Audio │ │• Purga Caché    │
+│• ICE Watchdog   │ │• AChoreographer │ │  Zonas Muertas  │ │• 120Hz Biquad   │ │  en Frío        │
+│  SCTP (1200ms)  │ │  120Hz VSync    │ │  Elípticas      │ │  Audio Haptics  │ │• Ghost HUD Core │
+│• FlexFEC / NACK │ │• eglCleanBinding│ │• EMA Smoothing  │ │• Bluetooth Offs │ │  EGL Overlay    │
+└─────────────────┘ └─────────────────┘ └─────────────────┘ └─────────────────┘ └─────────────────┘
 ```
 
-### Modelos de Estado y Componentes Clave
+---
 
-1. **`models/`**:
-   - `StreamingSettings`: Resolución (`1440p (QHD)`, `1080p HQ`), bitrate (`45 Mbps`), códec preferido (`HEVC`, `AV1`, `VVC`).
-   - `AudioSettings`: Formato (`Opus estéreo`, `Binaural 5.1`), nivel de ganancia acústica.
-2. **`ui/screens/` & `ui/components/`**:
-   - `HomeScreen.kt`: Integración del lanzador cinemático `CinemaHybridLauncher` con barra lateral y carrusel espacial.
-   - `AdaptiveHeroCarousel.kt` & `GameCardFocusable`: Tarjetas con borde dorado (`#FFD700`), escalado 1.06x y captación de foco D-Pad a 120Hz.
-   - `StreamScreen.kt` & `ZeroCopyStreamView`: Contenedor del stream sobre `SurfaceView` enlazado al NDK.
-   - `InStreamGameBar.kt`: Menú guía lateral translúcido con pestañas y controles en vivo.
-   - `LatencyHUD.kt`: HUD de telemetría flotante con micro-métricas en tiempo real.
-3. **`streaming/` & `bridge/`**:
-   - `GodModeAndroidBridge.kt`: Conexión JNI para `bindNativeSurface`, `unbindNativeSurface`, inyección de toques táctiles crudos y configuración en caliente de resolución.
-   - `NativeInputBridge.kt`: Despacho de paquetes a 250Hz con corrección radial y supresión de reposo.
-4. **`network/`**:
-   - `GodModeAuthOrchestrator.kt`: Cascada de autenticación multi-offering sin bloqueos.
-   - `WakeOnLanManager.kt`: Descubrimiento local SSDP y paquetes mágicos para streaming xHome.
+## 3. Plan Detallado de Implementación por Fases de Stream
+
+### Fase 1: Señalización SDP, Priorización QoS DiffServ, Wi-Fi WMM y Watchdog ICE (Ext. 1, 2, 3 y 5)
+- **Componentes:** `app/src/main/cpp/stream/NativeStreamPipeline.cpp`, `app/src/main/java/com/xcloud/godmode/streaming/WebRTCStreamManager.kt` y `app/src/main/java/com/xcloud/godmode/streaming/AdaptiveBitrateController.kt`
+- **Tareas:**
+  1. **Marcado DiffServ QoS (DSCP / ToS):** Configurar en los sockets de transporte UDP de WebRTC: `DSCP 46 (EF)` para paquetes de entrada SCTP y voz; `DSCP 34 (AF41)` para video interactivo; y `DSCP 0 (BE)` para señalización auxiliar.
+  2. **Bloqueo Wi-Fi WMM de Ultra-Baja Latencia:** Invocar `WifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, ...)` al iniciar el stream para abatir la contención local en el router a <2 ms.
+  3. **Mitigación de Buffer Bloat:** Analizar la derivada temporal del RTT ($\frac{dRTT}{dt}$) junto al Packet Burst Tracing en reportes RTCP; ante aumentos silenciosos de cola, reducir preventivamente la tasa de bits 50 ms antes de la saturación.
+  4. **Watchdog de Enlace ICE/DTLS:** Inyectar heartbeats en DataChannel cada 500 ms. Si se detectan más de 1200 ms sin confirmación de tráfico, ejecutar automáticamente `peerConnection.restartIce()` en segundo plano sin destruir sockets ni sesión RPS en <1.2 s.
+  5. **Reescritor SDP Multi-Códec & FlexFEC-03:** Mutación estricta de SDP para priorizar VVC (RFC 9328), AV1, HEVC Main 10 HDR, LCEVC y H.264 SVC con inyección de `flexfec-03/90000` y retroalimentación reactiva (`nack`, `nack pli`, `transport-cc`, `goog-remb`). Descarte activo de candidatos TURN (`typ relay`) y mDNS (`.local`).
+
+### Fase 2: Pipeline Híbrido Zero-Copy, Fences EGL y Descarga Neuronal Térmica (Ext. 6)
+- **Componentes:** `app/src/main/cpp/NativeStreamBridge.cpp`, `app/src/main/cpp/stream/NativeStreamPipeline.cpp` y `app/src/main/java/com/xcloud/godmode/ui/screens/StreamScreen.kt`
+- **Tareas:**
+  1. **Decodificación Hardware Zero-Copy:** Vinculación directa de `AMediaCodec` asíncrono con `ANativeWindow` en modo VSync-Off / Latencia cero.
+  2. **Aislamiento de Ciclo de Vida EGL:** Invocación de `cleanupEglSurfaceBinding()` (`eglMakeCurrent(EGL_NO_SURFACE)`) al detener o pausar el stream, evitando el error `ANativeWindow already connected to another API`.
+  3. **Dynamic NN Scaler Offload (>42°C):** Monitoreo térmico mediante JNI; ante temperaturas elevadas del silicio, conmutar kernels de FSR a perfil "Lite" y pausar temporalmente LSFG para sostener 60 FPS sin caídas por *thermal throttling*.
+
+### Fase 3: Buffer SPSC a 250 Hz, Filtro Kalman y Touch De-jitter Elíptico (Ext. 8)
+- **Componentes:** `app/src/main/cpp/stream/NativeStreamPipeline.h`, `app/src/main/java/com/xcloud/godmode/streaming/NativeInputBridge.kt` y `app/src/main/java/com/xcloud/godmode/ui/components/GodModeTouchControlsOverlay.kt`
+- **Tareas:**
+  1. **Cola Circular SPSC Lock-Free C++20:** Estructura circular con alineación a 64 bytes (`alignas(64)`) y operaciones atómicas `acquire`/`release` para sondeo a 4 ms (250 Hz) sin contención de mutex.
+  2. **Filtro de Kalman para MKB:** Suavizado predictivo en `smoothMouseDelta` que elimina el micro-jitter del ratón sin introducir latencia de apuntado.
+  3. **Touch De-jitter Avanzado:** Filtro geométrico con zonas muertas concéntricas y elípticas adaptables por perfil, complementado por suavizado de trayectoria exponencial (EMA) para los joysticks virtuales.
+
+### Fase 4: Audio Oboe, Compensación A/V Bluetooth y Háptica Biquad (Ext. 4)
+- **Componentes:** `app/src/main/java/com/xcloud/godmode/audio/OboeAudioBridge.kt`, `app/src/main/cpp/godmode_ndk_engine.cpp` y `app/src/main/java/com/xcloud/godmode/haptics/UnifiedHapticTelemetricEngine.kt`
+- **Tareas:**
+  1. **Ráfagas Adaptativas Oboe:** Ajuste dinámico de buffers (64–256 muestras) en modo `PerformanceMode::LowLatency` con prioridad del kernel Linux `SCHED_FIFO`.
+  2. **A/V Sync Compensation Engine:** Medición del retardo en dispositivos Bluetooth (`PROPERTY_OUTPUT_FRAMES_PER_BUFFER`) y desfase temporal de PTS en video, manteniendo la sincronía audio/video en $\pm 5\text{ ms}$.
+  3. **Transducción Háptica Biquad (120 Hz) & PLC:** Filtro pasobajo para convertir frecuencias graves en vibración háptica, junto a Packet Loss Concealment (PLC) para evitar artefactos acústicos.
+
+### Fase 5: Ghost HUD de Telemetría, Bóveda Segura y Sanitización Zero-Trace (Ext. 7, 9 y 10)
+- **Componentes:** `app/src/main/java/com/xcloud/godmode/ui/components/GodModeTelemetryOverlay.kt`, `app/src/main/cpp/SecureRamVault.cpp`, `app/src/main/java/com/xcloud/godmode/streaming/WebRTCStreamManager.kt` y `app/src/main/cpp/stream/NativeStreamPipeline.cpp`
+- **Tareas:**
+  1. **Ghost HUD en Capa Gráfica Independiente:** Renderizado de métricas de diagnóstico (RTT, jitter, FPS, pérdida de paquetes, bitrate real y resolución) sobre superficie gráfica desacoplada (0.0% impacto en Compose).
+  2. **Secure RAM Vault en C++:** Cifrado simétrico AES-GCM en memoria nativa para credenciales y tokens volátiles XSTS/OAuth con claves de Android Keystore.
+  3. **Zero-Trace Shutdown:** Sobrescritura de memoria con ceros (`memset_s`) en buffers NDK (ANativeWindow, texturas EGL, SPSC Ring Buffers) al finalizar o interrumpir la transmisión.
+  4. **Purga de Caché en Frío:** Limpieza síncrona de particiones temporales de decodificación en `context.cacheDir` y `context.externalCacheDir`, imposibilitando la recuperación forense de datos o fotogramas en dispositivos compartidos.
+
+### Fase 6: Validación de Integridad, Compilación y Pruebas Unitarias
+- **Tareas:**
+  1. Verificación completa de compilación (`compile_applet`).
+  2. Pruebas unitarias de regresión (`gradle :app:testDebugUnitTest`).
+  3. Auditoría estricta de nombres y políticas: espacio de nombres canónico `com.xcloud.godmode.*` y erradicación total de marcas o repositorios de terceros.
+
+---
+
+## 4. Garantía de Inmutabilidad y No Regresión
+- No se modificará ninguna interfaz de usuario, pantalla, tema, lanzador Cinema Hybrid ni navegación existente.
+- Toda modificación estará estrictamente contenida en los módulos de streaming (`.streaming`), audio/háptica (`.audio`, `.haptics`), seguridad volátil y los fuentes nativos C++20 en `app/src/main/cpp/`.

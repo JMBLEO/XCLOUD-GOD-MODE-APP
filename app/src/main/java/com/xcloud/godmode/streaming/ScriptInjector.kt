@@ -14,7 +14,9 @@ class ScriptInjector(private val context: android.content.Context) {
 
     fun getScriptCode(): String {
         return try {
-            context.assets.open("xcloud-god-mode-ai.user.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val mainScript = context.assets.open("xcloud-god-mode-ai.user.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val multimediaScript = context.assets.open("godmode-multimedia.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
+            multimediaScript + "\n" + mainScript
         } catch (_: Exception) {
             "console.log('xcloud-god-mode');"
         }

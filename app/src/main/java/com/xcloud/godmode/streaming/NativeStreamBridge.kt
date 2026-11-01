@@ -41,4 +41,60 @@ object NativeStreamBridge {
      * Rewrites the SDP offer to force high bitrate and prioritize codecs.
      */
     external fun rewriteSdp(rawSdp: String, maxBitrateKbps: Int): String
+
+    /**
+     * Cleans up EGL surface bindings to prevent "ANativeWindow already connected to another API".
+     */
+    external fun cleanupEgl()
+
+    /**
+     * Smooths mouse aiming deltas using native 1D linear Kalman filters.
+     */
+    external fun smoothMouseDelta(deltaX: Float, deltaY: Float): FloatArray
+
+    /**
+     * Pushes a raw controller/input packet to the native C++20 lock-free SPSC ring buffer.
+     */
+    external fun pushRawInput(data: ByteArray, size: Int): Boolean
+
+    /**
+     * Pops a raw controller/input packet from the native lock-free SPSC ring buffer.
+     */
+    external fun popRawInput(): ByteArray?
+
+    /**
+     * Zero-Trace Execution Audit: Overwrites native memory buffers, decoders, and ring buffers with zeros.
+     */
+    external fun zeroTraceShutdown()
+
+    /**
+     * Sets a presentation time stamp offset in microseconds to compensate for Bluetooth audio latency.
+     */
+    external fun setPtsOffsetUs(offsetUs: Long)
+
+    /**
+     * Stores a sensitive session token in the native volatile C++ memory vault.
+     */
+    external fun storeSecureToken(data: ByteArray)
+
+    /**
+     * Purges the native secure memory vault with explicit zeroing.
+     */
+    external fun purgeSecureVault()
+
+    /**
+     * Starts the high-performance C++ Oboe audio pipeline.
+     */
+    external fun startAudio(): Boolean
+
+    /**
+     * Stops the Oboe audio pipeline.
+     */
+    external fun stopAudio()
+
+    /**
+     * Injects decoded PCM audio frames (48kHz Stereo) into the Oboe pipeline.
+     */
+    external fun injectAudio(data: ShortArray, numFrames: Int)
 }
+

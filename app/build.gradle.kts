@@ -60,6 +60,7 @@ android {
   buildFeatures {
     compose = true
     buildConfig = true
+    prefab = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
   dependenciesInfo {
@@ -71,6 +72,13 @@ android {
     cmake {
       path = file("src/main/cpp/CMakeLists.txt")
       version = "3.22.1"
+    }
+  }
+  defaultConfig {
+    externalNativeBuild {
+      cmake {
+        arguments("-DANDROID_STL=c++_shared")
+      }
     }
   }
 }
@@ -152,7 +160,7 @@ dependencies {
   implementation(libs.google.gson)
   implementation(libs.zxing.core)
   implementation(libs.androidx.work.runtime.ktx)
-  implementation(libs.oboe)
+  implementation("com.google.oboe:oboe:1.9.0")
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.robolectric)
   androidTestImplementation(platform(libs.androidx.compose.bom))

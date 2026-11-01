@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -182,7 +183,7 @@ fun HomeScreen(
                                 val isSelected = selectedTab == index
                                 val iconVector = when (index) {
                                     0 -> Icons.Default.Cloud
-                                    1 -> Icons.Default.Computer
+                                    1 -> Icons.Default.SportsEsports // Xbox Series X|S Style
                                     else -> Icons.Default.Settings
                                 }
 
@@ -248,6 +249,18 @@ fun HomeScreen(
                         settings = settings,
                         onSettingsChanged = { viewModel.setSettings(it) }
                     )
+                }
+
+                // Global Back to Top Button
+                if (selectedTab == 0) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = true, // We'll link this to scroll state inside the tab
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 90.dp, end = 24.dp)
+                        ) {
+                            // This is a placeholder for the FAB which will be moved inside XCloudLibraryTab for scroll state access
+                        }
+                    }
                 }
             }
         }
@@ -441,187 +454,173 @@ fun XCloudLibraryTab(
     val games by viewModel.filteredGames.collectAsState()
     val mruGames by viewModel.mruGames.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
+    val carouselItems by viewModel.carouselItems.collectAsState()
 
-    var focusedIndex by remember { mutableIntStateOf(0) }
+    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+    
     var selectedFilterCategory by remember { mutableStateOf("Todos") }
     val displayGames = remember(games, selectedFilterCategory, mruGames) {
         when (selectedFilterCategory) {
             "Recientes" -> if (mruGames.isNotEmpty()) mruGames else games
-            "Series X|S" -> games.filter { it.capabilities.any { c -> c.contains("Series", ignoreCase = true) } || it.genre.contains("Action", ignoreCase = true) }
-            "Multijugador" -> games.filter { it.capabilities.any { c -> c.contains("Multiplayer", ignoreCase = true) } || it.description.contains("Multiplayer", ignoreCase = true) }
+            "Series X|S" -> games.filter { it.capabilities.any { c -> c.contains("Series", ignoreCase = true) } }
+            "Mundial" -> games.filter { it.title.lowercase().let { t -> t.contains("halo") || t.contains("forza") || t.contains("starfield") || t.contains("doom") || t.contains("fifa") || t.contains("minecraft") } }.shuffled()
+            "Chile" -> games.filter { it.title.lowercase().let { t -> t.contains("fc 2") || t.contains("fifa") || t.contains("madden") || t.contains("nba") || t.contains("gears") } }.shuffled()
+            "LATAM" -> games.filter { it.genre.contains("Deportes", true) || it.genre.contains("Acción", true) || it.title.contains("Mortal", true) || it.title.contains("Gears", true) || it.title.contains("Rainbow", true) }.shuffled()
             "Juegos Propios (BYOG)" -> games.filter { it.isOwned || !it.isGamePass }
             else -> games
         }
     }
 
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(columnsCount),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 80.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        modifier = Modifier
-            .fillMaxSize()
-            .graphicsLayer(alpha = 0.99f)
-            .drawWithContent {
-                drawContent()
-                // Cinematic Top-Down Fade (Smooth blend under top bar)
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.15f to Color.Black
-                    ),
-                    blendMode = BlendMode.DstIn
-                )
-            }
-    ) {
-        // Hero Carousel (Moved above Search per video request)
-        if (searchQuery.isBlank() && displayGames.isNotEmpty()) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                val featured = remember(displayGames) {
-                    val distinctGenres = displayGames.distinctBy { it.genre.lowercase() }.take(8)
-                    val pool = if (distinctGenres.size >= 4) distinctGenres else displayGames.take(8)
-                    pool.map { g ->
-                        CarouselFeaturedItem(
-                            id = g.id,
-                            title = g.title,
-                            subtitle = g.description.ifBlank { "Aventura inmersiva en la nube optimizada para Xbox Cloud Gaming a 60 FPS con baja latencia." },
-                            category = g.genre.ifBlank { "Acción y Aventura" },
-                            backdropUrl = g.getFormattedSuperHeroUrl(1920, 1080),
-                            rating = g.rating.ifBlank { "ESRB Everyone" }
-                        )
-                    }
-                }
-                AdaptiveHeroCarousel(items = featured, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) { f ->
-                    games.find { it.id == f.id }?.let { onGameSelected(it) }
-                }
-            }
-        }
-
-        // Search & Filter integrated into the grid (Scrolls away naturally)
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                TextField(
-                    value = searchQuery,
-                    onValueChange = { viewModel.search(it) },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Search 4K library...", color = Color.Gray) },
-                    leadingIcon = { Icon(Icons.Default.Search, null, tint = chameleonColor) },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color.Black.copy(alpha = 0.4f),
-                        unfocusedContainerColor = Color.Black.copy(alpha = 0.4f),
-                        focusedIndicatorColor = chameleonColor,
-                        unfocusedIndicatorColor = Color.Transparent
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            state = gridState,
+            columns = GridCells.Fixed(columnsCount),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 120.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithContent {
+                    drawContent()
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            0.15f to Color.Black
+                        ),
+                        blendMode = BlendMode.DstIn
                     )
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val filterCategories = listOf("Todos", "Recientes", "Series X|S", "Multijugador", "Juegos Propios (BYOG)")
-                    this.items(filterCategories) { category ->
-                        FilterChip(
-                            selected = selectedFilterCategory == category,
-                            onClick = { selectedFilterCategory = category },
-                            label = { Text(category, fontSize = 11.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = chameleonColor.copy(alpha = 0.3f),
-                                selectedLabelColor = Color.White
-                            ),
-                            border = FilterChipDefaults.filterChipBorder(
-                                enabled = true,
-                                selected = selectedFilterCategory == category,
-                                borderColor = if (selectedFilterCategory == category) chameleonColor else Color.White.copy(alpha = 0.1f)
+                }
+        ) {
+            // Hero Carousel
+            if (searchQuery.isBlank() && carouselItems.isNotEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    val featured = remember(carouselItems) {
+                        carouselItems.map { g ->
+                            CarouselFeaturedItem(
+                                id = g.id,
+                                title = g.getFullTitle(),
+                                subtitle = g.description.ifBlank { "Aventura inmersiva en la nube optimizada para Xbox Cloud Gaming." },
+                                category = g.genre.ifBlank { "Acción y Aventura" },
+                                backdropUrl = g.getFormattedSuperHeroUrl(1920, 1080),
+                                rating = g.rating.ifBlank { "ESRB Everyone" },
+                                isGamePass = g.isGamePass,
+                                isOwned = g.isOwned,
+                                capabilities = g.capabilities
                             )
-                        )
+                        }
+                    }
+                    AdaptiveHeroCarousel(items = featured, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) { f ->
+                        games.find { it.id == f.id }?.let { onGameSelected(it) }
                     }
                 }
             }
-        }
 
-        // Grid Items
-        items(displayGames, key = { it.id }) { game ->
-            GamePosterCard(
-                game = game,
-                onFavoriteToggle = { viewModel.fav(game.id) },
-                onClick = { onGameSelected(game) },
-                accentColor = chameleonColor,
-                settings = settings
-            )
-        }
-    }
-}
-
-
-@Composable
-fun GamePosterCard(
-    game: GameModel,
-    onFavoriteToggle: () -> Unit,
-    onClick: () -> Unit,
-    accentColor: Color,
-    settings: SettingsModel,
-    modifier: Modifier = Modifier
-) {
-    val screenScale = com.xcloud.godmode.ui.theme.LocalScreenScale.current
-    var isFocused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(targetValue = if (isFocused) 1.05f else 1.0f, label = "card_scale")
-
-    Card(
-        onClick = onClick,
-        modifier = modifier
-            .fillMaxWidth()
-            .aspectRatio(2f / 3f)
-            .graphicsLayer {
-                val baseScale = screenScale.posterScale
-                scaleX = scale * baseScale
-                scaleY = scale * baseScale
-            }
-            .focusable()
-            .onFocusChanged { 
-                isFocused = it.isFocused 
-                if (it.isFocused) {
-                    com.xcloud.godmode.audio.GodModeSoundEngine.play(com.xcloud.godmode.audio.SoundEventType.FOCUS)
+            // Search & Filter
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    TextField(
+                        value = searchQuery,
+                        onValueChange = { viewModel.search(it) },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Search 4K library...", color = Color.Gray) },
+                        leadingIcon = { Icon(Icons.Default.Search, null, tint = chameleonColor) },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Black.copy(alpha = 0.4f),
+                            unfocusedContainerColor = Color.Black.copy(alpha = 0.4f),
+                            focusedIndicatorColor = chameleonColor,
+                            unfocusedIndicatorColor = Color.Transparent
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val filterCategories = listOf("Todos", "Recientes", "Series X|S", "Mundial", "Chile", "LATAM", "Juegos Propios (BYOG)")
+                        this.items(filterCategories) { category ->
+                            FilterChip(
+                                selected = selectedFilterCategory == category,
+                                onClick = { selectedFilterCategory = category },
+                                label = { Text(category, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = chameleonColor.copy(alpha = 0.3f),
+                                    selectedLabelColor = Color.White
+                                )
+                            )
+                        }
+                    }
                 }
             }
-            .border(
-                width = if (isFocused) 3.dp else 1.dp,
-                color = if (isFocused) {
-                    if (settings.homeLayoutStyle == "Cinema Hybrid") Color(0xFFFFD700)
-                    else if (settings.enableLeanbackFocus) Color(0xFF107C10)
-                    else accentColor
-                } else Color.White.copy(alpha = 0.1f),
-                shape = RoundedCornerShape(12.dp)
-            ),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.DarkGray)
-    ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            val posterWidth = if (LocalConfiguration.current.screenWidthDp >= 768) 600 else 320
-            val posterHeight = if (LocalConfiguration.current.screenWidthDp >= 768) 900 else 480
-            
-            AsyncImage(
-                model = game.getFormattedPosterUrl(posterWidth, posterHeight),
-                contentDescription = game.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-            
-            // Favorite Star
-            IconButton(
-                onClick = {
-                    onFavoriteToggle()
-                    com.xcloud.godmode.audio.GodModeSoundEngine.play(com.xcloud.godmode.audio.SoundEventType.FAVORITE)
-                },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(4.dp)
-                    .size(screenScale.scaledDp(32f))
-                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-            ) {
-                Icon(
-                    imageVector = if (game.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
-                    contentDescription = null,
-                    tint = if (game.isFavorite) Color.Yellow else Color.White,
-                    modifier = Modifier.size(screenScale.scaledDp(18f))
+
+            // Grid Items
+            items(displayGames, key = { it.id }) { game ->
+                ResilientCoverArt(
+                    game = game,
+                    onFavoriteToggle = { viewModel.fav(game.id) },
+                    onClick = { onGameSelected(game) },
+                    accentColor = chameleonColor,
+                    settings = settings
                 )
+            }
+        }
+
+        // Ghost Scroll Indicator (Ghost Scroll Fantasma)
+        val showScrollIndicator by remember {
+            derivedStateOf { gridState.firstVisibleItemIndex > 0 || gridState.firstVisibleItemScrollOffset > 0 }
+        }
+        
+        if (showScrollIndicator && displayGames.isNotEmpty()) {
+            val totalItems = displayGames.size
+            val firstVisible = gridState.firstVisibleItemIndex
+            val offsetFraction = firstVisible.toFloat() / totalItems.coerceAtLeast(1).toFloat()
+            
+            // Vertical Track (Subtle guide)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 4.dp)
+                    .fillMaxHeight(0.65f)
+                    .width(4.dp)
+                    .background(Color.White.copy(alpha = 0.03f), RoundedCornerShape(2.dp))
+            ) {
+                val indicatorHeightFraction = 0.12f
+                // Moving Glow Ghost bar
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(indicatorHeightFraction)
+                        .graphicsLayer {
+                            translationY = offsetFraction * (size.height * (1f - indicatorHeightFraction))
+                        }
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color(0xFFFFD700).copy(alpha = 0.5f), Color.Transparent)
+                            ),
+                            RoundedCornerShape(2.dp)
+                        )
+                )
+            }
+        }
+
+        // Back to Top Button (Gold Premium Variant)
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showScrollIndicator,
+            enter = fadeIn() + scaleIn(),
+            exit = fadeOut() + scaleOut(),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 95.dp, end = 20.dp)
+        ) {
+            FloatingActionButton(
+                onClick = { scope.launch { gridState.animateScrollToItem(0) } },
+                containerColor = Color(0xFF15191E).copy(alpha = 0.9f),
+                contentColor = Color(0xFFFFD700),
+                shape = CircleShape,
+                modifier = Modifier
+                    .size(52.dp)
+                    .border(1.dp, Color(0xFFFFD700).copy(alpha = 0.3f), CircleShape),
+                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 8.dp)
+            ) {
+                Icon(XboxUnifiedIcons.TopArrow, "Back to top", modifier = Modifier.size(24.dp))
             }
         }
     }

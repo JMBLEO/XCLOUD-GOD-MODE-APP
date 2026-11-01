@@ -23,8 +23,26 @@ data class GameModel(
     val isGamePass: Boolean = true,
     val isOwned: Boolean = false,
     val isFavorite: Boolean = false,
-    val chameleonRgb: Triple<Int, Int, Int>? = null
+    val chameleonRgb: Triple<Int, Int, Int>? = null,
+    val editionType: String? = null,
+    val subscriptionTier: String = "ULTIMATE · PREMIUM",
+    val supportsTouch: Boolean = true,
+    val supportsMkb: Boolean = false,
+    val isSeriesOptimized: Boolean = true
 ) {
+    /**
+     * Returns the full title including the 'Maldad' (top version) suffix.
+     * Only appends ' Edition' if editionType is non-null and not blank.
+     */
+    fun getFullTitle(): String {
+        return if (!editionType.isNullOrBlank()) {
+            if (editionType.contains("Edition", ignoreCase = true) || editionType.contains("Collection", ignoreCase = true)) {
+                "$title $editionType"
+            } else {
+                "$title $editionType Edition"
+            }
+        } else title
+    }
     /**
      * Formats poster URL with Microsoft Store or custom sizing
      */
