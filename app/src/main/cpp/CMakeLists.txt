@@ -15,12 +15,22 @@ find_package(oboe REQUIRED CONFIG)
 add_library(godmode_native SHARED
         NativeStreamBridge.cpp
         stream/NativeStreamPipeline.cpp
+        stream/NativeVsyncSync.cpp
+        stream/ChoreographerVsyncSync.cpp
+        stream/CodecQuirks.cpp
+        stream/ZeroCopyBuffer.cpp
         stream/AdaptiveGeoJitterBuffer.cpp
+        stream/StunHolePunch.cpp
         stream/RtpH264Depacketizer.cpp
         stream/RtpH265Depacketizer.cpp
         stream/RtpAV1Depacketizer.cpp
         stream/RtpVVCDepacketizer.cpp
         audio/GodModeAudioEngine.cpp
+        audio/AAudioEngine.cpp
+        bridge/BluetoothNativeBridge.cpp
+        audio_engine.cpp
+        native_streamer.cpp
+        scheduler_manager.cpp
 )
 
 # Include directories
@@ -38,4 +48,6 @@ target_link_libraries(godmode_native
         oboe::oboe
         EGL
         GLESv3
+        aaudio
+        vulkan
 )

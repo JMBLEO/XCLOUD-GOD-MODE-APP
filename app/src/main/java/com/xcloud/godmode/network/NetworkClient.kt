@@ -31,7 +31,10 @@ class NetworkClient(
             val dns = DnsOverHttps.Builder()
                 .client(bootstrapClient)
                 .url("https://cloudflare-dns.com/dns-query".toHttpUrl())
-                .bootstrapDnsHosts(listOf(InetAddress.getByName("1.1.1.1"), InetAddress.getByName("1.0.0.1")))
+                .bootstrapDnsHosts(listOf(
+                    InetAddress.getByAddress(byteArrayOf(1, 1, 1, 1)),
+                    InetAddress.getByAddress(byteArrayOf(1, 0, 0, 1))
+                ))
                 .build()
             
             okHttpClient = okHttpClient.newBuilder()

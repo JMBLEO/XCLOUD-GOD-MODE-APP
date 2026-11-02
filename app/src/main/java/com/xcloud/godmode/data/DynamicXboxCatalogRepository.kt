@@ -1,5 +1,10 @@
 package com.xcloud.godmode.data
 
+import android.util.Log
+import com.xcloud.godmode.models.CatalogEntity
+import com.xcloud.godmode.models.GameModel
+import com.xcloud.godmode.models.GodModeDao
+import com.xcloud.godmode.network.XboxFullAuthManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -21,8 +26,8 @@ data class GameTileEntity(
     val editionBadge: String?,
     val supportsMkb: Boolean = false,
     val description: String = "",
-    val genre: String = "Action & Adventure",
-    val rating: String = "ESRB Everyone",
+    val genre: String = "Acción y Aventura",
+    val rating: String = "ESRB Teen",
     val publisher: String = "Xbox Cloud Gaming"
 )
 
@@ -30,6 +35,8 @@ class DynamicXboxCatalogRepository(
     private val httpClient: OkHttpClient
 ) {
     companion object {
+        private const val TAG = "DynamicXboxCatalogRepo"
+
         val STORE_COLLECTIONS = listOf(
             "6a589fa0-d493-472b-8e20-3813699d7056", // Most popular on cloud
             "06323672-b8c8-43cc-b0de-32d5a9834749", // Recently added
@@ -78,8 +85,88 @@ class DynamicXboxCatalogRepository(
     ): List<GameTileEntity> {
         val ids = fetchCollectionProductIds(collectionId, market, language).take(limit)
         if (ids.isEmpty()) return emptyList()
-        val rawTiles = hydrateProducts(ids, market, language, mkbSet)
-        return groupEditions(rawTiles)
+        val rawEntities = hydrateChunk(ids, market, language, mkbSet, emptySet())
+        return rawEntities.map { entity ->
+            GameTileEntity(
+                productId = entity.productId,
+                titleId = entity.titleId,
+                title = entity.title,
+                posterUrl = entity.posterUrl,
+                heroUrl = entity.heroUrl,
+                editionBadge = if (entity.isSeriesOptimized) "Xbox Series X|S" else null,
+                supportsMkb = entity.supportsMkb,
+                description = entity.description,
+                genre = entity.genre,
+                rating = entity.rating,
+                publisher = entity.publisher
+            )
+        }
+    }
+
+    /**
+     * Crawls official Xbox catalog APIs (GamePass SIGLS, DisplayCatalog, BYOG collections, TitleHub)
+     * across multiple markets and hydrates items into Room Database for instant local FTS4 search.
+     */
+    suspend fun syncFullCatalogToRoom(
+        dao: GodModeDao,
+        session: XboxFullAuthManager.XboxReadySession? = null
+    ) = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "Starting full Xbox catalog sync into Room DB...")
+
+            val markets = listOf("CL", "MX", "US", "UK")
+            val allProductIds = mutableSetOf<String>()
+            val byogProductIds = mutableSetOf<String>()
+            val mkbSet = mutableSetOf<String>()
+
+            // 1. Fetch Mouse & Keyboard list
+            val mkbIds = fetchCollectionProductIds(NATIVE_MKB_COLLECTION, "US", "en-US")
+            mkbSet.addAll(mkbIds)
+
+            // 2. Fetch BYOG Collection
+            val byogIds = fetchCollectionProductIds(SYOG_COLLECTION, "US", "en-US")
+            byogProductIds.addAll(byogIds)
+
+            // 3. Multi-Market Collection Crawl
+            for (m in markets) {
+                val lang = when (m) {
+                    "CL" -> "es-CL"
+                    "MX" -> "es-MX"
+                    "UK" -> "en-GB"
+                    else -> "en-US"
+                }
+                for (col in STORE_COLLECTIONS) {
+                    val ids = fetchCollectionProductIds(col, m, lang)
+                    allProductIds.addAll(ids)
+                }
+            }
+
+            allProductIds.addAll(byogProductIds)
+            Log.d(TAG, "Discovered ${allProductIds.size} unique product IDs across markets.")
+
+            if (allProductIds.isEmpty()) return@withContext
+
+            // 4. Chunk hydration by 20 items to avoid payload limits
+            val catalogEntities = mutableListOf<CatalogEntity>()
+            val chunkedIds = allProductIds.chunked(20)
+
+            for (chunk in chunkedIds) {
+                val hydrated = hydrateChunk(chunk, "MX", "es-MX", mkbSet, byogProductIds)
+                catalogEntities.addAll(hydrated)
+            }
+
+            // 5. If user session is active, fetch recent history from TitleHub
+            if (session != null && session.webXstsToken.isNotBlank()) {
+                fetchAndMergeRecentHistoryFromTitleHub(session, catalogEntities)
+                fetchAndMergeUserEntitlements(session, catalogEntities)
+            }
+
+            // 6. Insert all entities into Room DB
+            dao.insertCatalogGames(catalogEntities)
+            Log.d(TAG, "Successfully inserted ${catalogEntities.size} Xbox games into Room DB!")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error syncing catalog to Room: ${e.message}", e)
+        }
     }
 
     private fun fetchCollectionProductIds(collectionId: String, market: String, language: String): List<String> {
@@ -123,104 +210,195 @@ class DynamicXboxCatalogRepository(
         }
     }
 
-    private fun hydrateProducts(
+    private fun hydrateChunk(
         productIds: List<String>,
         market: String,
         language: String,
-        mkbSet: Set<String>
-    ): List<GameTileEntity> {
-        fun callHydration(m: String, l: String): List<GameTileEntity> {
-            val url = "https://catalog.gamepass.com/v3/products?market=$m&language=$l&hydration=RemoteHighSapphire0"
-            val bodyJson = JSONObject().put("Products", JSONArray(productIds)).toString()
-            val req = Request.Builder()
-                .url(url)
-                .post(bodyJson.toRequestBody("application/json".toMediaType()))
-                .header("Accept", "application/json")
-                .header("Content-Type", "application/json")
-                .header("calling-app-name", "Xbox Cloud Gaming Web")
-                .header("calling-app-version", "29.19.17")
-                .header("ms-cv", "${UUID.randomUUID().toString().replace("-", "").take(22)}.2")
-                .header("Referer", "https://www.xbox.com/")
-                .build()
+        mkbSet: Set<String>,
+        byogSet: Set<String>
+    ): List<CatalogEntity> {
+        val url = "https://catalog.gamepass.com/v3/products?market=$market&language=$language&hydration=RemoteHighSapphire0"
+        val bodyJson = JSONObject().put("Products", JSONArray(productIds)).toString()
+        val req = Request.Builder()
+            .url(url)
+            .post(bodyJson.toRequestBody("application/json".toMediaType()))
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .header("calling-app-name", "Xbox Cloud Gaming Web")
+            .header("calling-app-version", "29.19.17")
+            .header("ms-cv", "${UUID.randomUUID().toString().replace("-", "").take(22)}.2")
+            .header("Referer", "https://www.xbox.com/")
+            .build()
 
-            return try {
-                httpClient.newCall(req).execute().use { res ->
-                    if (!res.isSuccessful) return emptyList()
-                    val root = JSONObject(res.body?.string() ?: "{}")
-                    val productsObj = root.optJSONObject("Products") ?: return emptyList()
-                    val tiles = mutableListOf<GameTileEntity>()
+        return try {
+            httpClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) return emptyList()
+                val root = JSONObject(res.body?.string() ?: "{}")
+                val productsObj = root.optJSONObject("Products") ?: return emptyList()
+                val entities = mutableListOf<CatalogEntity>()
 
-                    val keys = productsObj.keys()
-                    while (keys.hasNext()) {
-                        val pid = keys.next()
-                        val p = productsObj.optJSONObject(pid) ?: continue
-                        val title = p.optString("ProductTitle").ifEmpty {
-                            p.optJSONArray("LocalizedProperties")?.optJSONObject(0)?.optString("ProductTitle") ?: ""
+                val keys = productsObj.keys()
+                while (keys.hasNext()) {
+                    val pid = keys.next()
+                    val p = productsObj.optJSONObject(pid) ?: continue
+                    val title = p.optString("ProductTitle").ifEmpty {
+                        p.optJSONArray("LocalizedProperties")?.optJSONObject(0)?.optString("ProductTitle") ?: ""
+                    }
+                    if (title.isEmpty()) continue
+
+                    val poster = normalizeUrl(
+                        p.optJSONObject("Image_Poster")?.optString("URL")
+                            ?: p.optJSONObject("Image_Tile")?.optString("URL")
+                    )
+                    val hero = normalizeUrl(
+                        p.optJSONObject("Image_TitledHero")?.optString("URL")
+                            ?: p.optJSONObject("Image_Hero")?.optString("URL")
+                            ?: poster
+                    )
+                    val superHero = normalizeUrl(
+                        p.optJSONObject("Image_SuperHeroArt")?.optString("URL")
+                            ?: p.optJSONObject("Image_TitledHero")?.optString("URL")
+                            ?: hero
+                    )
+                    if (poster.isEmpty() && hero.isEmpty()) continue
+
+                    val rawDesc = p.optString("ProductDescription").ifEmpty {
+                        p.optString("ShortDescription").ifEmpty {
+                            p.optJSONArray("LocalizedProperties")?.optJSONObject(0)?.optString("ProductDescription") ?: ""
                         }
-                        if (title.isEmpty()) continue
+                    }
 
-                        val poster = normalizeUrl(
-                            p.optJSONObject("Image_Poster")?.optString("URL")
-                                ?: p.optJSONObject("Image_Tile")?.optString("URL")
+                    val categoriesArr = p.optJSONArray("Categories")
+                    val rawCategory = if (categoriesArr != null && categoriesArr.length() > 0) {
+                        categoriesArr.optString(0)
+                    } else {
+                        p.optString("Category").ifEmpty {
+                            p.optJSONArray("LocalizedProperties")?.optJSONObject(0)?.optString("Category") ?: ""
+                        }
+                    }
+
+                    val rawRating = p.optString("Rating").ifEmpty {
+                        p.optString("ParentalRating").ifEmpty {
+                            p.optJSONArray("Properties")?.optJSONObject(0)?.optJSONArray("Ratings")?.optJSONObject(0)?.optString("RatingDescriptor") ?: ""
+                        }
+                    }
+
+                    val pub = p.optString("PublisherName").ifEmpty { "Xbox Cloud Gaming" }
+                    val (genreResolved, ratingResolved, descResolved) = resolveGameDetails(title, rawCategory, rawRating, rawDesc)
+
+                    val isByog = byogSet.contains(pid)
+                    val isMkb = mkbSet.contains(pid)
+                    val titleId = p.optString("XCloudTitleId").takeIf { it.isNotEmpty() }
+
+                    entities.add(
+                        CatalogEntity(
+                            productId = pid,
+                            titleId = titleId,
+                            title = title,
+                            publisher = pub,
+                            description = descResolved,
+                            posterUrl = poster.ifEmpty { hero },
+                            heroUrl = hero.ifEmpty { poster },
+                            superHeroUrl = superHero.ifEmpty { hero },
+                            genre = genreResolved,
+                            rating = ratingResolved,
+                            isCloudEnabled = true,
+                            isSeriesOptimized = true,
+                            isByog = isByog,
+                            supportsMkb = isMkb,
+                            marketRegion = if (isByog) "WORLD" else "LATAM",
+                            lastPlayedEpochMs = 0L
                         )
-                        val hero = normalizeUrl(
-                            p.optJSONObject("Image_TitledHero")?.optString("URL")
-                                ?: p.optJSONObject("Image_Hero")?.optString("URL")
-                                ?: poster
-                        )
-                        if (poster.isEmpty() && hero.isEmpty()) continue
+                    )
+                }
+                entities
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
 
-                        val rawDesc = p.optString("ProductDescription").ifEmpty {
-                            p.optString("ShortDescription").ifEmpty {
-                                p.optJSONArray("LocalizedProperties")?.optJSONObject(0)?.optString("ProductDescription") ?: ""
-                            }
-                        }
+    private fun fetchAndMergeRecentHistoryFromTitleHub(
+        session: XboxFullAuthManager.XboxReadySession,
+        entities: MutableList<CatalogEntity>
+    ) {
+        val url = "https://titlehub.xboxlive.com/users/xuid(${session.uhs})/titles/titlehistory/decoration/detail"
+        val req = Request.Builder()
+            .url(url)
+            .header("Authorization", "XBL3.0 x=${session.uhs};${session.webXstsToken}")
+            .header("x-xbl-contract-version", "2")
+            .header("Accept", "application/json")
+            .build()
 
-                        val categoriesArr = p.optJSONArray("Categories")
-                        val rawCategory = if (categoriesArr != null && categoriesArr.length() > 0) {
-                            categoriesArr.optString(0)
-                        } else {
-                            p.optString("Category").ifEmpty {
-                                p.optJSONArray("LocalizedProperties")?.optJSONObject(0)?.optString("Category") ?: ""
-                            }
-                        }
+        try {
+            httpClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) return
+                val root = JSONObject(res.body?.string() ?: "{}")
+                val titlesArr = root.optJSONArray("titles") ?: return
+                val now = System.currentTimeMillis()
 
-                        val rawRating = p.optString("Rating").ifEmpty {
-                            p.optString("ParentalRating").ifEmpty {
-                                p.optJSONArray("Properties")?.optJSONObject(0)?.optJSONArray("Ratings")?.optJSONObject(0)?.optString("RatingDescriptor") ?: ""
-                            }
-                        }
+                for (i in 0 until titlesArr.length()) {
+                    val t = titlesArr.optJSONObject(i) ?: continue
+                    val titleId = t.optString("titleId")
+                    val name = t.optString("name")
+                    val pfn = t.optString("pfn")
 
-                        val pub = p.optString("PublisherName").ifEmpty { "Xbox Cloud Gaming" }
+                    if (titleId.isBlank()) continue
 
-                        val (genreResolved, ratingResolved, descResolved) = resolveGameDetails(title, rawCategory, rawRating, rawDesc)
+                    val index = entities.indexOfFirst { it.titleId == titleId || it.title.equals(name, ignoreCase = true) }
+                    val playedEpoch = now - (i * 3600000L)
 
-                        tiles.add(
-                            GameTileEntity(
-                                productId = pid,
-                                titleId = p.optString("XCloudTitleId").takeIf { it.isNotEmpty() },
-                                title = title,
-                                posterUrl = poster.ifEmpty { hero },
-                                heroUrl = hero.ifEmpty { poster },
-                                editionBadge = null,
-                                supportsMkb = mkbSet.contains(pid),
-                                description = descResolved,
-                                genre = genreResolved,
-                                rating = ratingResolved,
-                                publisher = pub
+                    if (index >= 0) {
+                        entities[index] = entities[index].copy(lastPlayedEpochMs = playedEpoch)
+                    } else if (name.isNotBlank()) {
+                        entities.add(
+                            CatalogEntity(
+                                productId = "title_$titleId",
+                                titleId = titleId,
+                                title = name,
+                                publisher = "Xbox Cloud Gaming",
+                                description = "Jugado recientemente en Xbox Live",
+                                posterUrl = "https://images-eds-ssl.xboxlive.com/image?url=471_3kkEig9M9_Uu_w67FzN7Uj2z...&$pfn",
+                                genre = "Reciente",
+                                isCloudEnabled = true,
+                                lastPlayedEpochMs = playedEpoch
                             )
                         )
                     }
-                    tiles
                 }
-            } catch (_: Exception) {
-                emptyList()
             }
-        }
+        } catch (_: Exception) {}
+    }
 
-        val primary = callHydration(market, language)
-        return if (primary.isNotEmpty() || (market == "US" && language == "en-US")) primary
-        else callHydration("US", "en-US")
+    private fun fetchAndMergeUserEntitlements(
+        session: XboxFullAuthManager.XboxReadySession,
+        entities: MutableList<CatalogEntity>
+    ) {
+        val url = "https://entitlements.auth.xboxlive.com/api/v1/entitlements"
+        val req = Request.Builder()
+            .url(url)
+            .header("Authorization", "XBL3.0 x=${session.uhs};${session.webXstsToken}")
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            httpClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) return
+                val root = JSONObject(res.body?.string() ?: "{}")
+                val entitlements = root.optJSONArray("items") ?: return
+
+                for (i in 0 until entitlements.length()) {
+                    val item = entitlements.optJSONObject(i) ?: continue
+                    val pid = item.optString("productId")
+                    if (pid.isNotBlank()) {
+                        val index = entities.indexOfFirst { it.productId == pid }
+                        if (index >= 0) {
+                            entities[index] = entities[index].copy(isByog = true)
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     private fun resolveGameDetails(title: String, rawCategory: String, rawRating: String, rawDesc: String): Triple<String, String, String> {
@@ -228,8 +406,8 @@ class DynamicXboxCatalogRepository(
         val genre = when {
             rawCategory.isNotBlank() && !rawCategory.equals("Games", ignoreCase = true) -> rawCategory
             lower.contains("forza") || lower.contains("racing") || lower.contains("f1") || lower.contains("grid") || lower.contains("dirt") || lower.contains("speed") -> "Carreras • Simulación"
-            lower.contains("halo") || lower.contains("gears") || lower.contains("doom") || lower.contains("shooter") || lower.contains("battlefield") || lower.contains("wolfenstein") || lower.contains("duty") -> "Shooter • Acción"
-            lower.contains("starfield") || lower.contains("fallout") || lower.contains("elder scrolls") || lower.contains("skyrim") || lower.contains("persona") || lower.contains("yakuza") || lower.contains("witcher") -> "Rol • Aventura"
+            lower.contains("halo") || lower.contains("gears") || lower.contains("doom") || lower.contains("shooter") || lower.contains("battlefield") || lower.contains("wolfenstein") -> "Shooter • Acción"
+            lower.contains("starfield") || lower.contains("fallout") || lower.contains("elder scrolls") || lower.contains("skyrim") || lower.contains("persona") || lower.contains("yakuza") -> "Rol • Aventura"
             lower.contains("minecraft") || lower.contains("lego") || lower.contains("ori") || lower.contains("dodo") || lower.contains("duckie") || lower.contains("party") || lower.contains("psychonauts") -> "Plataformas • Familiar"
             lower.contains("fifa") || lower.contains("madden") || lower.contains("nba") || lower.contains("sports") || lower.contains("football") -> "Deportes • Competitivo"
             lower.contains("flight") || lower.contains("simulator") || lower.contains("empires") || lower.contains("cities") -> "Estrategia • Simulación"
@@ -252,7 +430,6 @@ class DynamicXboxCatalogRepository(
             lower.contains("halo") -> "Ponte la armadura del mayor héroe de la humanidad para vivir una aventura épica y explorar la colosal escala del anillo de Halo."
             lower.contains("sea of thieves") -> "Surca los mares y forja tu propia leyenda pirata en un mundo compartido repleto de tesoros ocultos, combates navales y monstruos legendarios."
             lower.contains("gears") -> "Una de las franquicias más aclamadas de los videojuegos ofrece una campaña colosal y frenético combate cooperativo y multijugador."
-            lower.contains("dodo") || lower.contains("duckie") -> "Acompaña a Dodo Duckie en una colorida y divertida aventura de plataformas llena de puzles, saltos y desafíos para todas las edades."
             lower.contains("minecraft") -> "Construye cualquier cosa que imagines, aventúrate en biomas infinitos y desafía a criaturas misteriosas en una experiencia sandbox legendaria."
             lower.contains("flight") -> "Surca los cielos de todo el planeta Tierra con aviones sumamente detallados en condiciones meteorológicas realistas en tiempo real."
             else -> "Disfruta de este aclamado título en la nube optimizado a 60 FPS con controles táctiles nativos, baja latencia y audio espacial inmersivo."
@@ -264,24 +441,5 @@ class DynamicXboxCatalogRepository(
     private fun normalizeUrl(raw: String?): String {
         if (raw.isNullOrBlank()) return ""
         return if (raw.startsWith("//")) "https:$raw" else raw
-    }
-
-    private fun groupEditions(tiles: List<GameTileEntity>): List<GameTileEntity> {
-        val grouped = LinkedHashMap<String, MutableList<GameTileEntity>>()
-        for (t in tiles) {
-            val match = EDITION_REGEX.find(t.title)
-            val baseTitle = if (match != null) t.title.substring(0, match.range.first).trim() else t.title.trim()
-            val edition = if (match != null) {
-                if (match.groupValues[1].contains("One", ignoreCase = true)) "Xbox One" else "Xbox Series X|S"
-            } else null
-
-            val key = baseTitle.lowercase()
-            grouped.getOrPut(key) { mutableListOf() }.add(
-                t.copy(title = baseTitle.ifEmpty { t.title }, editionBadge = edition)
-            )
-        }
-        return grouped.values.map { group ->
-            group.sortedBy { if (it.editionBadge == "Xbox One") 1 else 0 }.first()
-        }
     }
 }

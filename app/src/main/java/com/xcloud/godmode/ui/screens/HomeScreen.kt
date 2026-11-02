@@ -247,6 +247,7 @@ fun HomeScreen(
                     )
                     2 -> AdvancedSettingsTab(
                         settings = settings,
+                        viewModel = viewModel,
                         onSettingsChanged = { viewModel.setSettings(it) }
                     )
                 }
@@ -459,18 +460,8 @@ fun XCloudLibraryTab(
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val scope = rememberCoroutineScope()
     
-    var selectedFilterCategory by remember { mutableStateOf("Todos") }
-    val displayGames = remember(games, selectedFilterCategory, mruGames) {
-        when (selectedFilterCategory) {
-            "Recientes" -> if (mruGames.isNotEmpty()) mruGames else games
-            "Series X|S" -> games.filter { it.capabilities.any { c -> c.contains("Series", ignoreCase = true) } }
-            "Mundial" -> games.filter { it.title.lowercase().let { t -> t.contains("halo") || t.contains("forza") || t.contains("starfield") || t.contains("doom") || t.contains("fifa") || t.contains("minecraft") } }.shuffled()
-            "Chile" -> games.filter { it.title.lowercase().let { t -> t.contains("fc 2") || t.contains("fifa") || t.contains("madden") || t.contains("nba") || t.contains("gears") } }.shuffled()
-            "LATAM" -> games.filter { it.genre.contains("Deportes", true) || it.genre.contains("Acción", true) || it.title.contains("Mortal", true) || it.title.contains("Gears", true) || it.title.contains("Rainbow", true) }.shuffled()
-            "Juegos Propios (BYOG)" -> games.filter { it.isOwned || !it.isGamePass }
-            else -> games
-        }
-    }
+    val selectedCategoryIndex by viewModel.selectedCategory.collectAsState()
+    val displayGames = games
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(
@@ -523,7 +514,7 @@ fun XCloudLibraryTab(
                         value = searchQuery,
                         onValueChange = { viewModel.search(it) },
                         modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Search 4K library...", color = Color.Gray) },
+                        placeholder = { Text("Buscar en la biblioteca de Xbox Cloud...", color = Color.Gray) },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = chameleonColor) },
                         shape = RoundedCornerShape(12.dp),
                         colors = TextFieldDefaults.colors(
@@ -536,13 +527,18 @@ fun XCloudLibraryTab(
                     Spacer(modifier = Modifier.height(12.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         val filterCategories = listOf("Todos", "Recientes", "Series X|S", "Mundial", "Chile", "LATAM", "Juegos Propios (BYOG)")
-                        this.items(filterCategories) { category ->
+                        this.items(filterCategories.size) { index ->
+                            val category = filterCategories[index]
+                            val isSelected = selectedCategoryIndex == index
                             FilterChip(
-                                selected = selectedFilterCategory == category,
-                                onClick = { selectedFilterCategory = category },
-                                label = { Text(category, fontSize = 11.sp) },
+                                selected = isSelected,
+                                onClick = {
+                                    viewModel.setCategoryFilter(index)
+                                    com.xcloud.godmode.audio.GodModeSoundEngine.play(com.xcloud.godmode.audio.SoundEventType.SELECT)
+                                },
+                                label = { Text(category, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = chameleonColor.copy(alpha = 0.3f),
+                                    selectedContainerColor = chameleonColor.copy(alpha = 0.35f),
                                     selectedLabelColor = Color.White
                                 )
                             )
@@ -550,6 +546,7 @@ fun XCloudLibraryTab(
                     }
                 }
             }
+
 
             // Grid Items
             items(displayGames, key = { it.id }) { game ->

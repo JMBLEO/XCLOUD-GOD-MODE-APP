@@ -41,9 +41,12 @@ import android.os.Build
 import org.webrtc.SurfaceViewRenderer
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import android.view.MotionEvent
+import android.view.Surface
+import kotlinx.coroutines.launch
 import com.xcloud.godmode.ui.components.StreamStatusOverlay
 import com.xcloud.godmode.ui.components.GodModeTelemetryOverlay
 import com.xcloud.godmode.ui.components.GodModeTouchControlsOverlay
+import com.xcloud.godmode.ui.components.GodModeToggle
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -128,26 +131,35 @@ fun StreamScreen(
         }
     }
 
+    val scope = rememberCoroutineScope()
     val orchestrator = remember { com.xcloud.godmode.streaming.GssvSignalingOrchestrator(streamManager.okHttpClient) }
     val launchState by orchestrator.launchState.collectAsState()
 
-    LaunchedEffect(gsToken, sessionPath, titleId) {
-        val optimalNode = com.xcloud.godmode.core.GeoBypassRegistry.resolveOptimalNode(
-            userCountryOrSelectedCode = settings.forceServer // Simplificación: usamos el server forzado como pista de región
-        )
+    val launchStreamBlock: suspend () -> Unit = {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val optimalNode = com.xcloud.godmode.core.GeoBypassRegistry.resolveOptimalNode(
+                userCountryOrSelectedCode = settings.forceServer
+            )
 
-        val sessionConfig = com.xcloud.godmode.streaming.GssvSessionConfig(
-            gsToken = gsToken,
-            regionName = optimalNode.countryName,
-            regionBaseUri = sessionPath.substringBefore("/v2/login/user"),
-            bypassIp = optimalNode.integratedBypassIp,
-            titleId = titleId,
-            locale = settings.storeLocale.ifBlank { optimalNode.locale }
-        )
+            val activeBypassIp = if (settings.enableNetworkBypass && settings.bypassIp != "Desactivado" && settings.bypassIp.isNotBlank()) {
+                if (settings.bypassIp == "custom") settings.customIp else settings.bypassIp
+            } else {
+                optimalNode.integratedBypassIp
+            }
 
-        streamManager.setVideoSink(surfaceViewRenderer)
-        orchestrator.startCloudStream(sessionConfig, streamManager)
-        StreamSessionHolder.recordStart(null, gsToken, sessionPath)
+            val sessionConfig = com.xcloud.godmode.streaming.GssvSessionConfig(
+                gsToken = gsToken,
+                regionName = optimalNode.countryName,
+                regionBaseUri = sessionPath.substringBefore("/v2/login/user"),
+                bypassIp = activeBypassIp,
+                titleId = titleId,
+                locale = settings.storeLocale.ifBlank { optimalNode.locale }
+            )
+
+            streamManager.setVideoSink(surfaceViewRenderer)
+            orchestrator.startCloudStream(sessionConfig, streamManager)
+            StreamSessionHolder.recordStart(null, gsToken, sessionPath)
+        }
         
         // Start Foreground Service
         val serviceIntent = Intent(context, StreamingService::class.java)
@@ -156,6 +168,10 @@ fun StreamScreen(
         } else {
             context.startService(serviceIntent)
         }
+    }
+
+    LaunchedEffect(gsToken, sessionPath, titleId) {
+        launchStreamBlock()
     }
 
     LaunchedEffect(launchState) {
@@ -262,6 +278,9 @@ fun StreamScreen(
                     streamManager = streamManager,
                     settings = settings,
                     modifier = aspectModifier,
+                    onSurfaceCreated = { surface ->
+                        orchestrator.notifySurfaceCreated(surface)
+                    },
                     onInputEvent = { event ->
                         inputManager.handleMotionEvent(event)
                     }
@@ -275,16 +294,18 @@ fun StreamScreen(
                     aspectRatio = selectedAspectRatio,
                     volumeBoostPercent = volumeBoost
                 )
+                val webFallbackUrl = com.xcloud.godmode.streaming.RegionBypassWebViewHelper.buildSupportedPlayUrl(titleId, "es-MX")
                 GameStreamWebView(
-                    launchUrl = "https://www.xbox.com/play/launch/forza-horizon-5/9PNLT98ZLR9W",
+                    launchUrl = webFallbackUrl,
                     appSettings = liveSettings,
                     modifier = Modifier.fillMaxSize()
                 )
             }
         }
 
-        // Provisioning Overlay
-        when (launchState) {
+        // Provisioning Overlay (Sólo para Motor 1 Nativo)
+        if (selectedMotor == 1) {
+            when (launchState) {
             is com.xcloud.godmode.streaming.StreamLaunchState.InQueue -> {
                 val state = launchState as com.xcloud.godmode.streaming.StreamLaunchState.InQueue
                 StreamStatusOverlay(
@@ -304,15 +325,70 @@ fun StreamScreen(
                 val state = launchState as com.xcloud.godmode.streaming.StreamLaunchState.Failed
                 AlertDialog(
                     onDismissRequest = handleCloseStream,
-                    title = { Text("No se pudo iniciar el Stream") },
-                    text = { Text(state.reason) },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = Color(0xFFEF4444))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("No se pudo iniciar el Stream", color = Color.White)
+                        }
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = state.reason,
+                                color = Color(0xFFFCA5A5),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Puedes conmutar al Motor 2 (WebView Directo) o reintentar la negociación de red nativa.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
+                        }
+                    },
                     confirmButton = {
-                        Button(onClick = handleCloseStream) { Text("Volver al Hub") }
-                    }
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Button(
+                                onClick = {
+                                    selectedMotor = 2
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Web, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("⚡ Iniciar con Motor 2 (WebView Directo)")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    orchestrator.resetSurfaceBarrier()
+                                    scope.launch { launchStreamBlock() }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("↻ Reintentar Conexión")
+                            }
+                            TextButton(
+                                onClick = handleCloseStream,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Volver al Hub", color = Color.Gray)
+                            }
+                        }
+                    },
+                    containerColor = Color(0xFF1C2024),
+                    shape = RoundedCornerShape(12.dp)
                 )
             }
             else -> {}
         }
+    }
 
         // Overlay Controls (Top-Right)
         Row(
@@ -692,18 +768,11 @@ fun StreamScreen(
                     HorizontalDivider(color = Color(0xFF282D33))
 
                     // Emulación Avanzada MKB (Ratón y Teclado a Gamepad)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Emulación MKB (Ratón a Mando):", color = Color.LightGray, style = MaterialTheme.typography.bodySmall)
-                        Switch(
+                        GodModeToggle(
+                            label = "Emulación MKB (Ratón a Mando):",
                             checked = mkbEnabled,
-                            onCheckedChange = { mkbEnabled = it },
-                            colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF107C10))
+                            onCheckedChange = { mkbEnabled = it }
                         )
-                    }
 
                     if (mkbEnabled) {
                         Text(
@@ -852,6 +921,7 @@ fun NativeZeroCopyViewport(
     streamManager: WebRTCStreamManager,
     settings: com.xcloud.godmode.models.SettingsModel,
     modifier: Modifier = Modifier,
+    onSurfaceCreated: ((Surface) -> Unit)? = null,
     onInputEvent: (MotionEvent) -> Unit
 ) {
     AndroidView(
@@ -862,8 +932,12 @@ fun NativeZeroCopyViewport(
         factory = { context ->
             SurfaceView(context).apply {
                 holder.addCallback(object : SurfaceHolder.Callback {
+                    private var isAttached = false
+                    private var lastW = 0
+                    private var lastH = 0
+
                     override fun surfaceCreated(holder: SurfaceHolder) {
-                        // Hand over the surface to the native C++20 pipeline
+                        onSurfaceCreated?.invoke(holder.surface)
                         val profile = when (settings.videoCodec) {
                             "HEVC / H.265" -> 1
                             "AV1" -> 2
@@ -871,7 +945,9 @@ fun NativeZeroCopyViewport(
                             "AV2 (Exp)" -> 4
                             else -> 0 // H.264 SVC
                         }
-                        NativeStreamBridge.attachSurface(
+                        lastW = 1920
+                        lastH = 1080
+                        isAttached = NativeStreamBridge.attachSurface(
                             surface = holder.surface,
                             profile = profile,
                             width = 1920,
@@ -880,19 +956,23 @@ fun NativeZeroCopyViewport(
                     }
 
                     override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
-                        // Resync surface on dimensions change (e.g. rotation or foldable unfold)
-                        val profile = when (settings.videoCodec) {
-                            "HEVC / H.265" -> 1
-                            "AV1" -> 2
-                            "VVC / H.266" -> 3
-                            "AV2 (Exp)" -> 4
-                            else -> 0
+                        onSurfaceCreated?.invoke(holder.surface)
+                        if (!isAttached || w != lastW || h != lastH) {
+                            lastW = w
+                            lastH = h
+                            val profile = when (settings.videoCodec) {
+                                "HEVC / H.265" -> 1
+                                "AV1" -> 2
+                                "VVC / H.266" -> 3
+                                "AV2 (Exp)" -> 4
+                                else -> 0
+                            }
+                            isAttached = NativeStreamBridge.attachSurface(holder.surface, profile, w, h)
                         }
-                        NativeStreamBridge.attachSurface(holder.surface, profile, w, h)
                     }
 
                     override fun surfaceDestroyed(holder: SurfaceHolder) {
-                        // Support "Go Back To" style: detach but keep session alive if requested
+                        isAttached = false
                         NativeStreamBridge.detachSurface()
                     }
                 })

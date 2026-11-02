@@ -190,4 +190,18 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_injectAudio(JNIEnv *env, jo
     }
 }
 
+static uint8_t* gTelemetryBufferPtr = nullptr;
+static jsize gTelemetryBufferSize = 0;
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_bindTelemetryBuffer(JNIEnv *env, jobject thiz, jobject buffer) {
+    if (!buffer) {
+        gTelemetryBufferPtr = nullptr;
+        gTelemetryBufferSize = 0;
+        return;
+    }
+    gTelemetryBufferPtr = static_cast<uint8_t*>(env->GetDirectBufferAddress(buffer));
+    gTelemetryBufferSize = env->GetDirectBufferCapacity(buffer);
+}
+
 }

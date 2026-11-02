@@ -35,13 +35,20 @@ data class GameModel(
      * Only appends ' Edition' if editionType is non-null and not blank.
      */
     fun getFullTitle(): String {
-        return if (!editionType.isNullOrBlank()) {
-            if (editionType.contains("Edition", ignoreCase = true) || editionType.contains("Collection", ignoreCase = true)) {
-                "$title $editionType"
-            } else {
-                "$title $editionType Edition"
-            }
-        } else title
+        val edition = editionType?.trim() ?: return title
+        if (edition.isBlank()) return title
+        
+        // Anti-redundancy: if title already ends with the edition name
+        if (title.endsWith(edition, ignoreCase = true)) return title
+
+        return if (edition.contains("Edition", ignoreCase = true) || 
+            edition.contains("Collection", ignoreCase = true) ||
+            edition.contains("Bundle", ignoreCase = true) ||
+            edition.contains("Pack", ignoreCase = true)) {
+            "$title $edition"
+        } else {
+            "$title $edition Edition"
+        }
     }
     /**
      * Formats poster URL with Microsoft Store or custom sizing

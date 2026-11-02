@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit
 
 class CatalogRepository(
     private val db: com.xcloud.godmode.models.GodModeDatabase? = null,
-    private val client: OkHttpClient = OkHttpClient.Builder()
+    val client: OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(15, TimeUnit.SECONDS)
     .readTimeout(15, TimeUnit.SECONDS)
     .build()
@@ -256,31 +256,53 @@ class CatalogRepository(
                 }
             }
 
-            // Case 2: Public fetching (fallback)
+            // Case 2: Public fetching (fallback / full catalog fetching)
             if (hydratedGames.isEmpty()) {
-                val siglUrl = "https://catalog.gamepass.com/sigls/v2?id=29a81209-df6f-41fd-a528-2ae6b91f719c&language=es-CL&market=CL"
-                val req = Request.Builder().url(siglUrl).build()
-                val resp = client.newCall(req).execute()
-                if (resp.isSuccessful) {
-                    val siglArray = JSONArray(resp.body?.string() ?: "[]")
-                    val ids = mutableListOf<String>()
-                    for (i in 0 until minOf(siglArray.length(), 40)) {
-                        val item = siglArray.optJSONObject(i)
-                        val id = item?.optString("id")
-                        if (!id.isNullOrBlank()) ids.add(id)
-                    }
-
-                    if (ids.isNotEmpty()) {
-                        val displayCatalogUrl = "https://displaycatalog.mp.microsoft.com/v7.0/products?bigIds=${ids.joinToString(",")}&market=CL&languages=es-CL"
-                        val catReq = Request.Builder().url(displayCatalogUrl).build()
-                        val catResp = client.newCall(catReq).execute()
-                        if (catResp.isSuccessful) {
-                            val json = JSONObject(catResp.body?.string() ?: "{}")
-                            val products = json.optJSONArray("Products") ?: JSONArray()
-                            for (i in 0 until products.length()) {
-                                val prod = products.optJSONObject(i) ?: continue
-                                hydratedGames.add(parseDisplayCatalogProduct(prod))
+                val collections = listOf(
+                    "29a81209-df6f-41fd-a528-2ae6b91f719c", // All Game Pass Cloud Games
+                    "6a589fa0-d493-472b-8e20-3813699d7056", // Most popular on cloud
+                    "06323672-b8c8-43cc-b0de-32d5a9834749", // Recently added
+                    "e78d9a61-5ef4-43af-b400-edba1250b18e", // Stream Your Own Game (BYOG)
+                    "8fa264dd-124f-4af3-97e8-596fcdf4b486"  // Native Mouse & Keyboard
+                )
+                val allSiglIds = mutableSetOf<String>()
+                for (colId in collections) {
+                    val siglUrl = "https://catalog.gamepass.com/sigls/v2?id=$colId&language=es-CL&market=CL"
+                    val req = Request.Builder().url(siglUrl).build()
+                    try {
+                        val resp = client.newCall(req).execute()
+                        if (resp.isSuccessful) {
+                            val siglArray = JSONArray(resp.body?.string() ?: "[]")
+                            for (i in 0 until siglArray.length()) {
+                                val item = siglArray.optJSONObject(i)
+                                val id = item?.optString("id")
+                                if (!id.isNullOrBlank() && id.length > 4) {
+                                    allSiglIds.add(id)
+                                }
                             }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error fetching collection $colId: ${e.message}")
+                    }
+                }
+
+                if (allSiglIds.isNotEmpty()) {
+                    val chunks = allSiglIds.toList().chunked(25)
+                    for (chunk in chunks) {
+                        val displayCatalogUrl = "https://displaycatalog.mp.microsoft.com/v7.0/products?bigIds=${chunk.joinToString(",")}&market=CL&languages=es-CL"
+                        val catReq = Request.Builder().url(displayCatalogUrl).build()
+                        try {
+                            val catResp = client.newCall(catReq).execute()
+                            if (catResp.isSuccessful) {
+                                val json = JSONObject(catResp.body?.string() ?: "{}")
+                                val products = json.optJSONArray("Products") ?: JSONArray()
+                                for (i in 0 until products.length()) {
+                                    val prod = products.optJSONObject(i) ?: continue
+                                    hydratedGames.add(parseDisplayCatalogProduct(prod))
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Chunk display catalog error: ${e.message}")
                         }
                     }
                 }

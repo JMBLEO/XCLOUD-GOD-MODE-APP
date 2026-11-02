@@ -6,6 +6,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -172,45 +174,59 @@ fun InStreamGameBar(
 
                         2 -> {
                             // Pestaña Ajustes en Vivo
-                            GameBarSection(title = "Audio y Micrófono") {
-                                GameBarItem(
-                                    icon = if (isMicMuted) Icons.Default.MicOff else Icons.Default.Mic,
-                                    label = if (isMicMuted) "Micrófono: Mute" else "Micrófono: On",
-                                    onClick = onToggleMic,
-                                    isActive = !isMicMuted,
-                                    accentColor = accentColor
-                                )
+                            val scrollState = rememberScrollState()
+                            Column(modifier = Modifier.fillMaxWidth().verticalScroll(scrollState)) {
+                                var isAudioExpanded by remember { mutableStateOf(false) }
 
-                                Spacer(modifier = Modifier.height(12.dp))
+                                InStreamExpandableSection(
+                                    title = "Audio y Micrófono",
+                                    icon = Icons.Default.VolumeUp,
+                                    expanded = isAudioExpanded,
+                                    onToggle = { isAudioExpanded = !isAudioExpanded }
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        GameBarItem(
+                                            icon = if (isMicMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                                            label = if (isMicMuted) "Micrófono: Mute" else "Micrófono: On",
+                                            onClick = onToggleMic,
+                                            isActive = !isMicMuted,
+                                            accentColor = accentColor
+                                        )
 
-                                Text("Volumen del Stream", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                                Slider(
-                                    value = volume,
-                                    onValueChange = onVolumeChange,
-                                    colors = SliderDefaults.colors(thumbColor = accentColor, activeTrackColor = accentColor)
-                                )
-                            }
+                                        Spacer(modifier = Modifier.height(8.dp))
 
-                            Spacer(modifier = Modifier.height(16.dp))
+                                        Text("Volumen del Stream", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                        Slider(
+                                            value = volume,
+                                            onValueChange = onVolumeChange,
+                                            colors = SliderDefaults.colors(thumbColor = accentColor, activeTrackColor = accentColor)
+                                        )
+                                    }
+                                }
 
-                            GameBarSection(title = "Rendimiento y Pantalla") {
-                                GameBarItem(
-                                    icon = Icons.Default.Speed,
-                                    label = if (isVsyncOff) "VSync-Off: Presentación Inmediata" else "VSync: Bloqueado a 60Hz",
-                                    onClick = onToggleVsync,
-                                    isActive = isVsyncOff,
-                                    accentColor = if (isVsyncOff) Color(0xFF22C55E) else Color.Gray
-                                )
+                                Spacer(modifier = Modifier.height(16.dp))
 
-                                Spacer(modifier = Modifier.height(8.dp))
+                                GameBarSection(title = "Rendimiento y Pantalla") {
+                                    GameBarItem(
+                                        icon = Icons.Default.Speed,
+                                        label = if (isVsyncOff) "VSync-Off: Presentación Inmediata" else "VSync: Bloqueado a 60Hz",
+                                        onClick = onToggleVsync,
+                                        isActive = isVsyncOff,
+                                        accentColor = if (isVsyncOff) Color(0xFF22C55E) else Color.Gray
+                                    )
 
-                                GameBarItem(
-                                    icon = Icons.Default.ScreenRotation,
-                                    label = if (isGyroEnabled) "Giroscopio: Activado" else "Giroscopio: Desactivado",
-                                    onClick = onToggleGyro,
-                                    isActive = isGyroEnabled,
-                                    accentColor = accentColor
-                                )
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    GameBarItem(
+                                        icon = Icons.Default.ScreenRotation,
+                                        label = if (isGyroEnabled) "Giroscopio: Activado" else "Giroscopio: Desactivado",
+                                        onClick = onToggleGyro,
+                                        isActive = isGyroEnabled,
+                                        accentColor = accentColor
+                                    )
+                                }
+                                
+                                Spacer(modifier = Modifier.height(24.dp))
                             }
                         }
                     }
@@ -226,6 +242,49 @@ fun InStreamGameBar(
                         Text("Reanudar Partida", fontWeight = FontWeight.Bold)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun InStreamExpandableSection(
+    title: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF141920).copy(alpha = 0.5f))
+            .border(1.dp, Color(0xFF2A3B4D).copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+            .animateContentSize()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onToggle() }
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(title, style = MaterialTheme.typography.bodyMedium, color = Color.White, fontWeight = FontWeight.Bold)
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = null,
+                tint = Color.Gray
+            )
+        }
+        if (expanded) {
+            Box(modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+                content()
             }
         }
     }

@@ -108,6 +108,8 @@ data class SettingsModel(
     val swapABXY: Boolean = false,
     val safeNativeModeOnly: Boolean = false,
     val userAgentProfile: String = "XboxApp/Android",
+    val mouseSensitivity: Float = 1.0f,
+    val stickDeadzone: Float = 0.1f,
 
     // --- [C] GOD MODE ULTIMATE (ENGINE v3) ---
     val enableAudioHaptics: Boolean = true,
@@ -124,6 +126,8 @@ data class SettingsModel(
         json.put("appLanguage", appLanguage)
         json.put("enableNetworkBypass", enableNetworkBypass)
         json.put("bypassIp", bypassIp)
+        json.put("customIp", customIp)
+        json.put("enableServerLock", enableServerLock)
         json.put("forceServer", forceServer)
         json.put("targetResProfile", targetResProfile)
         json.put("textScalePercent", textScalePercent)
@@ -153,6 +157,8 @@ data class SettingsModel(
                 appLanguage = json.optString("appLanguage", defaults.appLanguage),
                 enableNetworkBypass = json.optBoolean("enableNetworkBypass", defaults.enableNetworkBypass),
                 bypassIp = json.optString("bypassIp", defaults.bypassIp),
+                customIp = json.optString("customIp", defaults.customIp),
+                enableServerLock = json.optBoolean("enableServerLock", defaults.enableServerLock),
                 forceServer = json.optString("forceServer", defaults.forceServer),
                 targetResProfile = json.optString("targetResProfile", defaults.targetResProfile),
                 textScalePercent = json.optInt("textScalePercent", defaults.textScalePercent),

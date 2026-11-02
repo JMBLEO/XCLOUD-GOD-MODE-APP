@@ -1,4 +1,6 @@
 #include "NativeStreamPipeline.h"
+#include "KernelAffinity.h"
+#include "DmabufPipeline.h"
 #include "RtpH264Depacketizer.h"
 #include "RtpH265Depacketizer.h"
 #include "RtpAV1Depacketizer.h"
@@ -129,18 +131,21 @@ void NativeZeroCopyPipeline::initGlesPipeline() {
     if (isGlesInitialized) return;
 
     eglDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    eglInitialize(eglDisplay, nullptr, nullptr);
+    if (eglDisplay == EGL_NO_DISPLAY) return;
+    if (!eglInitialize(eglDisplay, nullptr, nullptr)) return;
 
     const EGLint configAttribs[] = {
         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
-        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
         EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8,
         EGL_NONE
     };
 
-    EGLint numConfigs;
+    EGLint numConfigs = 0;
     EGLConfig config;
-    eglChooseConfig(eglDisplay, configAttribs, &config, 1, &numConfigs);
+    if (!eglChooseConfig(eglDisplay, configAttribs, &config, 1, &numConfigs) || numConfigs == 0) {
+        return;
+    }
 
     const EGLint contextAttribs[] = {
         EGL_CONTEXT_CLIENT_VERSION, 3,
@@ -148,14 +153,28 @@ void NativeZeroCopyPipeline::initGlesPipeline() {
     };
 
     eglContext = eglCreateContext(eglDisplay, config, EGL_NO_CONTEXT, contextAttribs);
-    eglSurface = eglCreateWindowSurface(eglDisplay, config, outputWindow, nullptr);
+    if (eglContext == EGL_NO_CONTEXT) return;
+
+    const EGLint pbufferAttribs[] = {
+        EGL_WIDTH, 16,
+        EGL_HEIGHT, 16,
+        EGL_NONE
+    };
+    eglSurface = eglCreatePbufferSurface(eglDisplay, config, pbufferAttribs);
+    if (eglSurface == EGL_NO_SURFACE) {
+        eglDestroyContext(eglDisplay, eglContext);
+        eglContext = EGL_NO_CONTEXT;
+        return;
+    }
+
     eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext);
 
-    // Hardcoded FSR 4.1 Compute Shader Source (loaded from /app/src/main/cpp/shaders/fsr_4_1.comp in a real app)
-    const char* fsrShaderSource = R"(#version 320 es
+    // Compute Shader Header: #version 310 es (standard GLES 3.1 compute shader)
+    const char* fsrShaderSource = R"(#version 310 es
+precision highp float;
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
-layout(binding = 0, rgba8) uniform readonly lowp image2D inputFrame;
-layout(binding = 1, rgba8) uniform writeonly lowp image2D outputFrame;
+layout(binding = 0, rgba8) uniform readonly highp image2D inputFrame;
+layout(binding = 1, rgba8) uniform writeonly highp image2D outputFrame;
 layout(std140, binding = 2) uniform FsrParams {
     vec4 displaySize;
     vec4 inputSize;
@@ -198,9 +217,19 @@ void main() {
     vec3 reconstructed = reconstructPixel(inPos);
     vec3 finalColor = applyRCAS(inPos, reconstructed);
     imageStore(outputFrame, outPos, vec4(finalColor, 1.0));
-})";
+}
+)";
 
     computeProgram = loadComputeShader(fsrShaderSource);
+    if (computeProgram == 0) {
+        LOGE("Compute shader program creation failed; skipping GLES upscaling");
+        eglMakeCurrent(eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        eglDestroySurface(eglDisplay, eglSurface);
+        eglDestroyContext(eglDisplay, eglContext);
+        eglSurface = EGL_NO_SURFACE;
+        eglContext = EGL_NO_CONTEXT;
+        return;
+    }
     
     // Setup Textures and UBO
     glGenTextures(1, &inputTexture);
@@ -217,11 +246,12 @@ void main() {
     glBindBufferBase(GL_UNIFORM_BUFFER, 2, paramsUbo);
 
     isGlesInitialized = true;
-    LOGD("GLES 3.2 Compute Pipeline initialized for FSR 4.1");
+    LOGD("GLES 3.1 Compute Pipeline initialized for FSR 4.1");
 }
 
 GLuint NativeZeroCopyPipeline::loadComputeShader(const char* source) {
     GLuint shader = glCreateShader(GL_COMPUTE_SHADER);
+    if (!shader) return 0;
     glShaderSource(shader, 1, &source, nullptr);
     glCompileShader(shader);
 
@@ -231,12 +261,27 @@ GLuint NativeZeroCopyPipeline::loadComputeShader(const char* source) {
         char infoLog[512];
         glGetShaderInfoLog(shader, 512, nullptr, infoLog);
         LOGE("Compute shader compilation failed: %s", infoLog);
+        glDeleteShader(shader);
+        return 0;
     }
 
     GLuint program = glCreateProgram();
+    if (!program) {
+        glDeleteShader(shader);
+        return 0;
+    }
     glAttachShader(program, shader);
     glLinkProgram(program);
     glDeleteShader(shader);
+
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetProgramInfoLog(program, 512, nullptr, infoLog);
+        LOGE("Compute program link failed: %s", infoLog);
+        glDeleteProgram(program);
+        return 0;
+    }
     return program;
 }
 
@@ -429,10 +474,9 @@ bool NativeZeroCopyPipeline::injectAccessUnitZeroCopy(const uint8_t* auBuffer, s
         // AMediaCodec_releaseOutputBuffer(codec, idx, true) con timestamp 0 para renderizado inmediato
         AMediaCodec_releaseOutputBuffer(mediaCodec, outputBufIdx, info.size != 0);
         
-        // Extensión: Dispatch FSR 4.1 Upscaling en el pipeline de presentación
-        if (isGlesInitialized) {
+        // Extensión: Dispatch FSR 4.1 Upscaling en el pipeline de presentación si GLES está activo
+        if (isGlesInitialized && computeProgram != 0) {
             dispatchUpscale(currentWidth, currentHeight, 1920, 1080); // Target 1080p
-            eglSwapBuffers(eglDisplay, eglSurface);
         }
 
         outTelemetry.frameRenderedUs = nowMicros();

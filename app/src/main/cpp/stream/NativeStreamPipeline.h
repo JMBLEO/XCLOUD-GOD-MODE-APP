@@ -199,7 +199,14 @@ public:
     uint32_t getWidth() const { return currentWidth; }
     uint32_t getHeight() const { return currentHeight; }
 
+    // VSYNC AChoreographer Integration
+    void startVsyncPacing();
+    void stopVsyncPacing();
+    void onVsyncTick(long frameTimeNanos);
+    void drainAndPresentReadyBuffers();
+
 private:
+    std::atomic<bool> isVsyncActive{false};
     static uint64_t nowMicros();
 };
 

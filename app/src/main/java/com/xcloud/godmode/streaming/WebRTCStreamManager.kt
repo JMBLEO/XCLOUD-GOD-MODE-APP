@@ -141,13 +141,28 @@ class WebRTCStreamManager(
 
     fun addRemoteIceCandidatesSync(candidates: JSONArray) {
         for (i in 0 until candidates.length()) {
-            val obj = candidates.getJSONObject(i)
-            val candidate = IceCandidate(
-                obj.getString("sdpMid"),
-                obj.getInt("sdpMLineIndex"),
-                obj.getString("candidate")
-            )
-            peerConnection?.addIceCandidate(candidate)
+            val obj = candidates.optJSONObject(i)
+            if (obj != null) {
+                var candidateStr = obj.optString("candidate", "")
+                if (candidateStr.startsWith("a=")) {
+                    candidateStr = candidateStr.substring(2)
+                }
+                if (candidateStr.isBlank() || candidateStr.contains("end-of-candidates")) continue
+                val candidate = IceCandidate(
+                    obj.optString("sdpMid", "0"),
+                    obj.optInt("sdpMLineIndex", 0),
+                    candidateStr
+                )
+                peerConnection?.addIceCandidate(candidate)
+            } else {
+                var candidateStr = candidates.optString(i, "")
+                if (candidateStr.startsWith("a=")) {
+                    candidateStr = candidateStr.substring(2)
+                }
+                if (candidateStr.isBlank() || candidateStr.contains("end-of-candidates")) continue
+                val candidate = IceCandidate("0", 0, candidateStr)
+                peerConnection?.addIceCandidate(candidate)
+            }
         }
     }
 

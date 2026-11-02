@@ -23,6 +23,7 @@ import com.xcloud.godmode.streaming.WebRTCStreamManager
 import com.xcloud.godmode.network.XboxFullAuthManager
 import com.xcloud.godmode.ui.screens.HomeScreen
 import com.xcloud.godmode.ui.screens.StreamScreen
+import com.xcloud.godmode.ui.components.GodModePermissionHandler
 import com.xcloud.godmode.ui.theme.AppLocaleManager
 import com.xcloud.godmode.ui.theme.LocalAppStrings
 import com.xcloud.godmode.ui.theme.LocalScreenScaleProvider
@@ -44,6 +45,9 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Install StrictMode guard to prevent NetworkOnMainThreadException
+        com.xcloud.godmode.core.NetworkThreadGuard.installStrictModeNetworkGuard()
 
         // Initialize Network with DoH for bypass
         networkClient = NetworkClient(enableDoh = true)
@@ -91,6 +95,8 @@ class MainActivity : FragmentActivity() {
                 ) {
                     LocalScreenScaleProvider(settings = settings) {
                         CompositionLocalProvider(LocalAppStrings provides currentStrings) {
+                            GodModePermissionHandler(homeViewModel)
+
                             MainNavigation(
                                 authManager = xboxAuthManager,
                                 streamManager = streamManager,

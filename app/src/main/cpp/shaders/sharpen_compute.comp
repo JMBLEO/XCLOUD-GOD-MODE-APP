@@ -1,0 +1,25 @@
+#version 310 es
+layout (local_size_x = 16, local_size_y = 16) in;
+
+layout (binding = 0, rgba8) uniform readonly image2D inputImage;
+layout (binding = 1, rgba8) uniform writeonly image2D outputImage;
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(outputImage);
+
+    if (coord.x >= size.x || coord.y >= size.y) return;
+
+    vec4 center = imageLoad(inputImage, coord);
+
+    // Simple edge detection and sharpening via Compute Shader
+    vec4 left   = imageLoad(inputImage, max(coord - ivec2(1, 0), ivec2(0)));
+    vec4 right  = imageLoad(inputImage, min(coord + ivec2(1, 0), size - 1));
+    vec4 top    = imageLoad(inputImage, max(coord - ivec2(0, 1), ivec2(0)));
+    vec4 bottom = imageLoad(inputImage, min(coord + ivec2(0, 1), size - 1));
+
+    vec4 diff = abs(left - center) + abs(right - center) + abs(top - center) + abs(bottom - center);
+    vec4 sharpened = center + diff * 0.35;
+
+    imageStore(outputImage, coord, clamp(sharpened, 0.0, 1.0));
+}

@@ -127,8 +127,8 @@ object GodModeAuthOrchestrator {
             .client(bootstrapClient)
             .url("https://cloudflare-dns.com/dns-query".toHttpUrl())
             .bootstrapDnsHosts(
-                InetAddress.getByName("1.1.1.1"),
-                InetAddress.getByName("1.0.0.1")
+                InetAddress.getByAddress(byteArrayOf(1, 1, 1, 1)),
+                InetAddress.getByAddress(byteArrayOf(1, 0, 0, 1))
             )
             .build()
 

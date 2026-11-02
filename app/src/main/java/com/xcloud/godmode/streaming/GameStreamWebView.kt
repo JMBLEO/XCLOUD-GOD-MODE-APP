@@ -200,6 +200,13 @@ fun GameStreamWebView(
                 }
 
                 webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                        super.onPageStarted(view, url, favicon)
+                        if (view != null) {
+                            RegionBypassWebViewHelper.injectBypassScript(view)
+                        }
+                    }
+
                     override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                         val url = request?.url?.toString() ?: return null
                         
@@ -227,11 +234,20 @@ fun GameStreamWebView(
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
                         if (view != null) {
+                            RegionBypassWebViewHelper.injectBypassScript(view)
                             effectiveInjector.injectGodModeScript(view, appSettings)
                         }
                     }
 
                     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                        val reqUrl = request?.url?.toString().orEmpty()
+                        if (reqUrl.contains("/es-CL/play", ignoreCase = true) || 
+                            reqUrl.contains("/es-CO/play", ignoreCase = true) || 
+                            reqUrl.contains("/es-PE/play", ignoreCase = true)) {
+                            val safeUrl = reqUrl.replace(Regex("/es-(CL|CO|PE)/play", RegexOption.IGNORE_CASE), "/es-MX/play")
+                            view?.loadUrl(safeUrl)
+                            return true
+                        }
                         return false
                     }
                     
@@ -243,19 +259,24 @@ fun GameStreamWebView(
                         android.util.Log.e("GameStreamWebView", "Renderer process crashed! code: ${detail?.rendererPriorityAtExit()}")
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                             if (!detail?.didCrash()!!) {
-                                // System killed it, just reload
                                 view?.reload()
                                 return true
                             }
                         }
-                        // It crashed. We return true to handle it and not kill the app.
-                        // We could show a "Crash Recovery" UI here.
                         view?.reload()
                         return true
                     }
                 }
 
-                loadUrl(launchUrl)
+                val safeLaunchUrl = if (launchUrl.contains("/es-CL/play", ignoreCase = true) || 
+                                        launchUrl.contains("/es-CO/play", ignoreCase = true) || 
+                                        launchUrl.contains("/es-PE/play", ignoreCase = true)) {
+                    launchUrl.replace(Regex("/es-(CL|CO|PE)/play", RegexOption.IGNORE_CASE), "/es-MX/play")
+                } else {
+                    launchUrl
+                }
+
+                loadUrl(safeLaunchUrl)
                 requestFocus()
                 onWebViewCreated?.invoke(this)
             }

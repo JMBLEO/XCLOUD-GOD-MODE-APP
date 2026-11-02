@@ -60,6 +60,10 @@ fun GodModeTelemetryOverlay(
 
     // RTT History buffer for sparkline graph
     val rttHistory = remember { mutableStateListOf<Float>() }
+    val jitterHistory = remember { mutableStateListOf<Float>() }
+    val frameTimeHistory = remember { mutableStateListOf<Float>() }
+    
+    GodModeTelemetryHUDUpdater(stats, rttHistory, jitterHistory, frameTimeHistory)
 
     // CPU & GPU utilization estimation loop
     var cpuUsagePercent by remember { mutableIntStateOf(14) }
@@ -348,48 +352,56 @@ fun GodModeTelemetryOverlay(
                             )
                         }
 
-                        // Real-time Latency Sparkline Graph
-                        if (rttHistory.isNotEmpty()) {
-                            Text(
-                                text = "Estabilidad RTT (Últimos cuadros):",
-                                color = Color.Gray,
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(36.dp)
-                                    .background(Color(0xFF0B0E12), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 4.dp, vertical = 2.dp)
-                            ) {
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    val points = rttHistory.toList()
-                                    if (points.size >= 2) {
-                                        val minVal = (points.minOrNull() ?: 10f).coerceAtLeast(0f)
-                                        val maxVal = (points.maxOrNull() ?: 60f).coerceAtLeast(minVal + 10f)
-                                        val range = maxVal - minVal
+                        // Real-time Latency, Jitter, and Frame Time Sparkline Graphs
+                        val metrics = listOf(
+                            Triple("RTT", rttHistory, rttColor),
+                            Triple("Jitter", jitterHistory, Color(0xFFFBBF24)),
+                            Triple("FrameTime", frameTimeHistory, Color(0xFF38BDF8))
+                        )
 
-                                        val stepX = size.width / (points.size - 1)
-                                        val path = Path()
+                        metrics.forEach { (title, history, color) ->
+                            if (history.isNotEmpty()) {
+                                Text(
+                                    text = "$title:",
+                                    color = Color.Gray,
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(28.dp)
+                                        .background(Color(0xFF0B0E12), RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                ) {
+                                    Canvas(modifier = Modifier.fillMaxSize()) {
+                                        val points = history.toList()
+                                        if (points.size >= 2) {
+                                            val minVal = (points.minOrNull() ?: 0f).coerceAtLeast(0f)
+                                            val maxVal = (points.maxOrNull() ?: 100f).coerceAtLeast(minVal + 10f)
+                                            val range = maxVal - minVal
 
-                                        points.forEachIndexed { index, value ->
-                                            val x = index * stepX
-                                            val normalizedY = 1f - ((value - minVal) / range)
-                                            val y = (normalizedY * (size.height - 6f)) + 3f
+                                            val stepX = size.width / (points.size - 1)
+                                            val path = Path()
 
-                                            if (index == 0) {
-                                                path.moveTo(x, y)
-                                            } else {
-                                                path.lineTo(x, y)
+                                            points.forEachIndexed { index, value ->
+                                                val x = index * stepX
+                                                val normalizedY = 1f - ((value - minVal) / range)
+                                                val y = (normalizedY * (size.height - 4f)) + 2f
+
+                                                if (index == 0) {
+                                                    path.moveTo(x, y)
+                                                } else {
+                                                    path.lineTo(x, y)
+                                                }
                                             }
-                                        }
 
-                                        drawPath(
-                                            path = path,
-                                            color = rttColor,
-                                            style = Stroke(width = 2.dp.toPx())
-                                        )
+                                            drawPath(
+                                                path = path,
+                                                color = color,
+                                                style = Stroke(width = 2.dp.toPx())
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -400,6 +412,33 @@ fun GodModeTelemetryOverlay(
         }
     }
 }
+
+// Helper to update history buffers
+@Composable
+fun GodModeTelemetryHUDUpdater(
+    stats: com.xcloud.godmode.streaming.WebRTCStreamManager.StreamStats,
+    rttHistory: MutableList<Float>,
+    jitterHistory: MutableList<Float>,
+    frameTimeHistory: MutableList<Float>
+) {
+    LaunchedEffect(stats) {
+        // Update RTT
+        val currentRtt = if (stats.rtt > 0) stats.rtt.toFloat() else 24f
+        if (rttHistory.size >= 30) rttHistory.removeAt(0)
+        rttHistory.add(currentRtt)
+
+        // Update Jitter
+        val currentJitter = stats.jitter.toFloat()
+        if (jitterHistory.size >= 30) jitterHistory.removeAt(0)
+        jitterHistory.add(currentJitter)
+
+        // Update FrameTime (1000ms / FPS)
+        val currentFrameTime = if (stats.fps > 0) (1000f / stats.fps.toFloat()) else 16.6f
+        if (frameTimeHistory.size >= 30) frameTimeHistory.removeAt(0)
+        frameTimeHistory.add(currentFrameTime)
+    }
+}
+
 
 @Composable
 private fun TelemetryMetricPill(

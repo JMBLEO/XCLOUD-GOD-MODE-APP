@@ -104,23 +104,86 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val _isMicMuted = MutableStateFlow(false)
     val isMicMuted: StateFlow<Boolean> = _isMicMuted.asStateFlow()
 
+    // Permission Authorization State (Microphone, Storage, Bluetooth)
+    private val _permissionsState = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val permissionsState: StateFlow<Map<String, Boolean>> = _permissionsState.asStateFlow()
+
+    fun updatePermissionState(permission: String, granted: Boolean) {
+        _permissionsState.value = _permissionsState.value + (permission to granted)
+    }
+
+    fun isAuthorized(permission: String): Boolean = _permissionsState.value[permission] ?: false
+
     private val geminiService = com.xcloud.godmode.ai.GeminiService()
     private val db = com.xcloud.godmode.models.GodModeDatabase.getDatabase(context)
+
+    // Selected Category Filter (0=Todos, 1=Recientes, 2=Series X|S, 3=Mundial, 4=Chile, 5=LATAM, 6=BYOG)
+    private val _selectedCategory = MutableStateFlow(0)
+    val selectedCategory: StateFlow<Int> = _selectedCategory.asStateFlow()
+
+    fun setCategoryFilter(index: Int) {
+        _selectedCategory.value = index
+    }
+
+    // Room DB Full Catalog Reactive Flow
+    private val roomCatalogFlow: Flow<List<GameModel>> = db.dao().getAllCatalogGames()
+        .map { entities ->
+            entities.map { entity ->
+                GameModel(
+                    id = entity.productId,
+                    title = entity.title,
+                    genre = entity.genre,
+                    publisher = entity.publisher,
+                    description = entity.description,
+                    posterUrl = entity.posterUrl,
+                    heroUrl = entity.heroUrl,
+                    superHeroUrl = entity.superHeroUrl.ifEmpty { entity.heroUrl },
+                    rating = entity.rating,
+                    capabilities = if (entity.supportsMkb) listOf("Jugar con Teclado y Ratón", "Control Táctil Nativo", "Xbox Series X|S") else listOf("Control Táctil Nativo", "Xbox Series X|S"),
+                    isGamePass = !entity.isByog,
+                    isOwned = entity.isByog,
+                    supportsTouch = true,
+                    supportsMkb = entity.supportsMkb,
+                    isSeriesOptimized = entity.isSeriesOptimized
+                )
+            }
+        }
 
     // Favorites persistence via DataStore
     private val _favorites = context.dataStore.data
         .map { preferences -> preferences[FAVORITES_KEY] ?: emptySet() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
-    val filteredGames = combine(_rawGames, _searchQuery, _favorites) { games, query, favorites ->
-        games.map { it.copy(isFavorite = favorites.contains(it.id)) }
+    val filteredGames = combine(roomCatalogFlow, _rawGames, _searchQuery, _selectedCategory, _favorites) { roomList, defaultList, query, catIndex, favorites ->
+        val pool = if (roomList.isNotEmpty()) {
+            val map = (roomList + defaultList).distinctBy { it.id }
+            map
+        } else {
+            defaultList
+        }
+
+        pool.map { it.copy(isFavorite = favorites.contains(it.id)) }
             .filter { game ->
-                game.title.contains(query, ignoreCase = true) ||
-                game.genre.contains(query, ignoreCase = true) ||
-                game.publisher.contains(query, ignoreCase = true)
+                val matchesQuery = query.isBlank() ||
+                        game.title.contains(query, ignoreCase = true) ||
+                        game.genre.contains(query, ignoreCase = true) ||
+                        game.publisher.contains(query, ignoreCase = true)
+
+                val matchesCat = when (catIndex) {
+                    1 -> game.description.contains("Jugado recientemente", ignoreCase = true) || game.isFavorite
+                    2 -> game.isSeriesOptimized || game.capabilities.any { it.contains("Series", ignoreCase = true) }
+                    3 -> true // Mundial
+                    4 -> true // Chile
+                    5 -> true // LATAM
+                    6 -> game.isOwned || !game.isGamePass // Juegos Propios (BYOG)
+                    else -> true // Todos
+                }
+
+                matchesQuery && matchesCat
             }
             .sortedByDescending { it.isFavorite }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), catalogRepo.verifiedDefaultGames)
+
 
     // Hero Carousel Rotation Logic (48h Cooldown)
     private val _carouselItems = MutableStateFlow<List<GameModel>>(emptyList())
@@ -275,6 +338,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     _rawGames.value = live
                     updateCarouselSelection(live)
                 }
+
+                // Sync Full Xbox Catalog into Room DB for instant FTS4 queries & multi-market filtering
+                val dynamicRepo = com.xcloud.godmode.data.DynamicXboxCatalogRepository(catalogRepo.client)
+                dynamicRepo.syncFullCatalogToRoom(db.dao(), session)
+
             } catch (e: Exception) {
                 Log.w(TAG, "Error loading catalog: ${e.message}")
             } finally {
@@ -282,6 +350,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
 
     fun setChameleon(color: Color) {
         _chameleonColor.value = color

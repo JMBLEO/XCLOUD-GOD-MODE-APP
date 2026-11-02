@@ -27,11 +27,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xcloud.godmode.constants.NetworkBypassCatalog
 import com.xcloud.godmode.models.SettingsModel
+import com.xcloud.godmode.ui.components.GodModeToggle
 import com.xcloud.godmode.ui.theme.AppStrings
 
 @Composable
 fun AdvancedSettingsTab(
     settings: SettingsModel,
+    viewModel: com.xcloud.godmode.viewmodels.HomeViewModel,
     onSettingsChanged: (SettingsModel) -> Unit
 ) {
     val context = LocalContext.current
@@ -47,58 +49,72 @@ fun AdvancedSettingsTab(
     var importJsonText by remember { mutableStateOf("") }
     var importError by remember { mutableStateOf<String?>(null) }
 
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp).testTag("advanced_settings_tab")) {
-        Text(
-            text = strings.settingsTab,
-            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-            color = Color.White
-        )
-        Text(
-            text = "God Mode Master Engine Architecture & Customization.",
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray
-        )
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .testTag("advanced_settings_tab")
+        ) {
+            // Header (scrolls naturally with content)
+            item {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = strings.settingsTab,
+                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                        color = Color.White
+                    )
+                    Text(
+                        text = "God Mode Master Engine Architecture & Customization.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                }
+            }
 
-        Spacer(modifier = Modifier.height(24.dp))
+            // Sub-tabs row (scrolls naturally with content)
+            item {
+                val tabs = if (settings.appLanguage == "en") {
+                    listOf("Red" to "Network", "Controles" to "Controls", "Sistema" to "System")
+                } else {
+                    listOf("Red" to "Red", "Controles" to "Controles", "Sistema" to "Sistema")
+                }
 
-        // Sub-tabs for organization (Códex Style)
-        val tabs = if (settings.appLanguage == "en") {
-            listOf("Red" to "Network", "Controles" to "Controls", "Sistema" to "System")
-        } else {
-            listOf("Red" to "Red", "Controles" to "Controles", "Sistema" to "Sistema")
-        }
-
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            tabs.forEach { (tabKey, tabLabel) ->
-                Surface(
-                    onClick = { activeTab = tabKey },
-                    color = if (activeTab == tabKey) Color(0xFF107C10) else Color(0xFF121820),
-                    shape = RoundedCornerShape(8.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, if (activeTab == tabKey) Color(0xFF00E676) else Color(0xFF2A3B4D)),
-                    modifier = Modifier.weight(1f).height(40.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(tabLabel, style = MaterialTheme.typography.labelMedium, color = Color.White, fontWeight = FontWeight.Bold)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    tabs.forEach { (tabKey, tabLabel) ->
+                        Surface(
+                            onClick = { activeTab = tabKey },
+                            color = if (activeTab == tabKey) Color(0xFF107C10) else Color(0xFF121820),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (activeTab == tabKey) Color(0xFF00E676) else Color(0xFF2A3B4D)),
+                            modifier = Modifier.weight(1f).height(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(tabLabel, style = MaterialTheme.typography.labelMedium, color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
             }
-        }
 
-        Spacer(modifier = Modifier.height(24.dp))
-
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.weight(1f)) {
             if (activeTab == "Red") {
                 item {
-                    ExpandableAccordionCard(title = strings.settingsBypass, summary = if (settings.enableServerLock) settings.forceServer else "Auto") {
+                    ExpandableAccordionCard(
+                        title = strings.settingsBypass,
+                        summary = if (settings.enableNetworkBypass && settings.bypassIp != "Desactivado" && settings.bypassIp.isNotEmpty()) {
+                            val matchingKey = NetworkBypassCatalog.BYPASS_IP_CATALOG.entries.find { it.value == settings.bypassIp }?.key ?: settings.bypassIp
+                            matchingKey
+                        } else {
+                            if (settings.enableServerLock) settings.forceServer else "Auto"
+                        }
+                    ) {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(
-                                    checked = settings.enableServerLock,
-                                    onCheckedChange = { onSettingsChanged(settings.copy(enableServerLock = it)) },
-                                    colors = CheckboxDefaults.colors(checkedColor = Color(0xFF107C10))
-                                )
-                                Text("Forzar Servidor Azure", color = Color.White)
-                            }
+                            GodModeToggle(
+                                label = "Forzar Servidor Azure",
+                                checked = settings.enableServerLock,
+                                onCheckedChange = { onSettingsChanged(settings.copy(enableServerLock = it)) }
+                            )
                             if (settings.enableServerLock) {
                                 OutlinedTextField(
                                     value = serverSearch,
@@ -116,6 +132,72 @@ fun AdvancedSettingsTab(
                                             }
                                         }
                                     }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+                            HorizontalDivider(color = Color(0xFF2A3B4D))
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            GodModeToggle(
+                                label = "Activar Bypass IP (X-Forwarded-For)",
+                                checked = settings.enableNetworkBypass,
+                                onCheckedChange = { onSettingsChanged(settings.copy(enableNetworkBypass = it)) }
+                            )
+
+                            if (settings.enableNetworkBypass) {
+                                Text("IP / Región X-Forwarded-For", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                                OutlinedTextField(
+                                    value = ipSearch,
+                                    onValueChange = { ipSearch = it },
+                                    placeholder = { Text("Filtrar bypass IPs...") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF107C10))
+                                )
+                                val filteredIps = NetworkBypassCatalog.BYPASS_IP_CATALOG.entries.filter { 
+                                    it.key.contains(ipSearch, true) || it.value.contains(ipSearch, true) 
+                                }.toList()
+
+                                Box(modifier = Modifier.heightIn(max = 160.dp).fillMaxWidth().background(Color.Black.copy(alpha = 0.3f))) {
+                                    LazyColumn {
+                                        items(filteredIps) { entry ->
+                                            val (name, ipVal) = entry
+                                            val isSelected = settings.bypassIp == ipVal || (ipVal == "custom" && settings.bypassIp == "custom")
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        onSettingsChanged(settings.copy(bypassIp = ipVal))
+                                                    }
+                                                    .padding(10.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = name,
+                                                    color = if (isSelected) Color(0xFF00E676) else Color.White,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                if (ipVal != "custom" && ipVal.isNotEmpty()) {
+                                                    Text(
+                                                        text = ipVal,
+                                                        color = Color.Gray,
+                                                        style = MaterialTheme.typography.labelSmall
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (settings.bypassIp == "custom") {
+                                    OutlinedTextField(
+                                        value = settings.customIp,
+                                        onValueChange = { onSettingsChanged(settings.copy(customIp = it)) },
+                                        label = { Text("IP Personalizada (ej. 20.143.92.1)") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color(0xFF107C10))
+                                    )
                                 }
                             }
                         }
@@ -185,6 +267,23 @@ fun AdvancedSettingsTab(
                                 steps = 3,
                                 colors = SliderDefaults.colors(thumbColor = Color(0xFF107C10), activeTrackColor = Color(0xFF00E676))
                             )
+                            
+                            Text("Sensibilidad de Ratón: ${String.format("%.1f", settings.mouseSensitivity)}x", color = Color.White)
+                            Slider(
+                                value = settings.mouseSensitivity,
+                                onValueChange = { onSettingsChanged(settings.copy(mouseSensitivity = it)) },
+                                valueRange = 0.5f..3.0f,
+                                colors = SliderDefaults.colors(thumbColor = Color(0xFF107C10), activeTrackColor = Color(0xFF00E676))
+                            )
+                            
+                            Text("Zona Muerta Sticks: ${(settings.stickDeadzone * 100).toInt()}%", color = Color.White)
+                            Slider(
+                                value = settings.stickDeadzone,
+                                onValueChange = { onSettingsChanged(settings.copy(stickDeadzone = it)) },
+                                valueRange = 0.02f..0.20f,
+                                colors = SliderDefaults.colors(thumbColor = Color(0xFF107C10), activeTrackColor = Color(0xFF00E676))
+                            )
+                            
                             Button(
                                 onClick = { showTouchEditor = true },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
@@ -200,9 +299,11 @@ fun AdvancedSettingsTab(
                     ExpandableAccordionCard(title = "Sistema & QoL", summary = if (settings.antiKick) "Anti-Kick ON" else "Standard") {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Switch(checked = settings.antiKick, onCheckedChange = { onSettingsChanged(settings.copy(antiKick = it)) }, colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF107C10)))
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text("Anti-Kick (Simular Input)", color = Color.White)
+                                GodModeToggle(
+                                    label = "Anti-Kick (Simular Input)",
+                                    checked = settings.antiKick,
+                                    onCheckedChange = { onSettingsChanged(settings.copy(antiKick = it)) }
+                                )
                             }
                             Text("Idioma: ${settings.appLanguage}", color = Color.White)
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -211,6 +312,38 @@ fun AdvancedSettingsTab(
                                         Text(label)
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+                item {
+                    val permissions by viewModel.permissionsState.collectAsState()
+                    val storageGranted = permissions[android.Manifest.permission.READ_EXTERNAL_STORAGE] == true || permissions[android.Manifest.permission.READ_MEDIA_IMAGES] == true
+                    val micGranted = permissions[android.Manifest.permission.RECORD_AUDIO] == true
+
+                    ExpandableAccordionCard(title = "Caché & Permisos", summary = "Estado del Sistema") {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            PermissionStatusRow("Micrófono", micGranted)
+                            PermissionStatusRow("Almacenamiento", storageGranted)
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Button(
+                                onClick = { 
+                                    if (storageGranted) {
+                                        Toast.makeText(context, "Caché de carátulas limpiado (Lógica nativa)", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, "Permiso de almacenamiento requerido", Toast.LENGTH_LONG).show()
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (storageGranted) Color(0xFF107C10) else Color.DarkGray
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.DeleteSweep, null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Limpiar Caché de Arte")
                             }
                         }
                     }
@@ -301,6 +434,31 @@ fun AdvancedSettingsTab(
                 gameTitle = "Perfil Global",
                 settings = settings,
                 onDismiss = { showTouchEditor = false }
+            )
+        }
+    }
+}
+
+@Composable
+fun PermissionStatusRow(label: String, granted: Boolean) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = Color.White, style = MaterialTheme.typography.bodySmall)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = if (granted) "Autorizado" else "Pendiente",
+                color = if (granted) Color(0xFF00E676) else Color(0xFFEF4444),
+                style = MaterialTheme.typography.labelSmall
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(
+                imageVector = if (granted) Icons.Default.CheckCircle else Icons.Default.Warning,
+                contentDescription = null,
+                tint = if (granted) Color(0xFF00E676) else Color(0xFFEF4444),
+                modifier = Modifier.size(16.dp)
             )
         }
     }

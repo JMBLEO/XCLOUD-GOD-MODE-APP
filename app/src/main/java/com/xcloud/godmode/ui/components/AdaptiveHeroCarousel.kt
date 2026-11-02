@@ -271,6 +271,7 @@ private fun CarouselPageItem(
                 .padding(if (isTv) 24.dp else 16.dp)
         ) {
             Row(
+                modifier = Modifier.wrapContentWidth().background(Color.Transparent),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -366,10 +367,9 @@ private fun CarouselPageItem(
 
                 if (item.capabilities.any { it.contains("Series", ignoreCase = true) }) {
                     Surface(
-                        color = Color.Black.copy(alpha = 0.7f),
+                        color = Color.Transparent, 
                         shape = RoundedCornerShape(4.dp),
-                        border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.5f)),
-                        modifier = Modifier.height(22.dp)
+                        modifier = Modifier.height(22.dp).wrapContentWidth().border(0.5.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
                     ) {
                         AsyncImage(
                             model = XboxAssetsCodex.SystemIcons.SERIES_X_S,

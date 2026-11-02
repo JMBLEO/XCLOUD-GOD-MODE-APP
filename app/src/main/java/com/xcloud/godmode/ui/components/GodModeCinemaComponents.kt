@@ -37,6 +37,7 @@ import com.xcloud.godmode.audio.GodModeSoundEngine
 import com.xcloud.godmode.audio.SoundEventType
 import com.xcloud.godmode.models.GameModel
 import com.xcloud.godmode.models.SettingsModel
+import com.xcloud.godmode.ui.components.GodModeToggle
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -270,10 +271,14 @@ fun XboxBladeGuide(
                 color = Color(0xFF101216),
                 border = BorderStroke(1.dp, accentColor.copy(alpha = 0.3f))
             ) {
+                val scrollState = rememberScrollState()
+                var isProcessingExpanded by remember { mutableStateOf(false) }
+
                 Column(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(20.dp),
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                        .verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -307,34 +312,43 @@ fun XboxBladeGuide(
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Procesamiento en Vivo", style = MaterialTheme.typography.labelMedium, color = accentColor)
+                    
+                    // Live Processing moved to Expandable for safety
+                    ExpandableSettingCard(
+                        title = "Procesamiento en Vivo",
+                        icon = Icons.Default.Tune,
+                        expanded = isProcessingExpanded,
+                        onExpandToggle = { isProcessingExpanded = !isProcessingExpanded }
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            // Live Sharpness
+                            Column {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Nitidez Dinámica", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                                    Text("${(settings.fsrSharpness * 10).toInt()}", color = accentColor, fontWeight = FontWeight.Bold)
+                                }
+                                Slider(
+                                    value = settings.fsrSharpness,
+                                    onValueChange = { onSettingsChanged(settings.copy(fsrSharpness = it)) },
+                                    valueRange = 0f..1f,
+                                    colors = SliderDefaults.colors(thumbColor = accentColor, activeTrackColor = accentColor)
+                                )
+                            }
 
-                    // Live Sharpness
-                    Column {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Nitidez Dinámica", color = Color.White, style = MaterialTheme.typography.bodySmall)
-                            Text("${(settings.fsrSharpness * 10).toInt()}", color = accentColor, fontWeight = FontWeight.Bold)
+                            // Audio Boost
+                            Column {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Audio Boost (GainNode)", color = Color.White, style = MaterialTheme.typography.bodySmall)
+                                    Text("${settings.volumeBoostPercent}%", color = accentColor, fontWeight = FontWeight.Bold)
+                                }
+                                Slider(
+                                    value = settings.volumeBoostPercent.toFloat(),
+                                    onValueChange = { onSettingsChanged(settings.copy(volumeBoostPercent = it.toInt())) },
+                                    valueRange = 100f..300f,
+                                    colors = SliderDefaults.colors(thumbColor = accentColor, activeTrackColor = accentColor)
+                                )
+                            }
                         }
-                        Slider(
-                            value = settings.fsrSharpness,
-                            onValueChange = { onSettingsChanged(settings.copy(fsrSharpness = it)) },
-                            valueRange = 0f..1f,
-                            colors = SliderDefaults.colors(thumbColor = accentColor, activeTrackColor = accentColor)
-                        )
-                    }
-
-                    // Audio Boost
-                    Column {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Audio Boost (GainNode)", color = Color.White, style = MaterialTheme.typography.bodySmall)
-                            Text("${settings.volumeBoostPercent}%", color = accentColor, fontWeight = FontWeight.Bold)
-                        }
-                        Slider(
-                            value = settings.volumeBoostPercent.toFloat(),
-                            onValueChange = { onSettingsChanged(settings.copy(volumeBoostPercent = it.toInt())) },
-                            valueRange = 100f..300f,
-                            colors = SliderDefaults.colors(thumbColor = accentColor, activeTrackColor = accentColor)
-                        )
                     }
 
                     // Test Haptics Button
@@ -378,16 +392,15 @@ fun XboxBladeGuide(
                         }
                     }
 
-                    Spacer(modifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.height(8.dp))
                     
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Ghost HUD (OSD)", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                        Switch(
-                            checked = settings.showStats,
-                            onCheckedChange = { onSettingsChanged(settings.copy(showStats = it)) },
-                            colors = SwitchDefaults.colors(checkedThumbColor = accentColor)
-                        )
-                    }
+                    GodModeToggle(
+                        label = "Ghost HUD (OSD)",
+                        checked = settings.showStats,
+                        onCheckedChange = { onSettingsChanged(settings.copy(showStats = it)) }
+                    )
+
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
             }
         }

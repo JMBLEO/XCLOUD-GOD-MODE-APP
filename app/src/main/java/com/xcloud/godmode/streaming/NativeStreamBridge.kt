@@ -96,5 +96,11 @@ object NativeStreamBridge {
      * Injects decoded PCM audio frames (48kHz Stereo) into the Oboe pipeline.
      */
     external fun injectAudio(data: ShortArray, numFrames: Int)
+
+    /**
+     * Binds a 16-byte Direct ByteBuffer for zero-copy JNI telemetry transfer:
+     * [0..3: RTT ms], [4..7: FPS], [8..11: Packet Loss % x 100], [12..15: Bitrate Kbps]
+     */
+    external fun bindTelemetryBuffer(buffer: java.nio.ByteBuffer)
 }
 
