@@ -55,6 +55,26 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
         val expiresIn: Int = 900
     ) : java.io.Serializable
 
+    companion object {
+        @Volatile
+        var latestGssvXstsToken: String = ""
+            private set
+
+        @Volatile
+        var latestF2pGsToken: String = ""
+            private set
+
+        @Volatile
+        var latestF2pRegionUri: String = ""
+            private set
+
+        fun updateGssvTokens(xstsToken: String, f2pToken: String = "", f2pUri: String = "") {
+            if (xstsToken.isNotBlank()) latestGssvXstsToken = xstsToken
+            if (f2pToken.isNotBlank()) latestF2pGsToken = f2pToken
+            if (f2pUri.isNotBlank()) latestF2pRegionUri = f2pUri
+        }
+    }
+
     data class XboxReadySession(
         val gamertag: String,
         val uhs: String,
@@ -66,7 +86,10 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
         val xCloudRegionUri: String,
         val gamerpic: String = "",
         val ageGroup: String = "Adult",
-        val webXstsTokenFull: JSONObject? = null
+        val webXstsTokenFull: JSONObject? = null,
+        val gssvXstsToken: String = "",
+        val f2pGsToken: String = "",
+        val f2pRegionUri: String = ""
     )
 
     /**
@@ -441,6 +464,16 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
                     "xgpuweb",
                     gssvToken
                 )
+
+                val f2pLogin = try {
+                    loginGssvOffering("xgpuwebf2p", gssvToken)
+                } catch (_: Exception) { null }
+
+                updateGssvTokens(
+                    xstsToken = gssvToken,
+                    f2pToken = f2pLogin?.first.orEmpty(),
+                    f2pUri = f2pLogin?.second.orEmpty()
+                )
                 
                 return@withContext XboxReadySession(
                     gamertag = gamertag,
@@ -453,7 +486,10 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
                     xCloudRegionUri = xCloudLogin.second,
                     gamerpic = gamerpic,
                     ageGroup = ageGroup,
-                    webXstsTokenFull = sisuResult
+                    webXstsTokenFull = sisuResult,
+                    gssvXstsToken = gssvToken,
+                    f2pGsToken = f2pLogin?.first.orEmpty(),
+                    f2pRegionUri = f2pLogin?.second.orEmpty()
                 )
             }
         } catch (e: Exception) {
@@ -525,6 +561,16 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             gssvToken
         )
 
+        val f2pLogin = try {
+            loginGssvOffering("xgpuwebf2p", gssvToken)
+        } catch (_: Exception) { null }
+
+        updateGssvTokens(
+            xstsToken = gssvToken,
+            f2pToken = f2pLogin?.first.orEmpty(),
+            f2pUri = f2pLogin?.second.orEmpty()
+        )
+
         return@withContext XboxReadySession(
             gamertag = gamertag,
             uhs = uhs,
@@ -536,7 +582,10 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             xCloudRegionUri = xCloudLogin.second,
             gamerpic = gamerpic,
             ageGroup = ageGroup,
-            webXstsTokenFull = webXstsData
+            webXstsTokenFull = webXstsData,
+            gssvXstsToken = gssvToken,
+            f2pGsToken = f2pLogin?.first.orEmpty(),
+            f2pRegionUri = f2pLogin?.second.orEmpty()
         )
     }
 
@@ -767,6 +816,60 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
         throw Exception("GSSV Login Failed: La cuenta requiere verificación de región o no tiene suscripción activa.")
     }
 
+    suspend fun loginGssvOffering(
+        offeringId: String,
+        xstsToken: String = latestGssvXstsToken,
+        bypassIp: String? = null
+    ): Pair<String, String>? = withContext(Dispatchers.IO) {
+        if (xstsToken.isBlank()) return@withContext null
+        val mediaType = "application/json".toMediaType()
+        val ipToUse = bypassIp?.takeIf { it.isNotBlank() && it != "Desactivado" } ?: "20.143.92.1"
+        val url = "https://$offeringId.gssv-play-prod.xboxlive.com/v2/login/user"
+
+        val payload = JSONObject().apply {
+            put("token", xstsToken)
+            put("offeringId", offeringId)
+        }
+        val reqBuilder = Request.Builder()
+            .url(url)
+            .addHeader("Content-Type", "application/json")
+            .addHeader("Accept", "application/json")
+            .addHeader("x-gssv-client", "XboxNative")
+            .post(payload.toString().toRequestBody(mediaType))
+
+        if (ipToUse.isNotBlank()) {
+            reqBuilder.addHeader("X-Forwarded-For", ipToUse)
+        }
+
+        try {
+            okHttpClient.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w("XboxAuth", "loginGssvOffering $offeringId failed with HTTP ${response.code}")
+                    return@withContext null
+                }
+                val json = JSONObject(response.body?.string() ?: "{}")
+                val gsToken = json.optString("gsToken")
+                if (gsToken.isBlank()) return@withContext null
+                val regions = json.optJSONObject("offeringSettings")?.optJSONArray("regions")
+                var regionUri = url.substringBefore("/v2/login/user")
+                if (regions != null && regions.length() > 0) {
+                    regionUri = regions.getJSONObject(0).optString("baseUri", regionUri)
+                    for (i in 0 until regions.length()) {
+                        val r = regions.getJSONObject(i)
+                        if (r.optBoolean("isDefault", false)) {
+                            regionUri = r.optString("baseUri", regionUri)
+                            break
+                        }
+                    }
+                }
+                Pair(gsToken, regionUri)
+            }
+        } catch (e: Exception) {
+            Log.w("XboxAuth", "Error en loginGssvOffering $offeringId: ${e.message}")
+            null
+        }
+    }
+
     suspend fun validateActiveSession(webToken: String, uhs: String): Boolean = withContext(Dispatchers.IO) {
         try {
             val req = Request.Builder()
@@ -887,16 +990,24 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
         val mediaType = "application/json".toMediaType()
         val request = Request.Builder()
             .url(url)
+            .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
             .addHeader("Content-Type", "application/json")
+            .addHeader("Accept", "application/json")
             .addHeader("ms-cv", "0")
             .addHeader("calling-app-name", "Xbox Cloud Gaming Web")
             .addHeader("calling-app-version", "21.0.0")
             .post(payload.toString().toRequestBody(mediaType))
             .build()
-        okHttpClient.newCall(request).execute().use { response ->
-            val body = response.body?.string() ?: ""
-            if (!response.isSuccessful) throw Exception("Get Product Details Failed: $body")
-            return@withContext JSONObject(body)
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful || body.trim().startsWith("<") || body.isBlank()) {
+                    return@withContext JSONObject()
+                }
+                return@withContext runCatching { JSONObject(body) }.getOrDefault(JSONObject())
+            }
+        } catch (_: Exception) {
+            return@withContext JSONObject()
         }
     }
 

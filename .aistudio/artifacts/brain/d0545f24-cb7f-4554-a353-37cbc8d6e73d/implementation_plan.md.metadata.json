@@ -1,6 +1,6 @@
 {
-  "summary":  "Plan de implementación técnica consolidado y alineado con la arquitectura canónica de 5 capas del cliente \"God Mode\" y las 10 extensiones de blindaje de stream. Define con precisión el aislamiento absoluto del stream respecto a UI/persistencia preexistente, integrando QoS DiffServ (EF 46 / AF41 34), Wi-Fi WMM, mitigación de Buffer Bloat (dRTT/dt), Watchdog ICE/DTLS a 1200ms, A/V Sync Bluetooth (±5ms), descarga térmica WebGPU/LSFG, Ghost HUD desacoplado, Touch De-jitter elíptico, Secure RAM Vault y sanitización Zero-Trace post-sesión.",
-  "updatedAt":  "2026-11-01T16:27:12.210753199Z",
-  "requestFeedback":  true,
-  "userFacing":  true
+  "summary": "Plan de implementación integral consolidado: incorpora la matriz completa de códecs de última generación (AV1, HEVC, LCEVC) y modelos de IA por motor (FSR 4, Qualcomm GSR 2.0/AFME, MediaTek APU Booster, LCEVC HWC2, NNAPI Generative DLSS/XeSS, Pyrowave/LSFG), junto con el spoofing de sesión HTTP, SDP a 35-50 Mbps, y los 8 eslabones de blindaje de bajo nivel en Estado 0.",
+  "updatedAt": "2026-11-03T02:02:14.181717300Z",
+  "requestFeedback": true,
+  "userFacing": true
 }

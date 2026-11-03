@@ -29,7 +29,6 @@ import android.view.SurfaceHolder
 import android.widget.Toast
 import com.xcloud.godmode.services.GameProfile
 import com.xcloud.godmode.services.GameProfileManager
-import com.xcloud.godmode.streaming.GameStreamWebView
 import com.xcloud.godmode.ui.components.LatencyHUD
 import com.xcloud.godmode.ui.components.TrueAchievementsOverlay
 import com.xcloud.godmode.ui.components.InStreamGameBar
@@ -57,15 +56,20 @@ fun StreamScreen(
     settings: com.xcloud.godmode.models.SettingsModel,
     titleId: String = "9NKX70BBCDRN",
     gameTitle: String = "Xbox Cloud Game",
+    gssvXstsToken: String = "",
+    fallbackGsToken: String = "",
+    fallbackRegionUri: String = "",
+    hwProfile: com.xcloud.godmode.hardware.DeviceHardwareProfile? = null,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
+    val window = (context as? android.app.Activity)?.window
     val strings = com.xcloud.godmode.ui.theme.AppStrings.get(settings.appLanguage)
     val profileManager = remember { GameProfileManager(context) }
     val gameProfile = remember(titleId) { profileManager.getProfile(titleId, gameTitle) }
 
     var isHudVisible by remember { mutableStateOf(settings.showStats) }
-    var selectedMotor by remember { mutableIntStateOf(1) } // 1: Native WebRTC, 2: WebView Script
+    var selectedMotor by remember { mutableIntStateOf(settings.selectedMotor.coerceIn(1, 6)) } // 1..6 Native Engines
 
     // In-stream quick tuners
     var fsrEnabled by remember { mutableStateOf(true) }
@@ -153,7 +157,10 @@ fun StreamScreen(
                 regionBaseUri = sessionPath.substringBefore("/v2/login/user"),
                 bypassIp = activeBypassIp,
                 titleId = titleId,
-                locale = settings.storeLocale.ifBlank { optimalNode.locale }
+                locale = settings.storeLocale.ifBlank { optimalNode.locale },
+                gssvXstsToken = gssvXstsToken.takeIf { it.isNotBlank() } ?: com.xcloud.godmode.network.XboxFullAuthManager.latestGssvXstsToken,
+                fallbackGsToken = fallbackGsToken.takeIf { it.isNotBlank() } ?: com.xcloud.godmode.network.XboxFullAuthManager.latestF2pGsToken,
+                fallbackRegionUri = fallbackRegionUri.takeIf { it.isNotBlank() } ?: com.xcloud.godmode.network.XboxFullAuthManager.latestF2pRegionUri
             )
 
             streamManager.setVideoSink(surfaceViewRenderer)
@@ -217,7 +224,15 @@ fun StreamScreen(
             avgJitter = if (stats.jitter > 0.0) stats.jitter else 1.2,
             packetLoss = if (stats.packetLoss > 0) stats.packetLoss.toDouble() else 0.02,
             resolution = "1080p",
-            motor = if (selectedMotor == 1) "Native WebRTC + FSR" else "WebView God Mode Script"
+            motor = when (selectedMotor) {
+                1 -> "Motor 1 (Rust/OpenH264 + Vulkan Zero-Copy)"
+                2 -> "Motor 2 (Vulkan Video ASIC Direct)"
+                3 -> "Motor 3 (AMediaCodec Async HWC2 + AI Super Resolution)"
+                4 -> "Motor 4 (HWC2 Direct Overlay AI)"
+                5 -> "Motor 5 (AMediaCodec + NNAPI AI)"
+                6 -> "Motor 6 (EGLImage Zero-Copy OES AI)"
+                else -> "Motor $selectedMotor"
+            }
         )
         safeReleaseRenderer()
         context.stopService(Intent(context, StreamingService::class.java))
@@ -250,6 +265,15 @@ fun StreamScreen(
         }
     }
 
+    val enhancer = remember(hwProfile, window) {
+        if (hwProfile != null && window != null) {
+            // Enhancer will be initialized with the SurfaceView in the factory
+            null
+        } else null
+    }
+    
+    var activeEnhancer by remember { mutableStateOf<com.xcloud.godmode.consoletech.ConsoleGradeHardwareEnhancer?>(null) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -272,40 +296,30 @@ fun StreamScreen(
                     .aspectRatio(16f / 9f)
             }
 
-            if (selectedMotor == 1) {
-                // Motor 1: Native WebRTC
-                NativeZeroCopyViewport(
-                    streamManager = streamManager,
-                    settings = settings,
-                    modifier = aspectModifier,
-                    onSurfaceCreated = { surface ->
-                        orchestrator.notifySurfaceCreated(surface)
-                    },
-                    onInputEvent = { event ->
-                        inputManager.handleMotionEvent(event)
-                    }
-                )
-            } else {
-                // Motor 2: WebView + God Mode Script con configuración activa
-                val liveSettings = com.xcloud.godmode.models.SettingsModel(
-                    selectedMotor = selectedMotor,
-                    upscalerEngine = if (fsrEnabled) "AMD FSR 3.1 RCAS WebGL2" else "Off",
-                    fsrSharpness = fsrSharpness,
-                    aspectRatio = selectedAspectRatio,
-                    volumeBoostPercent = volumeBoost
-                )
-                val webFallbackUrl = com.xcloud.godmode.streaming.RegionBypassWebViewHelper.buildSupportedPlayUrl(titleId, "es-MX")
-                GameStreamWebView(
-                    launchUrl = webFallbackUrl,
-                    appSettings = liveSettings,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
+            NativeZeroCopyViewport(
+                streamManager = streamManager,
+                settings = settings,
+                engineType = selectedMotor,
+                enableAiUpscale = settings.enableAiUpscale,
+                hwProfile = hwProfile,
+                window = window,
+                modifier = aspectModifier,
+                onSurfaceCreated = { surface ->
+                    orchestrator.notifySurfaceCreated(surface)
+                },
+                onInputEvent = { event ->
+                    inputManager.handleMotionEvent(event)
+                    // Update ROI Foveated center based on touch for ultra-low latency rendering
+                    activeEnhancer?.onTouchUpdateRoiRegion(event)
+                },
+                onEnhancerCreated = { 
+                    activeEnhancer = it 
+                }
+            )
         }
 
-        // Provisioning Overlay (Sólo para Motor 1 Nativo)
-        if (selectedMotor == 1) {
-            when (launchState) {
+        // Provisioning Overlay (Pipeline Nativo Zero-Copy)
+        when (launchState) {
             is com.xcloud.godmode.streaming.StreamLaunchState.InQueue -> {
                 val state = launchState as com.xcloud.godmode.streaming.StreamLaunchState.InQueue
                 StreamStatusOverlay(
@@ -340,7 +354,7 @@ fun StreamScreen(
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(
-                                text = "Puedes conmutar al Motor 2 (WebView Directo) o reintentar la negociación de red nativa.",
+                                text = "El pipeline nativo reintenta automáticamente negociando los offerings de licencias (Auto-Offering).",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.Gray
                             )
@@ -353,30 +367,20 @@ fun StreamScreen(
                         ) {
                             Button(
                                 onClick = {
-                                    selectedMotor = 2
+                                    orchestrator.resetSurfaceBarrier()
+                                    scope.launch { launchStreamBlock() }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Icon(Icons.Default.Web, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("⚡ Iniciar con Motor 2 (WebView Directo)")
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    orchestrator.resetSurfaceBarrier()
-                                    scope.launch { launchStreamBlock() }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                            ) {
                                 Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("↻ Reintentar Conexión")
+                                Text("↻ Reintentar con Pipeline Nativo / Auto-Offering")
                             }
-                            TextButton(
+                            OutlinedButton(
                                 onClick = handleCloseStream,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
                             ) {
                                 Text("Volver al Hub", color = Color.Gray)
                             }
@@ -388,7 +392,6 @@ fun StreamScreen(
             }
             else -> {}
         }
-    }
 
         // Overlay Controls (Top-Right)
         Row(
@@ -595,7 +598,15 @@ fun StreamScreen(
                         Text("• Protocolo: WebRTC TLS 1.3 Strict + Anonymized Local IPs", color = Color.LightGray)
                         Text("• Audio: Opus Hi-Fi Downmix Center Voice Boost 3dB", color = Color.LightGray)
                         Text("• Decodificador: Android Low-Latency NPU/Hardware", color = Color.LightGray)
-                        Text("• Motor Activo: ${if (selectedMotor == 1) "Nativo WebRTC + FSR 3.1" else "WebView God Mode Script"}", color = Color(0xFF4ADE80))
+                        Text("• Motor Activo: ${when(selectedMotor) {
+                            1 -> "Motor 1 (Rust/OpenH264 + Vulkan Zero-Copy)"
+                            2 -> "Motor 2 (Vulkan Video ASIC Direct)"
+                            3 -> "Motor 3 (AMediaCodec Async HWC2 + AI Super Resolution)"
+                            4 -> "Motor 4 (HWC2 Direct Overlay AI)"
+                            5 -> "Motor 5 (AMediaCodec + NNAPI AI)"
+                            6 -> "Motor 6 (EGLImage Zero-Copy OES AI)"
+                            else -> "Motor $selectedMotor"
+                        }}", color = Color(0xFF4ADE80))
                     }
                 },
                 confirmButton = {
@@ -921,8 +932,13 @@ fun NativeZeroCopyViewport(
     streamManager: WebRTCStreamManager,
     settings: com.xcloud.godmode.models.SettingsModel,
     modifier: Modifier = Modifier,
+    engineType: Int = 3,
+    enableAiUpscale: Boolean = true,
+    hwProfile: com.xcloud.godmode.hardware.DeviceHardwareProfile? = null,
+    window: android.view.Window? = null,
     onSurfaceCreated: ((Surface) -> Unit)? = null,
-    onInputEvent: (MotionEvent) -> Unit
+    onInputEvent: (MotionEvent) -> Unit,
+    onEnhancerCreated: (com.xcloud.godmode.consoletech.ConsoleGradeHardwareEnhancer) -> Unit
 ) {
     AndroidView(
         modifier = modifier.pointerInteropFilter { event ->
@@ -931,6 +947,12 @@ fun NativeZeroCopyViewport(
         },
         factory = { context ->
             SurfaceView(context).apply {
+                val enhancer = if (hwProfile != null && window != null) {
+                    com.xcloud.godmode.consoletech.ConsoleGradeHardwareEnhancer(context, window, this, hwProfile).also {
+                        onEnhancerCreated(it)
+                    }
+                } else null
+
                 holder.addCallback(object : SurfaceHolder.Callback {
                     private var isAttached = false
                     private var lastW = 0
@@ -938,6 +960,10 @@ fun NativeZeroCopyViewport(
 
                     override fun surfaceCreated(holder: SurfaceHolder) {
                         onSurfaceCreated?.invoke(holder.surface)
+                        
+                        // Activate console-grade hardware enhancements
+                        enhancer?.activateAllmVrrAndHdrWindow(enableHdr10 = (settings.hdrMode != "off"), initialStreamFps = 60f)
+
                         val profile = when (settings.videoCodec) {
                             "HEVC / H.265" -> 1
                             "AV1" -> 2
@@ -947,6 +973,13 @@ fun NativeZeroCopyViewport(
                         }
                         lastW = 1920
                         lastH = 1080
+                        NativeStreamBridge.initStreamPipeline(
+                            surface = holder.surface,
+                            engineType = engineType,
+                            width = 1920,
+                            height = 1080,
+                            enableAiUpscale = enableAiUpscale
+                        )
                         isAttached = NativeStreamBridge.attachSurface(
                             surface = holder.surface,
                             profile = profile,
@@ -957,6 +990,7 @@ fun NativeZeroCopyViewport(
 
                     override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
                         onSurfaceCreated?.invoke(holder.surface)
+                        NativeStreamBridge.onSurfaceResized(w, h)
                         if (!isAttached || w != lastW || h != lastH) {
                             lastW = w
                             lastH = h
@@ -973,6 +1007,8 @@ fun NativeZeroCopyViewport(
 
                     override fun surfaceDestroyed(holder: SurfaceHolder) {
                         isAttached = false
+                        enhancer?.release()
+                        NativeStreamBridge.shutdownStreamPipeline()
                         NativeStreamBridge.detachSurface()
                     }
                 })

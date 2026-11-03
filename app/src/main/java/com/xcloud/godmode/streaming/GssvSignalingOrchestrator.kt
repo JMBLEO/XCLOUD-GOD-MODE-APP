@@ -2,6 +2,7 @@ package com.xcloud.godmode.streaming
 
 import android.util.Log
 import android.view.Surface
+import com.xcloud.godmode.network.XboxFullAuthManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CompletableDeferred
@@ -28,7 +29,7 @@ sealed class StreamLaunchState {
     data class Failed(
         val reason: String,
         val httpCode: Int = 0,
-        val canFallbackToMotor2: Boolean = true
+        val canFallbackToMotor2: Boolean = false
     ) : StreamLaunchState()
 }
 
@@ -42,7 +43,11 @@ data class GssvSessionConfig(
     val targetWidth: Int = 1920,
     val targetHeight: Int = 1080,
     val isXHomeConsole: Boolean = false,
-    val longPlayToken: String? = null
+    val longPlayToken: String? = null,
+    val gssvXstsToken: String? = null,
+    val fallbackGsToken: String? = null,
+    val fallbackRegionUri: String? = null,
+    val offeringId: String = "xgpuweb"
 )
 
 class GssvSignalingOrchestrator(
@@ -72,9 +77,9 @@ class GssvSignalingOrchestrator(
         return JSONObject().apply {
             put("appInfo", JSONObject().apply {
                 put("env", JSONObject().apply {
-                    put("clientAppId", "www.xbox.com")
-                    put("clientAppType", "browser")
-                    put("clientAppVersion", "29.19.17")
+                    put("clientAppId", "XboxApp")
+                    put("clientAppType", "native")
+                    put("clientAppVersion", "2403.1001.4.0")
                     put("clientSdkVersion", "10.3.7")
                     put("httpEnvironment", "prod")
                     put("sdkInstallId", "")
@@ -84,7 +89,7 @@ class GssvSignalingOrchestrator(
                 put("hw", JSONObject().apply {
                     put("make", "Microsoft")
                     put("model", "Surface Pro 9")
-                    put("sdktype", "web")
+                    put("sdktype", "native")
                 })
                 put("os", JSONObject().apply {
                     put("name", "windows")
@@ -130,66 +135,118 @@ class GssvSignalingOrchestrator(
                 Log.w(TAG, "Superficie de hardware no entregada a tiempo, procediendo con inicialización de red...")
             }
 
-            // 2. RESOLVER TitleID REAL SI SOLO SE POSEE ProductID
-            val resolvedTitleId = if (config.titleId.isBlank() || config.titleId == "null") {
-                resolveTitleIdFromProductId(config.regionBaseUri, config.gsToken, config.titleId)
-                    ?: config.titleId.takeIf { it.isNotBlank() && it != "null" }
-                    ?: "9NKX70BBCDRN"
-            } else {
-                config.titleId
-            }
+            var currentGsToken = config.gsToken
+            var currentRegionBaseUri = config.regionBaseUri.trimEnd('/')
+            var currentOffering = config.offeringId
+            val activeXstsToken = config.gssvXstsToken?.takeIf { it.isNotBlank() }
+                ?: XboxFullAuthManager.latestGssvXstsToken.takeIf { it.isNotBlank() }
+
+            val isKnownF2p = isLikelyFreeToPlay(config.titleId)
+            val initialOffering = if (isKnownF2p) "xgpuwebf2p" else currentOffering
+            val offeringHierarchy = listOf(initialOffering, "xgpuweb", "xgpuwebf2p", "xgpu", "xgpuconsole").distinct()
 
             _launchState.value = StreamLaunchState.Provisioning("Solicitando consola en ${config.regionName}...", config.regionName)
 
-            // 3. CREAR SESIÓN: POST <baseUri>/v5/sessions/cloud/play
-            val playPayload = JSONObject().apply {
-                put("titleId", resolvedTitleId)
-                put("systemUpdateGroup", "")
-                put("clientSessionId", UUID.randomUUID().toString())
-                put("settings", JSONObject().apply {
-                    put("nanoVersion", "V3;")
-                    put("supportedInputConfiguration", "ControllerAndKeyboardAndMouse")
-                    put("enableTextToSpeech", false)
-                    put("highContrast", 0)
-                    put("locale", config.locale)
-                    put("useIceConnection", false)
-                    put("timezoneOffsetMinutes", -180)
-                    put("sdkType", "android")
-                    put("osName", "android")
-                    put("osVersion", "34")
-                    put("screenWidth", config.targetWidth)
-                    put("screenHeight", config.targetHeight)
-                })
-                put("serverId", "")
-                put("fallbackRegionNames", JSONArray())
+            var sessionPath = ""
+            var lastHttpCode = 0
+            var lastErrorDetail = ""
+            var playSucceeded = false
+
+            for (offering in offeringHierarchy) {
+                if (offering != currentOffering || currentGsToken.isBlank()) {
+                    _launchState.value = StreamLaunchState.Provisioning(
+                        "Conmutando pool de licencias ($offering)...",
+                        config.regionName
+                    )
+                    val newCredentials = getOfferingCredentials(
+                        offering = offering,
+                        xstsToken = activeXstsToken,
+                        fallbackGsToken = config.fallbackGsToken,
+                        fallbackRegionUri = config.fallbackRegionUri,
+                        bypassIp = config.bypassIp
+                    )
+                    if (newCredentials != null) {
+                        currentGsToken = newCredentials.first
+                        currentRegionBaseUri = newCredentials.second.trimEnd('/')
+                        currentOffering = offering
+                    } else if (offering != initialOffering) {
+                        Log.d(TAG, "No se obtuvieron credenciales para offering secundario $offering, continuando...")
+                        continue
+                    }
+                }
+
+                // Resolver TitleID real para el offering activo
+                val resolvedTitleId = resolveTitleId(currentRegionBaseUri, currentGsToken, config.titleId)
+                    ?: config.titleId.takeIf { it.isNotBlank() && it != "null" }
+                    ?: "9NKX70BBCDRN"
+
+                // CREAR SESIÓN: POST <baseUri>/v5/sessions/cloud/play
+                val playPayload = JSONObject().apply {
+                    put("titleId", resolvedTitleId)
+                    put("systemUpdateGroup", "")
+                    put("clientSessionId", UUID.randomUUID().toString())
+                    put("settings", JSONObject().apply {
+                        put("nanoVersion", "V3;RtspOverUdp")
+                        put("supportedInputConfiguration", "ControllerAndKeyboardAndMouse")
+                        put("enableTextToSpeech", false)
+                        put("highContrast", 0)
+                        put("locale", config.locale)
+                        put("useIceConnection", false)
+                        put("timezoneOffsetMinutes", -180)
+                        put("sdkType", "native")
+                        put("osName", "windows")
+                        put("osVersion", "22631.2715")
+                        put("screenWidth", config.targetWidth)
+                        put("screenHeight", config.targetHeight)
+                    })
+                    put("serverId", "")
+                    put("fallbackRegionNames", JSONArray())
+                }
+
+                val playReqBuilder = Request.Builder()
+                    .url("$currentRegionBaseUri/v5/sessions/cloud/play")
+                    .addHeader("Authorization", "Bearer $currentGsToken")
+                    .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
+                    .addHeader("x-gssv-client", "XboxNative")
+                    .post(playPayload.toString().toRequestBody(jsonMediaType))
+
+                if (!config.bypassIp.isNullOrBlank()) {
+                    playReqBuilder.addHeader("X-Forwarded-For", config.bypassIp)
+                }
+
+                val playResponse = httpClient.newCall(playReqBuilder.build()).execute()
+                val playBody = playResponse.body?.string().orEmpty()
+                lastHttpCode = playResponse.code
+
+                if (playResponse.isSuccessful && playBody.isNotBlank()) {
+                    val playJson = JSONObject(playBody)
+                    val sPath = playJson.optString("sessionPath", "")
+                    if (sPath.isNotBlank()) {
+                        sessionPath = sPath
+                        playSucceeded = true
+                        Log.i(TAG, "Sesión GSSV creada con éxito (Offering: $currentOffering, TitleId: $resolvedTitleId): $sessionPath")
+                        break
+                    }
+                }
+
+                lastErrorDetail = extractXboxErrorDetail(playBody)
+                Log.w(TAG, "Intento /play con offering $offering falló (${playResponse.code}): $lastErrorDetail")
+
+                val isOfferingMismatch = playBody.contains("OfferingDoesNotContainTitle", ignoreCase = true) ||
+                        playBody.contains("Offering", ignoreCase = true) ||
+                        playResponse.code == 400 || playResponse.code == 404
+
+                if (!isOfferingMismatch) {
+                    break
+                }
             }
 
-            val playReqBuilder = Request.Builder()
-                .url("${config.regionBaseUri.trimEnd('/')}/v5/sessions/cloud/play")
-                .addHeader("Authorization", "Bearer ${config.gsToken}")
-                .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
-                .post(playPayload.toString().toRequestBody(jsonMediaType))
-
-            if (!config.bypassIp.isNullOrBlank()) {
-                playReqBuilder.addHeader("X-Forwarded-For", config.bypassIp)
-            }
-
-            val playResponse = httpClient.newCall(playReqBuilder.build()).execute()
-            val playBody = playResponse.body?.string().orEmpty()
-            if (!playResponse.isSuccessful || playBody.isBlank()) {
-                val errDetail = extractXboxErrorDetail(playBody)
+            if (!playSucceeded || sessionPath.isBlank()) {
                 _launchState.value = StreamLaunchState.Failed(
-                    "Error al iniciar sesión cloud (${playResponse.code}): $errDetail",
-                    playResponse.code
+                    reason = "Error al iniciar sesión cloud ($lastHttpCode): $lastErrorDetail",
+                    httpCode = lastHttpCode,
+                    canFallbackToMotor2 = false
                 )
-                return@withContext
-            }
-
-            val playJson = JSONObject(playBody)
-            val sessionPath = playJson.optString("sessionPath", "")
-            if (sessionPath.isBlank()) {
-                val errDetail = extractXboxErrorDetail(playBody)
-                _launchState.value = StreamLaunchState.Failed("El servidor de Xbox no entregó sessionPath: $errDetail")
                 return@withContext
             }
 
@@ -200,8 +257,8 @@ class GssvSignalingOrchestrator(
 
             while (!isReady) {
                 val stateReq = Request.Builder()
-                    .url("${config.regionBaseUri.trimEnd('/')}/$sessionPath/state")
-                    .addHeader("Authorization", "Bearer ${config.gsToken}")
+                    .url("$currentRegionBaseUri/$sessionPath/state")
+                    .addHeader("Authorization", "Bearer $currentGsToken")
                     .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
                     .get()
                     .build()
@@ -238,8 +295,8 @@ class GssvSignalingOrchestrator(
                                 }
                             }.toString()
                             val connectReq = Request.Builder()
-                                .url("${config.regionBaseUri.trimEnd('/')}/$sessionPath/connect")
-                                .addHeader("Authorization", "Bearer ${config.gsToken}")
+                                .url("$currentRegionBaseUri/$sessionPath/connect")
+                                .addHeader("Authorization", "Bearer $currentGsToken")
                                 .addHeader("Content-Type", "application/json")
                                 .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
                                 .post(connectBody.toRequestBody(jsonMediaType))
@@ -289,8 +346,8 @@ class GssvSignalingOrchestrator(
             }
 
             val sdpReq = Request.Builder()
-                .url("${config.regionBaseUri.trimEnd('/')}/$sessionPath/sdp")
-                .addHeader("Authorization", "Bearer ${config.gsToken}")
+                .url("$currentRegionBaseUri/$sessionPath/sdp")
+                .addHeader("Authorization", "Bearer $currentGsToken")
                 .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
                 .post(sdpPostPayload.toString().toRequestBody(jsonMediaType))
                 .build()
@@ -305,8 +362,8 @@ class GssvSignalingOrchestrator(
                 sdpAttempts++
                 val sdpGetRes = httpClient.newCall(
                     Request.Builder()
-                        .url("${config.regionBaseUri.trimEnd('/')}/$sessionPath/sdp")
-                        .addHeader("Authorization", "Bearer ${config.gsToken}")
+                        .url("$currentRegionBaseUri/$sessionPath/sdp")
+                        .addHeader("Authorization", "Bearer $currentGsToken")
                         .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
                         .get()
                         .build()
@@ -350,8 +407,8 @@ class GssvSignalingOrchestrator(
             }
 
             val icePostReq = Request.Builder()
-                .url("${config.regionBaseUri.trimEnd('/')}/$sessionPath/ice")
-                .addHeader("Authorization", "Bearer ${config.gsToken}")
+                .url("$currentRegionBaseUri/$sessionPath/ice")
+                .addHeader("Authorization", "Bearer $currentGsToken")
                 .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
                 .post(icePostPayload.toString().toRequestBody(jsonMediaType))
                 .build()
@@ -365,8 +422,8 @@ class GssvSignalingOrchestrator(
                 iceRetry++
                 val iceGetRes = httpClient.newCall(
                     Request.Builder()
-                        .url("${config.regionBaseUri.trimEnd('/')}/$sessionPath/ice")
-                        .addHeader("Authorization", "Bearer ${config.gsToken}")
+                        .url("$currentRegionBaseUri/$sessionPath/ice")
+                        .addHeader("Authorization", "Bearer $currentGsToken")
                         .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
                         .get()
                         .build()
@@ -413,7 +470,7 @@ class GssvSignalingOrchestrator(
             }
 
             // 8. TRANSICIÓN A STREAM ACTIVO
-            _launchState.value = StreamLaunchState.StreamingActive(sessionPath, config.regionBaseUri)
+            _launchState.value = StreamLaunchState.StreamingActive(sessionPath, currentRegionBaseUri)
 
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -423,17 +480,104 @@ class GssvSignalingOrchestrator(
                 ?: "${e::class.java.simpleName} (${e.cause?.message ?: e.stackTrace.firstOrNull()?.let { "${it.fileName}:${it.lineNumber}" } ?: "error de inicio"})"
             _launchState.value = StreamLaunchState.Failed(
                 reason = safeReason,
-                canFallbackToMotor2 = true
+                canFallbackToMotor2 = false
             )
         }
     }
 
-    private fun resolveTitleIdFromProductId(baseRegionUri: String, gsToken: String, productId: String): String? {
-        if (productId.isBlank() || productId == "null") return null
+    private fun isLikelyFreeToPlay(titleIdOrName: String): Boolean {
+        val lower = titleIdOrName.lowercase()
+        return lower.contains("fortnite") ||
+                lower.contains("warzone") ||
+                lower.contains("apex") ||
+                lower.contains("halo infinite") ||
+                lower.contains("roblox") ||
+                lower.contains("destiny") ||
+                lower.contains("fall guys") ||
+                lower.contains("finals") ||
+                lower == "9nblggh1zbkw"
+    }
+
+    private suspend fun getOfferingCredentials(
+        offering: String,
+        xstsToken: String?,
+        fallbackGsToken: String?,
+        fallbackRegionUri: String?,
+        bypassIp: String?
+    ): Pair<String, String>? = withContext(Dispatchers.IO) {
+        if (offering == "xgpuwebf2p" && !fallbackGsToken.isNullOrBlank() && !fallbackRegionUri.isNullOrBlank()) {
+            return@withContext Pair(fallbackGsToken, fallbackRegionUri)
+        }
+        if (xstsToken.isNullOrBlank()) return@withContext null
+
+        return@withContext requestOfferingLogin(
+            offeringId = offering,
+            xstsToken = xstsToken,
+            bypassIp = bypassIp
+        )
+    }
+
+    private suspend fun requestOfferingLogin(
+        offeringId: String,
+        xstsToken: String,
+        bypassIp: String?
+    ): Pair<String, String>? = withContext(Dispatchers.IO) {
+        val url = "https://$offeringId.gssv-play-prod.xboxlive.com/v2/login/user"
+        val payload = JSONObject().apply {
+            put("token", xstsToken)
+            put("offeringId", offeringId)
+        }
+        val reqBuilder = Request.Builder()
+            .url(url)
+            .addHeader("Content-Type", "application/json")
+            .addHeader("Accept", "application/json")
+            .addHeader("x-gssv-client", "XboxNative")
+            .post(payload.toString().toRequestBody(jsonMediaType))
+
+        if (!bypassIp.isNullOrBlank()) {
+            reqBuilder.addHeader("X-Forwarded-For", bypassIp)
+        }
+
+        try {
+            httpClient.newCall(reqBuilder.build()).execute().use { res ->
+                if (!res.isSuccessful) {
+                    Log.w(TAG, "requestOfferingLogin $offeringId falló con HTTP ${res.code}")
+                    return@withContext null
+                }
+                val body = res.body?.string().orEmpty()
+                val json = JSONObject(body)
+                val token = json.optString("gsToken")
+                if (token.isBlank()) return@withContext null
+
+                val regions = json.optJSONObject("offeringSettings")?.optJSONArray("regions")
+                var baseUri = url.substringBefore("/v2/login/user")
+                if (regions != null && regions.length() > 0) {
+                    for (i in 0 until regions.length()) {
+                        val r = regions.getJSONObject(i)
+                        if (r.optBoolean("isDefault", false)) {
+                            baseUri = r.optString("baseUri", baseUri)
+                            break
+                        }
+                    }
+                    if (baseUri == url.substringBefore("/v2/login/user")) {
+                        baseUri = regions.getJSONObject(0).optString("baseUri", baseUri)
+                    }
+                }
+                Pair(token, baseUri)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en requestOfferingLogin para $offeringId", e)
+            null
+        }
+    }
+
+    private fun resolveTitleId(baseRegionUri: String, gsToken: String, productIdOrTitleId: String): String? {
+        if (productIdOrTitleId.isBlank() || productIdOrTitleId == "null") return null
         val req = Request.Builder()
             .url("${baseRegionUri.trimEnd('/')}/v2/titles")
             .addHeader("Authorization", "Bearer $gsToken")
             .addHeader("Accept", "application/json")
+            .addHeader("x-gssv-client", "XboxNative")
             .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(1920, 1080))
             .build()
 
@@ -447,15 +591,23 @@ class GssvSignalingOrchestrator(
                     val pId = item.optString("productId").ifEmpty {
                         item.optJSONObject("details")?.optString("productId").orEmpty()
                     }
-                    if (pId.equals(productId, ignoreCase = true)) {
-                        val tId = item.optString("titleId")
+                    val tId = item.optString("titleId").ifEmpty {
+                        item.optJSONObject("details")?.optString("titleId").orEmpty()
+                    }
+                    val friendly = item.optJSONObject("details")?.optString("friendlyTitle").orEmpty()
+
+                    if (pId.equals(productIdOrTitleId, ignoreCase = true) ||
+                        tId.equals(productIdOrTitleId, ignoreCase = true) ||
+                        (friendly.isNotBlank() && friendly.equals(productIdOrTitleId, ignoreCase = true))
+                    ) {
                         if (tId.isNotBlank()) return tId
+                        if (pId.isNotBlank()) return pId
                     }
                 }
                 null
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Error resolviendo titleId para $productId", e)
+            Log.w(TAG, "Error resolviendo titleId para $productIdOrTitleId", e)
             null
         }
     }

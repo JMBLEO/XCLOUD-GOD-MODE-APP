@@ -1,100 +1,179 @@
-# Plan de Implementación Técnica Consolidado: Arquitectura de 5 Capas y Blindaje Extremo del Stream Pipeline ("God Mode")
+# Plan de Implementación: Blindaje Crítico de los 6 Motores de Streaming, Cascada de Resiliencia Neuronal, Códecs de Última Generación y Calidad Extrema Forzada a 1440p / 1080p HQ (Estado 0)
 
-> [!IMPORTANT]
-> **Directiva de Integridad y Aislamiento Estricto:** La ejecución de este plan se concentra **exclusivamente en el pipeline de streaming** (decodificación zero-copy, audio Oboe, periféricos a 250 Hz, control de congestión, QoS de red, sincronización A/V y sanitización volátil). Todos los componentes de las Capas 1, 4 y 5 preexistentes (Lanzador Cinema Hybrid, Modo Mica, insignias oficiales ESRB/PEGI, autenticación de 7 vías y catálogo dinámico) se mantienen 100% inalterados e inmutables.
-
----
-
-## 1. Alineación Arquitectónica Canónica por Capas
-
-El ecosistema nativo se organiza en una matriz de 5 capas funcionales estrictamente desacopladas, complementadas por el submódulo aislado de inteligencia artificial:
-
-| Capa Arquitectónica | Tecnologías Clave | Estado y Alcance en esta Iteración |
-| :--- | :--- | :--- |
-| **Capa 1: Presentación e Interfaz** | Jetpack Compose, Material Design 3, Coil Compose | **Inmutable / Preservada:** Lanzador Cinema Hybrid (120 Hz), píldora flotante translúcida Modo Mica (`#090D13`), insignias oficiales ESRB/PEGI y controles táctiles. |
-| **Capa 2: Motor Multimedia NDK & Zero-Copy** | C++20, Android NDK, AMediaCodec, ANativeWindow, EGL, OpenGL ES 3.2 | **Foco Principal (Stream):** Decodificación hardware directa sin copias en RAM, render pass separado para telemetría, soporte multi-códec (AV1, HEVC, VVC, LCEVC, SVC) y búfer SPSC a 250 Hz. |
-| **Capa 3: Audio de Baja Latencia & Háptica** | Oboe C++, AAudio, OpenSL ES, Android Vibrator | **Foco Principal (Stream):** Canal exclusivo `SCHED_FIFO`, ráfagas adaptativas, filtro Biquad a 120 Hz para haptics, Opus PLC y compensación dinámica de PTS para Bluetooth ($\pm 5\text{ ms}$). |
-| **Capa 4: Red, Conectividad & Protocolos** | OkHttp, DoH 1.1.1.1, WebRTC, JoseCripto, DiffServ QoS | **Foco Principal (Stream):** Priorización DSCP (EF 46 / AF41 34), Wi-Fi WMM Low-Latency, mitigación de Buffer Bloat ($\frac{dRTT}{dt}$), Watchdog ICE/DTLS (1200 ms), FlexFEC-03 y bypass anti-relay. *(Autenticación 7-vías permanece inalterada).* |
-| **Capa 5: Persistencia, Estado & Sanitización** | Room Database, DataStore, Android Keystore, C++ Memory Vault | **Foco Principal (Stream):** Secure RAM Vault cifrado en C++ (AES-GCM), sanitización Zero-Trace post-sesión (`memset_s`) y purga de directorios caché en frío. *(Base de datos Room y catálogo dinámico permanecen inalterados).* |
-| **Submódulo Especializado: IA Operativa** | Firebase AI Logic / Gemini API (`com.xcloud.godmode.ai`) | **Aislado:** Asistencia y optimización gráfica desacoplada de la ruta crítica de streaming. |
+Este documento unifica e integra la totalidad de los requisitos arquitectónicos y de ingeniería de bajo nivel para consolidar el pipeline de streaming nativo en C++20/Rust (`com.xcloud.godmode`), operando estrictamente en **Estado 0** (solo stream, sin interfaces gráficas, sin menús superpuestos, sin `WebView` y sin `FFmpeg`).
 
 ---
 
-## 2. Diagrama del Sistema: Flujo Multimedia y Blindaje Extremo (Extensiones 1 a 10)
+## 1. Ingeniería de Spoofing de Matriz de Xbox y Desbloqueo de Ancho de Banda (1440p / 35–50 Mbps)
 
+Para que los servidores de Azure autoricen flujos de alta densidad superando las restricciones de clientes móviles o de suscripción estándar:
+
+### 1.1 Inyección de Cabeceras de Dispositivo en Handshake HTTP (`/v5/sessions/cloud/play`)
+- **Cabeceras de Dispositivo:**
+  - `User-Agent`: Perfil de escritorio Windows x64.
+  - `x-gssv-client`: `"XboxNative"`.
+  - `x-ms-device-info`: Manifiesto emulando aplicación de escritorio/consola nativa:
+    ```json
+    {
+      "appInfo": {
+        "env": {
+          "clientAppId": "XboxApp",
+          "clientAppType": "native",
+          "clientAppVersion": "2403.1001.4.0"
+        }
+      },
+      "displayInfo": {
+        "width": 2560,
+        "height": 1440,
+        "colorDepth": 24,
+        "pixelDensity": 2.0
+      }
+    }
+    ```
+- **Payload de Sesión Forzado (`build_ultra_quality_session_payload` / `build_next_gen_session_payload`):**
+  - Configuración con `osName: "windows"` o `"tizen"`, `sdkType: "native"`, `nanoVersion: "V3;RtspOverUdp"`.
+  - Inyección explícita de `preferredVideoFormat`:
+    ```json
+    {
+      "profile": "High",
+      "maxWidth": 2560,
+      "maxHeight": 1440,
+      "maxframerate": 120
+    }
+    ```
+
+### 1.2 Mensaje de Preferencia de Video (`VideoPreference`)
+- Apenas se inicializa el canal de control WebSocket/SCTP, despacho de paquete JSON:
+  ```json
+  {
+    "type": "VideoPreference",
+    "width": 2560,
+    "height": 1440,
+    "fps": 60,
+    "videoCodec": "H264",
+    "colorSpaceFlags": 0
+  }
+  ```
+
+### 1.3 Forzado de Bitrate Agresivo y Reescritura SDP (`apply_forced_high_bitrate_sdp_tweaks`)
+- En `NativeZeroCopyPipeline::rewriteSdpForUltraQuality` e interceptores de descripción de sesión:
+  - Inserción de límites de ancho de banda: `b=AS:35000` / `b=AS:45000` y `b=TIAS:44000000`.
+  - Modificación de parámetros H.264 / HEVC en `fmtp`:
+    - Sustitución de `max-rcv-bitrate=15000` por `max-rcv-bitrate=35000`.
+    - Expansión de `packetization-mode=1` a `packetization-mode=1;max-br=35000`.
+    - Regla de control de tasa: `a=fmtp:96 max-fr=120;max-fs=8704;profile-level-id=640032`.
+
+---
+
+## 2. Asignación Tecnológica y Mapeo de Códecs / IA por Motor (1 al 6)
+
+Cada uno de los 6 motores nativos absorbe de forma polimórfica una tecnología específica de decodificación y de Inteligencia Artificial (Super-Resolución / Frame Generation):
+
+### Motor 1: Rust Zero-Trust + Decodificador AV1/RAV1D Memory-Safe + AMD FSR 4 / AI Compute
+- **Tecnología:** AV1 / AV2 (Libres de regalías) + AMD FSR 4 (Machine Learning Super Resolution).
+- **Proceso:** `rav1d` parsea el flujo AV1 en Rust con seguridad estricta de memoria; entrega planos decodificados directamente a un Compute Shader de Vulkan con precisión `float16_t` para reescalado FSR 4 hacia la swapchain.
+- **Alineación de Stride:** `copyPlanarYuvToVulkanImageWithStride` con `bufferRowLength = rustYStride` (1984/2048 bytes) para eliminar distorsión diagonal producida por padding SIMD NEON.
+
+### Motor 2: Vulkan Video ASIC (`VK_KHR_video_decode_av1` / `hevc`) + Qualcomm GSR 2.0 / AFME 2.0
+- **Tecnología:** AV1 / HEVC en silicio puro + Qualcomm Snapdragon Game Super Resolution 2.0 / Adreno Frame Motion Engine (AFME 2.0).
+- **Proceso:** Decodificación directa en hardware mediante `vkCmdDecodeVideoKHR` sin intervención de CPU. Encadenamiento con núcleos tensoriales para generar fotogramas interpolados hasta 144 Hz.
+- **Memoria de Sesión:** Asignación y vinculación obligatoria de memoria de sesión en VRAM (`vkGetVideoSessionMemoryRequirementsKHR` y `vkBindVideoSessionMemoryKHR`) antes de iniciar decodificación para evitar `SIGSEGV`.
+
+### Motor 3: AMediaCodec AV1/HEVC + MediaTek Dimensity SR + APU Booster
+- **Tecnología:** HEVC / AV1 (Android MediaCodec) + MediaTek Dimensity Super-Resolution y APU Booster.
+- **Proceso:** Decodificación asíncrona de baja latencia con directivas exclusivas del silicio MediaTek (`vendor.mtk-ext-ai-sr.enable = 1`, `vendor.mtk-vdec-low-latency = 1`), permitiendo que el APU limpie macrobloques y ruido de compresión de forma asíncrona.
+
+### Motor 4: HWC2 Directo (`ASurfaceTransaction`) + LCEVC (MPEG-5 Part 2) Layer Enhancement
+- **Tecnología:** LCEVC (Capa Jerárquica de Mejora) + Hardware Composer 2 (`ASurfaceTransaction`).
+- **Proceso:** Flujo base 1080p decodificado por hardware; la capa de realce LCEVC se parcha en el compositor físico de pantalla con costo de CPU casi nulo.
+- **Blindaje EMFILE:** Extracción y cierre estricto de `releaseFenceFd` mediante `poll(&pfd, 1, 4)` y `close()` en el callback `onSurfaceTransactionComplete`, erradicando el crash a los 17 segundos.
+- **Blindaje Buffer Starvation:** `AHardwareBuffer_acquire` + `AImage_delete` inmediato + `AHardwareBuffer_release` tras el escaneo de SurfaceFlinger.
+
+### Motor 5: AMediaCodec + NPU NNAPI + Intel XeSS / DLSS 5.0 Generative AI Upscaling
+- **Tecnología:** Redes Neuronales de Reconstrucción Profunda (DLSS / XeSS emulado en NNAPI) + `AHardwareBuffer` Zero-Copy.
+- **Proceso:** Captura de `outputRgbaAhb` y derivación al grafo NNAPI compilado con `ANEURALNETWORKS_PREFER_SUSTAINED_SPEED`.
+- **Modo Adaptativo Híbrido:** Base universal en `ANEURALNETWORKS_TENSOR_QUANT8_ASYMM` y escalamiento dinámico a `ANEURALNETWORKS_TENSOR_FLOAT16` en SoCs de gama alta (Snapdragon 8 Gen / Google Tensor).
+- **Cierre del Grafo:** Invocación explícita de `ANeuralNetworksModel_finish` antes de compilar y presentación al plano `ASurfaceControl`.
+
+### Motor 6: EGLImageKHR + OpenGL ES 3.2 OES + Pyrowave GPU Compute Shaders / Lossless Scaling (LSFG)
+- **Tecnología:** Pyrowave (Compute Shaders en GPU) + Lossless Scaling Frame Generation (LSFG).
+- **Proceso:** Mapeo de `AHardwareBuffer` a textura `samplerExternalOES` vía `EGLImageKHR`; ejecución de shader laplaciano con paso de texel adaptativo `uTexelStep` e interpolación de cuadros por cómputo GLES/Vulkan hasta 120 FPS.
+- **Afinidad de Hilo EGL:** Desacople en hilo UI con `releaseContextFromUiThread` y vinculación en hilo de trabajo con `ensureBoundOnWorkerThread`, eliminando `EGL_BAD_ACCESS` y pantallas negras.
+
+---
+
+## 3. Cascada de Resiliencia Neuronal y Baja Latencia Absoluta
+
+Controlador maestro `MasterSixEngineFailSafeController` implementando la conmutación en caliente en menos de 2 milisegundos ante fallos de hardware o incompatibilidad de drivers:
+$$\text{Motor 3} \longrightarrow \text{Motor 4} \longrightarrow \text{Motor 5} \longrightarrow \text{Motor 6} \longrightarrow \text{Motor 1} \longrightarrow \text{Motor 2}$$
+
+- Mantiene el mismo `ANativeWindow*` y reinyecta automáticamente los parámetros SPS/PPS almacenados en caché.
+- Si un SoC de gama media no soporta 1440p nativo, auto-degradación transparente a 1080p HQ sin reiniciar la sesión.
+
+---
+
+## 4. Llaves de Latencia Ultra-Baja y Configuración Universal (`applyUltraQualityDecoderParameters`)
+
+Función transversal aplicada a los decodificadores de hardware:
+```cpp
+void applyUltraQualityDecoderParameters(AMediaFormat* fmt, bool force1440p) {
+    int targetW = force1440p ? 2560 : 1920;
+    int targetH = force1440p ? 1440 : 1080;
+    AMediaFormat_setInt32(fmt, AMEDIAFORMAT_KEY_WIDTH, targetW);
+    AMediaFormat_setInt32(fmt, AMEDIAFORMAT_KEY_HEIGHT, targetH);
+    AMediaFormat_setInt32(fmt, "low-latency", 1);
+    AMediaFormat_setInt32(fmt, "max-bframes", 0);
+    AMediaFormat_setInt32(fmt, "priority", 0);
+    AMediaFormat_setInt32(fmt, "operating-rate", 120);
+    AMediaFormat_setInt32(fmt, "vendor.qti-ext-dec-high-performance.enable", 1);
+    AMediaFormat_setInt32(fmt, "vendor.mtk-ext-dec-high-quality.enable", 1);
+    AMediaFormat_setInt32(fmt, "vendor.qti-ext-dec-max-bitrate.value", 50000000);
+    AMediaFormat_setInt32(fmt, "vendor.mtk-vdec-max-bitrate", 50000000);
+}
 ```
-┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                   PIPELINE DE STREAMING HOLÍSTICO NATIVO "GOD MODE"                              │
-└──────────────────────────────────────────────┬───────────────────────────────────────────────────┘
-                                               │
-     ┌───────────────────┬─────────────────────┼─────────────────────┬───────────────────┐
-     ▼                   ▼                     ▼                     ▼                   ▼
-┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│ ENRUTAMIENTO,   │ │ DECODIFICACIÓN  │ │ CONTROLADORES,  │ │ AUDIO OBOE,     │ │ SEGURIDAD,      │
-│ QoS & WATCHDOG  │ │ ZERO-COPY & GPU │ │ TOUCH & SPSC    │ │ SYNC & HAPTICS  │ │ AUDIT & GHOST   │
-│ (Ext. 1, 2, 3,5)│ │ (Ext. 6)        │ │ (Ext. 8)        │ │ (Ext. 4)        │ │ (Ext. 7, 9, 10) │
-├─────────────────┤ ├─────────────────┤ ├─────────────────┤ ├─────────────────┤ ├─────────────────┤
-│• DiffServ QoS   │ │• AMediaCodec    │ │• Ring Buffer    │ │• Oboe LowLatency│ │• Secure RAM     │
-│  EF 46 / AF41 34│ │  Zero-Copy HW   │ │  SPSC C++ 250Hz │ │  Adaptive Bursts│ │  Vault (C++ AES)│
-│• Wi-Fi WMM Lock │ │• EGL Fence Sync │ │• Kalman Filter  │ │• A/V Sync (PTS  │ │• Zero-Trace     │
-│• Buffer Bloat   │ │• Dynamic NN     │ │  Mouse Aiming   │ │  Compensación)  │ │  Shutdown Memset│
-│  dRTT/dt Mon.   │ │  Offload (>42°C)│ │• Touch De-jitter│ │• Opus PLC Audio │ │• Purga Caché    │
-│• ICE Watchdog   │ │• AChoreographer │ │  Zonas Muertas  │ │• 120Hz Biquad   │ │  en Frío        │
-│  SCTP (1200ms)  │ │  120Hz VSync    │ │  Elípticas      │ │  Audio Haptics  │ │• Ghost HUD Core │
-│• FlexFEC / NACK │ │• eglCleanBinding│ │• EMA Smoothing  │ │• Bluetooth Offs │ │  EGL Overlay    │
-└─────────────────┘ └─────────────────┘ └─────────────────┘ └─────────────────┘ └─────────────────┘
+
+---
+
+## 5. Blindaje de Red, Multiplexación y Protocolos de Sistema
+
+1. **Demultiplexor RFC 7983 (`XcloudSinglePortDemuxer`):** Clasificación del socket UDP según el primer byte:
+   - `0..3`: STUN
+   - `20..63`: DTLS
+   - `128..191` con PT 192..223: RTCP
+   - `128..191` con PT 96..127: RTP
+2. **Respondedor Automático STUN Consent (RFC 7675):** Respuesta inmediata (`0x0101`) a solicitudes `0x0001` con Magic Cookie `0x2112A442` en < 50 µs, impidiendo el corte de sesión a los 15 segundos.
+3. **Salto de Cabeceras de Extensión RTP RFC 8285 (`0xBEDE` / `0x1000`):** `stripRtpHeadersAndExtensions` que salta CSRCs, extensiones de 1 y 2 bytes y descarta bytes de padding al final del datagrama para entregar NALs intactas.
+4. **Handshake de Canales SCTP en Milisegundo Cero (`XcloudDataChannelBootstrapper`):** Despacho de `authorizationRequest`, `videoKeyframeRequested` y configuración de `systemUiIds` por los canales `control` y `message` para evitar el corte a los 5 segundos.
+5. **Espera de Estado `/state`:** Verificación continua hasta obtener `Provisioned` o `ReadyToConnect` antes de activar el enlace de medios.
+6. **Resolución Dinámica de Símbolos (`DynamicNdkSymbols`):** `dlsym` para APIs de `ASurfaceControl`, `ASurfaceTransaction`, `AMediaFormat_getRect` y NNAPI para compatibilidad total desde Android 8.0+.
+
+---
+
+## 6. HUD Hub de Ingeniería de Referencia (Telemetría Total)
+
+Superposición en VRAM sin impacto en el rendimiento:
+- **Vallas HWC2 y Descriptores:** Estado de `release_fence_fd`, latencia de poll y buffers retenidos.
+- **Monitor STUN Consent / ICE:** Conexión UDP y contador de keep-alives recibidos y respondidos.
+- **Telemetría de Red y Jitter Buffer:** RTT con filtro de Kalman, fluctuación y cola de paquetes en `BTreeMap`.
+- **Identificación del Motor Activo:** Motor en ejecución (1 al 6), estado del reescalado AI (Vulkan / HWC / NPU / GLES), resolución detectada (1440p / 1080p) y FPS reales.
+
+---
+
+## 7. Reglas de Preservación ProGuard
+
+```proguard
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+-keep class com.xcloud.godmode.streaming.** { *; }
+-keep class com.xcloud.godmode.bridge.** { *; }
+-keep class com.xcloud.godmode.models.** { *; }
 ```
 
 ---
 
-## 3. Plan Detallado de Implementación por Fases de Stream
+## Verificación
 
-### Fase 1: Señalización SDP, Priorización QoS DiffServ, Wi-Fi WMM y Watchdog ICE (Ext. 1, 2, 3 y 5)
-- **Componentes:** `app/src/main/cpp/stream/NativeStreamPipeline.cpp`, `app/src/main/java/com/xcloud/godmode/streaming/WebRTCStreamManager.kt` y `app/src/main/java/com/xcloud/godmode/streaming/AdaptiveBitrateController.kt`
-- **Tareas:**
-  1. **Marcado DiffServ QoS (DSCP / ToS):** Configurar en los sockets de transporte UDP de WebRTC: `DSCP 46 (EF)` para paquetes de entrada SCTP y voz; `DSCP 34 (AF41)` para video interactivo; y `DSCP 0 (BE)` para señalización auxiliar.
-  2. **Bloqueo Wi-Fi WMM de Ultra-Baja Latencia:** Invocar `WifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, ...)` al iniciar el stream para abatir la contención local en el router a <2 ms.
-  3. **Mitigación de Buffer Bloat:** Analizar la derivada temporal del RTT ($\frac{dRTT}{dt}$) junto al Packet Burst Tracing en reportes RTCP; ante aumentos silenciosos de cola, reducir preventivamente la tasa de bits 50 ms antes de la saturación.
-  4. **Watchdog de Enlace ICE/DTLS:** Inyectar heartbeats en DataChannel cada 500 ms. Si se detectan más de 1200 ms sin confirmación de tráfico, ejecutar automáticamente `peerConnection.restartIce()` en segundo plano sin destruir sockets ni sesión RPS en <1.2 s.
-  5. **Reescritor SDP Multi-Códec & FlexFEC-03:** Mutación estricta de SDP para priorizar VVC (RFC 9328), AV1, HEVC Main 10 HDR, LCEVC y H.264 SVC con inyección de `flexfec-03/90000` y retroalimentación reactiva (`nack`, `nack pli`, `transport-cc`, `goog-remb`). Descarte activo de candidatos TURN (`typ relay`) y mDNS (`.local`).
-
-### Fase 2: Pipeline Híbrido Zero-Copy, Fences EGL y Descarga Neuronal Térmica (Ext. 6)
-- **Componentes:** `app/src/main/cpp/NativeStreamBridge.cpp`, `app/src/main/cpp/stream/NativeStreamPipeline.cpp` y `app/src/main/java/com/xcloud/godmode/ui/screens/StreamScreen.kt`
-- **Tareas:**
-  1. **Decodificación Hardware Zero-Copy:** Vinculación directa de `AMediaCodec` asíncrono con `ANativeWindow` en modo VSync-Off / Latencia cero.
-  2. **Aislamiento de Ciclo de Vida EGL:** Invocación de `cleanupEglSurfaceBinding()` (`eglMakeCurrent(EGL_NO_SURFACE)`) al detener o pausar el stream, evitando el error `ANativeWindow already connected to another API`.
-  3. **Dynamic NN Scaler Offload (>42°C):** Monitoreo térmico mediante JNI; ante temperaturas elevadas del silicio, conmutar kernels de FSR a perfil "Lite" y pausar temporalmente LSFG para sostener 60 FPS sin caídas por *thermal throttling*.
-
-### Fase 3: Buffer SPSC a 250 Hz, Filtro Kalman y Touch De-jitter Elíptico (Ext. 8)
-- **Componentes:** `app/src/main/cpp/stream/NativeStreamPipeline.h`, `app/src/main/java/com/xcloud/godmode/streaming/NativeInputBridge.kt` y `app/src/main/java/com/xcloud/godmode/ui/components/GodModeTouchControlsOverlay.kt`
-- **Tareas:**
-  1. **Cola Circular SPSC Lock-Free C++20:** Estructura circular con alineación a 64 bytes (`alignas(64)`) y operaciones atómicas `acquire`/`release` para sondeo a 4 ms (250 Hz) sin contención de mutex.
-  2. **Filtro de Kalman para MKB:** Suavizado predictivo en `smoothMouseDelta` que elimina el micro-jitter del ratón sin introducir latencia de apuntado.
-  3. **Touch De-jitter Avanzado:** Filtro geométrico con zonas muertas concéntricas y elípticas adaptables por perfil, complementado por suavizado de trayectoria exponencial (EMA) para los joysticks virtuales.
-
-### Fase 4: Audio Oboe, Compensación A/V Bluetooth y Háptica Biquad (Ext. 4)
-- **Componentes:** `app/src/main/java/com/xcloud/godmode/audio/OboeAudioBridge.kt`, `app/src/main/cpp/godmode_ndk_engine.cpp` y `app/src/main/java/com/xcloud/godmode/haptics/UnifiedHapticTelemetricEngine.kt`
-- **Tareas:**
-  1. **Ráfagas Adaptativas Oboe:** Ajuste dinámico de buffers (64–256 muestras) en modo `PerformanceMode::LowLatency` con prioridad del kernel Linux `SCHED_FIFO`.
-  2. **A/V Sync Compensation Engine:** Medición del retardo en dispositivos Bluetooth (`PROPERTY_OUTPUT_FRAMES_PER_BUFFER`) y desfase temporal de PTS en video, manteniendo la sincronía audio/video en $\pm 5\text{ ms}$.
-  3. **Transducción Háptica Biquad (120 Hz) & PLC:** Filtro pasobajo para convertir frecuencias graves en vibración háptica, junto a Packet Loss Concealment (PLC) para evitar artefactos acústicos.
-
-### Fase 5: Ghost HUD de Telemetría, Bóveda Segura y Sanitización Zero-Trace (Ext. 7, 9 y 10)
-- **Componentes:** `app/src/main/java/com/xcloud/godmode/ui/components/GodModeTelemetryOverlay.kt`, `app/src/main/cpp/SecureRamVault.cpp`, `app/src/main/java/com/xcloud/godmode/streaming/WebRTCStreamManager.kt` y `app/src/main/cpp/stream/NativeStreamPipeline.cpp`
-- **Tareas:**
-  1. **Ghost HUD en Capa Gráfica Independiente:** Renderizado de métricas de diagnóstico (RTT, jitter, FPS, pérdida de paquetes, bitrate real y resolución) sobre superficie gráfica desacoplada (0.0% impacto en Compose).
-  2. **Secure RAM Vault en C++:** Cifrado simétrico AES-GCM en memoria nativa para credenciales y tokens volátiles XSTS/OAuth con claves de Android Keystore.
-  3. **Zero-Trace Shutdown:** Sobrescritura de memoria con ceros (`memset_s`) en buffers NDK (ANativeWindow, texturas EGL, SPSC Ring Buffers) al finalizar o interrumpir la transmisión.
-  4. **Purga de Caché en Frío:** Limpieza síncrona de particiones temporales de decodificación en `context.cacheDir` y `context.externalCacheDir`, imposibilitando la recuperación forense de datos o fotogramas en dispositivos compartidos.
-
-### Fase 6: Validación de Integridad, Compilación y Pruebas Unitarias
-- **Tareas:**
-  1. Verificación completa de compilación (`compile_applet`).
-  2. Pruebas unitarias de regresión (`gradle :app:testDebugUnitTest`).
-  3. Auditoría estricta de nombres y políticas: espacio de nombres canónico `com.xcloud.godmode.*` y erradicación total de marcas o repositorios de terceros.
-
----
-
-## 4. Garantía de Inmutabilidad y No Regresión
-- No se modificará ninguna interfaz de usuario, pantalla, tema, lanzador Cinema Hybrid ni navegación existente.
-- Toda modificación estará estrictamente contenida en los módulos de streaming (`.streaming`), audio/háptica (`.audio`, `.haptics`), seguridad volátil y los fuentes nativos C++20 en `app/src/main/cpp/`.
+1. **Compilación Limpia:** Ejecución de `compile_applet` en `arm64-v8a`, `armeabi-v7a` y `x86`.
+2. **Pruebas Locales:** Ejecución de `:app:testDebugUnitTest`.
+3. **Validación de Forzado a 1440p / 35-50 Mbps:** Comprobación del reordenamiento SDP, cabeceras `x-ms-device-info` y decodificación en los 6 motores.

@@ -94,7 +94,8 @@ data class SettingsModel(
     val uiSoundVolume: Int = 75,
 
     // Internal / Legacy
-    val selectedMotor: Int = 1,
+    val selectedMotor: Int = 3,
+    val enableAiUpscale: Boolean = true,
     val videoCodec: String = "HEVC / H.265", // Options: "AV1", "HEVC / H.265", "VVC / H.266", "AV2", "LCEVC / MPEG-5", "EVC", "AVS3", "NVC (Neural)", "VP9", "H.264 Baseline", "NVENC Ultra Low Latency", "Cloud G-Sync Direct"
     val maxBitrateMbps: Int = 50, // 15, 20, 30, 50, 75, 100, 150 (Ultra Uncapped)
     val audioChannelMode: String = "Stereo",
@@ -146,6 +147,8 @@ data class SettingsModel(
         json.put("fsrSharpness", fsrSharpness.toDouble())
         json.put("aspectRatio", aspectRatio)
         json.put("volumeBoostPercent", volumeBoostPercent)
+        json.put("selectedMotor", selectedMotor)
+        json.put("enableAiUpscale", enableAiUpscale)
         return json.toString(2)
     }
 
@@ -176,7 +179,9 @@ data class SettingsModel(
                 upscalerEngine = json.optString("upscalerEngine", defaults.upscalerEngine),
                 fsrSharpness = json.optDouble("fsrSharpness", defaults.fsrSharpness.toDouble()).toFloat(),
                 aspectRatio = json.optString("aspectRatio", defaults.aspectRatio),
-                volumeBoostPercent = json.optInt("volumeBoostPercent", defaults.volumeBoostPercent)
+                volumeBoostPercent = json.optInt("volumeBoostPercent", defaults.volumeBoostPercent),
+                selectedMotor = json.optInt("selectedMotor", defaults.selectedMotor),
+                enableAiUpscale = json.optBoolean("enableAiUpscale", defaults.enableAiUpscale)
             )
         }
     }

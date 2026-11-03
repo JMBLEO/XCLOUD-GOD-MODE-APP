@@ -250,7 +250,7 @@ class CatalogRepository(
                                 hydratedGames.add(parseGamePassProduct(prod))
                             }
                         } catch (e: Exception) {
-                            Log.e(TAG, "Chunk hydration error: ${e.message}")
+                            Log.w(TAG, "Chunk hydration notice: ${e.message}")
                         }
                     }
                 }

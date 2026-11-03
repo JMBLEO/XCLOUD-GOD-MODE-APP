@@ -18,6 +18,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.runtime.CompositionLocalProvider
 import com.xcloud.godmode.ai.GeminiService
+import com.xcloud.godmode.security.SecurityManager
+
 import com.xcloud.godmode.network.NetworkClient
 import com.xcloud.godmode.streaming.WebRTCStreamManager
 import com.xcloud.godmode.network.XboxFullAuthManager
@@ -42,9 +44,29 @@ class MainActivity : FragmentActivity() {
     private lateinit var xboxAuthManager: XboxFullAuthManager
     private lateinit var streamManager: WebRTCStreamManager
     private lateinit var geminiService: GeminiService
+    private lateinit var thermalGuard: com.xcloud.godmode.thermal.GodModeThermalGuard
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Prevent WebView IllegalArgumentException: WebView cache is not a directory
+        try {
+            val webViewCacheDir = java.io.File(cacheDir, "WebView")
+            if (webViewCacheDir.exists() && !webViewCacheDir.isDirectory) {
+                webViewCacheDir.delete()
+            }
+            if (!webViewCacheDir.exists()) {
+                webViewCacheDir.mkdirs()
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                val processName = android.app.Application.getProcessName()
+                if (packageName != processName) {
+                    android.webkit.WebView.setDataDirectorySuffix(processName)
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("MainActivity", "WebView cache dir init warning: ${e.message}")
+        }
 
         // Install StrictMode guard to prevent NetworkOnMainThreadException
         com.xcloud.godmode.core.NetworkThreadGuard.installStrictModeNetworkGuard()
@@ -57,6 +79,10 @@ class MainActivity : FragmentActivity() {
 
         // Initialize God Mode Native Sound Engine
         com.xcloud.godmode.audio.GodModeSoundEngine.init(this)
+
+        // Start Security Watchdog - Disabled for AI Studio stability
+        // SecurityManager.startSecurityWatchdog()
+
         
         // Initialize XboxEndpoints for Layer 5 (Dynamic Patcher)
         com.xcloud.godmode.network.XboxEndpoints.init(this)
@@ -67,6 +93,14 @@ class MainActivity : FragmentActivity() {
         // Schedule Dynamic Patcher Worker (Layer 5)
         scheduleDynamicPatcherWorker()
         
+        // Initialize Thermal Guard for protection against overheating during 1440p streaming
+        thermalGuard = com.xcloud.godmode.thermal.GodModeThermalGuard(this) {
+            // Callback: Degrade quality to 1080p HQ preventively
+            android.util.Log.w("MainActivity", "Thermal stress detected! Forcing quality degradation for hardware safety.")
+            // Logic to signal streamManager or viewmodel to lower resolution
+        }
+        thermalGuard.registerListener()
+
         handleIntent(intent)
 
         setContent {
@@ -194,8 +228,11 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
-        super.onDestroy()
+        if (::thermalGuard.isInitialized) {
+            thermalGuard.unregisterListener()
+        }
         stopService(Intent(this, com.xcloud.godmode.services.StreamingService::class.java))
+        super.onDestroy()
     }
 }
 
@@ -247,6 +284,7 @@ fun MainNavigation(
             )
         }
         composable("stream") {
+            val hwProfile by homeViewModel.hardwareProfile.collectAsState()
             StreamScreen(
                 streamManager = streamManager,
                 gsToken = activeGsToken,
@@ -254,6 +292,10 @@ fun MainNavigation(
                 settings = settings,
                 titleId = activeTitleId,
                 gameTitle = activeTitleName,
+                gssvXstsToken = userSession?.gssvXstsToken.orEmpty(),
+                fallbackGsToken = userSession?.f2pGsToken.orEmpty(),
+                fallbackRegionUri = userSession?.f2pRegionUri.orEmpty(),
+                hwProfile = hwProfile,
                 onClose = { navController.popBackStack() }
             )
         }

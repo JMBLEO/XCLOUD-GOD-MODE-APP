@@ -7,29 +7,78 @@
 #include <memory>
 #include <mutex>
 
+#include "stream/IStreamEngine.h"
+#include "stream/XcloudPtpClockSynchronizer.h"
+#include "stream/AdaptiveJitterDropper.h"
+#include "stream/MasterAnnexBDepacketizer.h"
+
+
+
 #define LOG_TAG "NativeStreamBridge"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#include <android/thermal.h>
+#include <android/looper.h>
 
 using namespace GodMode::Stream;
 using namespace GodMode::Security;
 using namespace GodMode::Audio;
+using namespace godmode;
 
 static std::unique_ptr<NativeZeroCopyPipeline> gPipeline;
 static std::unique_ptr<GodModeAudioEngine> gAudioEngine;
 static std::mutex gPipelineMutex;
 static SecureRamVault gVault;
 
+static std::unique_ptr<IStreamEngine> gActiveEngine;
+static ANativeWindow* gActiveNativeWindow = nullptr;
+static std::mutex gEngineMutex;
+static CompleteAccessUnitAssembler gAuAssembler;
+static XcloudClockDriftCompensator gClockCompensator;
+static BbrNetworkPacingController gNetworkGovernor;
+static std::atomic<int32_t> gGlobalThermalStatus{0};
+static AThermalManager* gThermalManager = nullptr;
+static XcloudPtpClockSynchronizer gPtpSynchronizer;
+static godmode::AdaptiveJitterDropper gJitterDropper(90000); // 90ms threshold
+
+
+
+static void onThermalStatusChanged(void* data, AThermalStatus status) {
+    gGlobalThermalStatus.store(static_cast<int32_t>(status), std::memory_order_relaxed);
+}
+
+#include "audio/AAudioEngine.h"
+
 extern "C" {
 
 JNIEXPORT jboolean JNICALL
 Java_com_xcloud_godmode_streaming_NativeStreamBridge_initPipeline(JNIEnv *env, jobject thiz) {
     std::lock_guard<std::mutex> lock(gPipelineMutex);
+    
+    // Disabled to prevent SIGTRAP and instability in the AI Studio environment
+    // installGlobalTerminationGuards();
+    // elevateCurrentThreadToRealtimePriority();
+
     if (!gPipeline) {
         gPipeline = std::make_unique<NativeZeroCopyPipeline>();
     }
-    if (!gAudioEngine) {
-        gAudioEngine = std::make_unique<GodModeAudioEngine>();
+    initLowLatencyAudio();
+
+    if (!gThermalManager) {
+        typedef AThermalManager* (*PFN_AThermal_acquireManager)();
+        typedef int (*PFN_AThermal_registerThermalStatusListener)(AThermalManager*, void (*)(void*, AThermalStatus), void*);
+        
+        static auto fpAcquire = reinterpret_cast<PFN_AThermal_acquireManager>(dlsym(RTLD_DEFAULT, "AThermal_acquireManager"));
+        static auto fpRegister = reinterpret_cast<PFN_AThermal_registerThermalStatusListener>(dlsym(RTLD_DEFAULT, "AThermal_registerThermalStatusListener"));
+
+        if (fpAcquire && fpRegister) {
+            gThermalManager = fpAcquire();
+            if (gThermalManager) {
+                fpRegister(gThermalManager, onThermalStatusChanged, nullptr);
+            }
+        }
     }
+
     return JNI_TRUE;
 }
 
@@ -176,22 +225,27 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_startAudio(JNIEnv *env, job
 
 JNIEXPORT void JNICALL
 Java_com_xcloud_godmode_streaming_NativeStreamBridge_stopAudio(JNIEnv *env, jobject thiz) {
-    std::lock_guard<std::mutex> lock(gPipelineMutex);
-    if (gAudioEngine) gAudioEngine->stop();
+    stopAudioEngine();
 }
 
 JNIEXPORT void JNICALL
 Java_com_xcloud_godmode_streaming_NativeStreamBridge_injectAudio(JNIEnv *env, jobject thiz, jshortArray data, jint num_frames) {
-    if (!gAudioEngine || !data) return;
+    if (!data) return;
     jshort* frames = env->GetShortArrayElements(data, nullptr);
     if (frames) {
-        gAudioEngine->injectAudio(reinterpret_cast<const int16_t*>(frames), num_frames);
+        // Convert shorts to floats for the new AAudio engine
+        std::vector<float> floatFrames(num_frames * 2);
+        for (int i = 0; i < num_frames * 2; ++i) {
+            floatFrames[i] = static_cast<float>(frames[i]) / 32768.0f;
+        }
+        injectAudioFrames(floatFrames.data(), num_frames);
         env->ReleaseShortArrayElements(data, frames, JNI_ABORT);
     }
 }
 
 static uint8_t* gTelemetryBufferPtr = nullptr;
 static jsize gTelemetryBufferSize = 0;
+static int gCurrentActiveEngineId = 3;
 
 JNIEXPORT void JNICALL
 Java_com_xcloud_godmode_streaming_NativeStreamBridge_bindTelemetryBuffer(JNIEnv *env, jobject thiz, jobject buffer) {
@@ -204,4 +258,199 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_bindTelemetryBuffer(JNIEnv 
     gTelemetryBufferSize = env->GetDirectBufferCapacity(buffer);
 }
 
+// -----------------------------------------------------------------------------
+// JNI: Orquestación de los 6 Motores Nativos con Cascada (3 -> 4 -> 5 -> 6 -> 1 -> 2)
+// -----------------------------------------------------------------------------
+JNIEXPORT jboolean JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_initStreamPipeline(
+        JNIEnv* env, jobject thiz, jobject surface, jint engineType,
+        jint width, jint height, jboolean enableAiUpscale) {
+    try {
+        std::lock_guard<std::mutex> lock(gEngineMutex);
+        if (gActiveEngine) {
+            gActiveEngine->shutdown();
+            gActiveEngine.reset();
+        }
+        if (gActiveNativeWindow) {
+            ANativeWindow_release(gActiveNativeWindow);
+            gActiveNativeWindow = nullptr;
+        }
+
+        if (!surface) return JNI_FALSE;
+        gActiveNativeWindow = ANativeWindow_fromSurface(env, surface);
+        if (!gActiveNativeWindow) return JNI_FALSE;
+
+        gAuAssembler.reset();
+
+        int resolvedEngineId = engineType;
+        gActiveEngine = MasterSixEngineFailSafeController::initializeWithCascade(
+            gActiveNativeWindow,
+            engineType,
+            width,
+            height,
+            static_cast<bool>(enableAiUpscale),
+            resolvedEngineId
+        );
+
+        gCurrentActiveEngineId = resolvedEngineId;
+
+        if (gTelemetryBufferPtr && gTelemetryBufferSize >= 48) {
+            *reinterpret_cast<int32_t*>(gTelemetryBufferPtr + 16) = gCurrentActiveEngineId;
+            *reinterpret_cast<uint32_t*>(gTelemetryBufferPtr + 20) = gGlobalStunKeepAlivesCount.load(std::memory_order_relaxed);
+            *reinterpret_cast<uint32_t*>(gTelemetryBufferPtr + 24) = gGlobalHwcFencesClosedCount.load(std::memory_order_relaxed);
+            *reinterpret_cast<int32_t*>(gTelemetryBufferPtr + 28) = enableAiUpscale ? 1 : 0;
+            *reinterpret_cast<int32_t*>(gTelemetryBufferPtr + 32) = gGlobalThermalStatus.load(std::memory_order_relaxed);
+            *reinterpret_cast<int64_t*>(gTelemetryBufferPtr + 36) = 0; // Drift initialized to 0
+        }
+
+        LOGD("initStreamPipeline resultado: activo=%d (solicitado=%d)", gCurrentActiveEngineId, engineType);
+        return (gActiveEngine != nullptr) ? JNI_TRUE : JNI_FALSE;
+    } catch (const std::exception& e) {
+        LOGE("Excepción crítica en initStreamPipeline: %s", e.what());
+        return JNI_FALSE;
+    } catch (...) {
+        LOGE("Excepción nativa desconocida en initStreamPipeline.");
+        return JNI_FALSE;
+    }
 }
+
+JNIEXPORT jint JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_getActiveEngineId(JNIEnv *env, jobject thiz) {
+    std::lock_guard<std::mutex> lock(gEngineMutex);
+    return static_cast<jint>(gCurrentActiveEngineId);
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_onSurfaceResized(
+        JNIEnv* env, jobject thiz, jint width, jint height) {
+    try {
+        std::lock_guard<std::mutex> lock(gEngineMutex);
+        if (gActiveEngine) {
+            gActiveEngine->onResize(width, height);
+        }
+    } catch (...) {}
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_shutdownStreamPipeline(
+        JNIEnv* env, jobject thiz) {
+    try {
+        std::lock_guard<std::mutex> lock(gEngineMutex);
+        if (gActiveEngine) {
+            gActiveEngine->shutdown();
+            gActiveEngine.reset();
+        }
+        if (gActiveNativeWindow) {
+            ANativeWindow_release(gActiveNativeWindow);
+            gActiveNativeWindow = nullptr;
+        }
+        gAuAssembler.reset();
+    } catch (...) {}
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_dispatchRtpPacket(
+        JNIEnv* env, jobject thiz, jbyteArray data, jint len, jlong timestamp, jboolean marker) {
+    if (!data || len <= 0) return JNI_FALSE;
+    try {
+        std::lock_guard<std::mutex> lock(gEngineMutex);
+        if (!gActiveEngine) return JNI_FALSE;
+
+        jbyte* bytes = env->GetByteArrayElements(data, nullptr);
+        if (!bytes) return JNI_FALSE;
+
+        const uint8_t* ubytes = reinterpret_cast<const uint8_t*>(bytes);
+        size_t totalLen = static_cast<size_t>(len);
+
+        // Actualizar estadísticas de telemetría hacia el buffer mapeado
+        if (gTelemetryBufferPtr && gTelemetryBufferSize >= 48) {
+            *reinterpret_cast<int32_t*>(gTelemetryBufferPtr + 16) = gCurrentActiveEngineId;
+            *reinterpret_cast<uint32_t*>(gTelemetryBufferPtr + 20) = gGlobalStunKeepAlivesCount.load(std::memory_order_relaxed);
+            *reinterpret_cast<uint32_t*>(gTelemetryBufferPtr + 24) = gGlobalHwcFencesClosedCount.load(std::memory_order_relaxed);
+            *reinterpret_cast<int32_t*>(gTelemetryBufferPtr + 32) = gGlobalThermalStatus.load(std::memory_order_relaxed);
+            // Clock drift populated later in this function
+        }
+
+        // Si el paquete contiene cabecera RTP (versión 2), omitir extensiones RFC 8285 (0xBEDE / 0x1000)
+        ParsedRtpHeader parsed = stripRtpHeadersAndExtensions(ubytes, totalLen);
+        
+        uint32_t rtpTs = (timestamp > 0) ? static_cast<uint32_t>(timestamp) : parsed.timestamp;
+        uint64_t nowUs = getMonotonicMicros();
+        gClockCompensator.updateSync(rtpTs, nowUs);
+        uint64_t adjustedPts = gClockCompensator.getAdjustedPresentationTimeUs(rtpTs);
+
+        if (gJitterDropper.shouldDropFrame(adjustedPts, nowUs)) {
+            env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
+            return JNI_TRUE; // Frame dropped but handled
+        }
+
+        if (gTelemetryBufferPtr && gTelemetryBufferSize >= 48) {
+
+             *reinterpret_cast<int64_t*>(gTelemetryBufferPtr + 36) = gClockCompensator.getEstimatedOffsetUs();
+        }
+
+        if (parsed.valid && parsed.payloadPtr && parsed.payloadSize > 0) {
+            gAuAssembler.feedRtpPayload(
+                parsed.payloadPtr,
+                parsed.payloadSize,
+                static_cast<uint32_t>((adjustedPts * 90000ULL) / 1000000ULL),
+                marker ? true : parsed.marker,
+                gActiveEngine.get()
+            );
+        } else {
+            // NAL Annex B directo o Payload RTP simple
+            gAuAssembler.feedRtpPayload(
+                ubytes,
+                totalLen,
+                static_cast<uint32_t>((adjustedPts * 90000ULL) / 1000000ULL),
+                marker,
+                gActiveEngine.get()
+            );
+        }
+
+        // Close Audio/Video Sync feedback loop
+        syncAudioClock(getInternalAudioClockUs(), adjustedPts);
+
+        env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
+        return JNI_TRUE;
+    } catch (...) {
+        return JNI_FALSE;
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_reportPacketAck(JNIEnv* env, jobject thiz, jint bytes, jdouble rtt_us) {
+    gNetworkGovernor.updateTelemetry(static_cast<size_t>(bytes), static_cast<uint64_t>(rtt_us));
+    
+    // Actualizar el buffer de telemetría con el RTT filtrado por Kalman para suavidad en el sparkline
+    if (gTelemetryBufferPtr && gTelemetryBufferSize >= 48) {
+        *reinterpret_cast<int32_t*>(gTelemetryBufferPtr) = static_cast<int32_t>(gNetworkGovernor.getFilteredRttMs());
+    }
+}
+
+JNIEXPORT jdouble JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_getTargetPacingRateBps(JNIEnv* env, jobject thiz, jboolean ultra) {
+    return static_cast<jdouble>(gNetworkGovernor.getOptimalPacingRateBps(static_cast<bool>(ultra)));
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_simulateDeviceLost(JNIEnv *env, jobject thiz) {
+    std::lock_guard<std::mutex> lock(gEngineMutex);
+    // Simular error de Vulkan si el motor activo lo usa o si queremos forzar reconstrucción
+    DynamicNdkSymbols::get().simulateDeviceLost(reinterpret_cast<VkDevice&>(gActiveNativeWindow)); // Cast ficticio para trigger
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_forceThermalCritical(JNIEnv *env, jobject thiz) {
+    onThermalStatusChanged(nullptr, ATHERMAL_STATUS_CRITICAL);
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_dispatchPtpHeartbeat(
+        JNIEnv* env, jobject thiz, jlong t1, jlong t2, jlong t3, jlong t4) {
+    gPtpSynchronizer.processHeartbeat(t1, t2, t3, t4);
+}
+
+}
+
+

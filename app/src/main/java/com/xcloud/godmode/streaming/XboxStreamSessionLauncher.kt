@@ -22,11 +22,11 @@ sealed class StreamLaunchPhase {
         val serverSdpOfferOrAnswer: String,
         val serverIceCandidates: List<String>
     ) : StreamLaunchPhase()
-    data class FallbackToWebViewMotor2(val targetPlayUrl: String, val reason: String) : StreamLaunchPhase()
+    data class RequiresLogin(val reason: String) : StreamLaunchPhase()
     data class Failed(
         val title: String,
         val technicalDetail: String,
-        val canFallbackToMotor2: Boolean = true
+        val canFallbackToMotor2: Boolean = false
     ) : StreamLaunchPhase()
 }
 
@@ -110,20 +110,16 @@ class XboxStreamSessionLauncher {
         try {
             // 1. Validación preventiva de sesión (Evita gsToken == null)
             if (session == null) {
-                val webFallbackUrl = RegionBypassWebViewHelper.buildSupportedPlayUrl(productId, "es-MX")
-                _phase.value = StreamLaunchPhase.FallbackToWebViewMotor2(
-                    targetPlayUrl = webFallbackUrl,
-                    reason = "Sin token GSSV nativo activo: conmutando automáticamente a Motor 2 (WebView)."
+                _phase.value = StreamLaunchPhase.RequiresLogin(
+                    reason = "Sin sesión activa: inicia sesión en tu cuenta de Xbox para comenzar."
                 )
                 return@withContext
             }
 
             val gsToken = if (isXHomeConsole) session.xHomeGsToken else session.xCloudGsToken
             if (gsToken.isNullOrBlank()) {
-                val webFallbackUrl = RegionBypassWebViewHelper.buildSupportedPlayUrl(productId, "es-MX")
-                _phase.value = StreamLaunchPhase.FallbackToWebViewMotor2(
-                    targetPlayUrl = webFallbackUrl,
-                    reason = "La cuenta actual no tiene gsToken para este modo. Abriendo en Motor 2."
+                _phase.value = StreamLaunchPhase.RequiresLogin(
+                    reason = "La cuenta actual no tiene gsToken activo para este modo de juego."
                 )
                 return@withContext
             }
@@ -293,7 +289,7 @@ class XboxStreamSessionLauncher {
             _phase.value = StreamLaunchPhase.Failed(
                 title = "No se pudo iniciar el Stream",
                 technicalDetail = safeReason,
-                canFallbackToMotor2 = true
+                canFallbackToMotor2 = false
             )
         }
     }

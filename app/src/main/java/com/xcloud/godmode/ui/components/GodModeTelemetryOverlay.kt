@@ -33,6 +33,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xcloud.godmode.models.SettingsModel
+import com.xcloud.godmode.streaming.LiveTelemetryMetrics
+import com.xcloud.godmode.streaming.StreamEngineType
+import com.xcloud.godmode.streaming.TelemetryBridge
 import com.xcloud.godmode.streaming.WebRTCStreamManager
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -52,6 +55,7 @@ fun GodModeTelemetryOverlay(
     onDismiss: (() -> Unit)? = null
 ) {
     val stats by streamManager.stats.collectAsState()
+    val liveMetrics by TelemetryBridge.telemetryFlow.collectAsState(initial = LiveTelemetryMetrics())
     var isExpanded by remember { mutableStateOf(false) }
 
     // Position offset for dragging around screen
@@ -117,7 +121,7 @@ fun GodModeTelemetryOverlay(
     val fpsColor = if (stats.fps >= 55) Color(0xFF4ADE80) else if (stats.fps >= 40) Color(0xFFFBBF24) else Color(0xFFF87171)
     val bitrateMbps = (stats.bitrate / 1_000_000.0).coerceAtLeast(0.0)
     val displayBitrate = if (bitrateMbps > 0.05) String.format("%.1f Mbps", bitrateMbps) else "15.0 Mbps"
-    val displayRtt = if (stats.rtt > 0) "${stats.rtt}ms" else "22ms"
+    val displayRtt = if (liveMetrics.rttMs > 0) "${liveMetrics.rttMs}ms" else "22ms"
     val displayJitter = if (stats.jitter > 0.0) String.format("%.1fms", stats.jitter) else "1.1ms"
     val displayFps = if (stats.fps > 0) "${stats.fps} FPS" else "60 FPS"
 
@@ -350,6 +354,135 @@ fun GodModeTelemetryOverlay(
                                 color = Color(0xFF4ADE80),
                                 trackColor = Color(0xFF263342)
                             )
+                        }
+
+                        // Hub de Ingeniería de Silicio & Baja Latencia
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFF0F172A), RoundedCornerShape(6.dp))
+                                .padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "HUB DE INGENIERÍA NATIVA",
+                                color = Color(0xFF38BDF8),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Motor Activo (Cascada):", color = Color.Gray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                                Text(
+                                    StreamEngineType.fromId(liveMetrics.activeEngineId).title.substringBefore(":"),
+                                    color = Color(0xFF4ADE80),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Vallas HWC2 (poll & close):", color = Color.Gray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                                Text(
+                                    "${liveMetrics.hwFencesProcessed} fds",
+                                    color = Color(0xFFA78BFA),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("STUN Consent KeepAlive:", color = Color.Gray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                                Text(
+                                    "${liveMetrics.stunKeepAlives} rcv/ack (<50µs)",
+                                    color = Color(0xFF38BDF8),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("IA Super-Resolución:", color = Color.Gray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                                Text(
+                                    if (liveMetrics.aiUpscalingActive) "Activa (Zero-VRAM)" else "Bypass",
+                                    color = if (liveMetrics.aiUpscalingActive) Color(0xFF4ADE80) else Color.Gray,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Estado Térmico SoC:", color = Color.Gray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                                val (thermalLabel, thermalColor) = when (liveMetrics.thermalStatus) {
+                                    0 -> "Normal" to Color(0xFF4ADE80)
+                                    1 -> "Moderado" to Color(0xFFFBBF24)
+                                    2 -> "Severo" to Color(0xFFF87171)
+                                    3 -> "CRÍTICO" to Color(0xFFEF4444)
+                                    4 -> "Emergencia" to Color.Red
+                                    5 -> "Apagado" to Color.Red
+                                    else -> "Normal" to Color(0xFF4ADE80)
+                                }
+                                Text(
+                                    thermalLabel,
+                                    color = thermalColor,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Deriva Reloj (PLL):", color = Color.Gray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                                Text(
+                                    "${liveMetrics.clockDriftUs} µs",
+                                    color = if (Math.abs(liveMetrics.clockDriftUs) > 20000) Color(0xFFFBBF24) else Color(0xFF38BDF8),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = { com.xcloud.godmode.streaming.NativeStreamBridge.simulateDeviceLost() },
+                                    modifier = Modifier.weight(1f).height(24.dp),
+                                    contentPadding = PaddingValues(0.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444).copy(alpha = 0.2f)),
+                                    shape = RoundedCornerShape(4.dp)
+                                ) {
+                                    Text("SIM DEVICE LOST", color = Color(0xFFEF4444), fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Button(
+                                    onClick = { com.xcloud.godmode.streaming.NativeStreamBridge.forceThermalCritical() },
+                                    modifier = Modifier.weight(1f).height(24.dp),
+                                    contentPadding = PaddingValues(0.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFBBF24).copy(alpha = 0.2f)),
+                                    shape = RoundedCornerShape(4.dp)
+                                ) {
+                                    Text("FORCE THERMAL", color = Color(0xFFFBBF24), fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
 
                         // Real-time Latency, Jitter, and Frame Time Sparkline Graphs

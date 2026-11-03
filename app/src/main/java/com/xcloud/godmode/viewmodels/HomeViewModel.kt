@@ -18,6 +18,8 @@ import com.xcloud.godmode.services.StreamSessionHolder
 import com.xcloud.godmode.network.TokenVaultManager
 import com.xcloud.godmode.network.XboxFullAuthManager
 import com.xcloud.godmode.network.XboxSessionProfile
+import com.xcloud.godmode.hardware.DeviceHardwareProfile
+import com.xcloud.godmode.hardware.HardwareCapabilityProfiler
 import androidx.datastore.preferences.core.longPreferencesKey
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -89,6 +91,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     // Settings
     private val _settings = MutableStateFlow(SettingsModel())
     val settings: StateFlow<SettingsModel> = _settings.asStateFlow()
+
+    // Hardware Profile
+    private val _hardwareProfile = MutableStateFlow<DeviceHardwareProfile?>(null)
+    val hardwareProfile: StateFlow<DeviceHardwareProfile?> = _hardwareProfile.asStateFlow()
 
     // Chameleon Engine Color
     private val _chameleonColor = MutableStateFlow(Color(0xFF107C10)) // Default Xbox Green
@@ -725,6 +731,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         saveSession(null)
     }
     init {
+        val profiler = HardwareCapabilityProfiler(context)
+        _hardwareProfile.value = profiler.scanDeviceAndFilterEngines()
+        
         loadGames()
         loadSession()
         startControllerDetection()

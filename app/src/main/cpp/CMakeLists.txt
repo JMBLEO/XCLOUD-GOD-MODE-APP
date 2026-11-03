@@ -25,12 +25,16 @@ add_library(godmode_native SHARED
         stream/RtpH265Depacketizer.cpp
         stream/RtpAV1Depacketizer.cpp
         stream/RtpVVCDepacketizer.cpp
+        stream/MultiEngineStreamCore.cpp
         audio/GodModeAudioEngine.cpp
         audio/AAudioEngine.cpp
         bridge/BluetoothNativeBridge.cpp
         audio_engine.cpp
         native_streamer.cpp
         scheduler_manager.cpp
+        SecurityWatchdog.cpp
+        HardwareProfiler.cpp
+        ConsoleHardwareBridge.cpp
 )
 
 # Include directories
