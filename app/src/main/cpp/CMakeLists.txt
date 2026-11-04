@@ -11,6 +11,9 @@ find_library(mediandk-lib mediandk)
 # Find Oboe for low-latency audio
 find_package(oboe REQUIRED CONFIG)
 
+# Try to find OpenSSL
+find_package(OpenSSL)
+
 # Add the main native library
 add_library(godmode_native SHARED
         NativeStreamBridge.cpp
@@ -35,7 +38,12 @@ add_library(godmode_native SHARED
         SecurityWatchdog.cpp
         HardwareProfiler.cpp
         ConsoleHardwareBridge.cpp
+        stream/UnifiedZeroCopyStreamReactor.cpp
+        stream/NativeIceDtlsSrtpBridge.cpp
 )
+
+# Link zlib for STUN fingerprint CRC32
+find_library(z-lib z)
 
 # Include directories
 target_include_directories(godmode_native PRIVATE
@@ -54,4 +62,10 @@ target_link_libraries(godmode_native
         GLESv3
         aaudio
         vulkan
+        ${z-lib}
 )
+
+if (OPENSSL_FOUND)
+    target_link_libraries(godmode_native PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    target_compile_definitions(godmode_native PRIVATE GM_HAS_OPENSSL=1)
+endif()

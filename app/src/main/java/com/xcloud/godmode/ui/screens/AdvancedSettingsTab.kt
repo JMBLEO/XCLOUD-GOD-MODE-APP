@@ -563,7 +563,7 @@ fun AdvancedSettingsTab(
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
-                                text = "Pipeline en silicio directo (Zero-Copy). Cero WebView, decodificación por hardware de ultra-baja latencia y post-procesado NPU/GPU.",
+                                text = "Pipeline en silicio directo (Zero-Copy). Direct Native Sockets, decodificación por hardware de ultra-baja latencia y post-procesado NPU/GPU.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.LightGray
                             )

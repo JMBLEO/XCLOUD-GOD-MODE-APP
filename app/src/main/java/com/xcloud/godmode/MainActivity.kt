@@ -21,7 +21,7 @@ import com.xcloud.godmode.ai.GeminiService
 import com.xcloud.godmode.security.SecurityManager
 
 import com.xcloud.godmode.network.NetworkClient
-import com.xcloud.godmode.streaming.WebRTCStreamManager
+import com.xcloud.godmode.streaming.NativeStreamPipelineManager
 import com.xcloud.godmode.network.XboxFullAuthManager
 import com.xcloud.godmode.ui.screens.HomeScreen
 import com.xcloud.godmode.ui.screens.StreamScreen
@@ -42,31 +42,12 @@ class MainActivity : FragmentActivity() {
 
     private lateinit var networkClient: NetworkClient
     private lateinit var xboxAuthManager: XboxFullAuthManager
-    private lateinit var streamManager: WebRTCStreamManager
+    private lateinit var streamManager: NativeStreamPipelineManager
     private lateinit var geminiService: GeminiService
     private lateinit var thermalGuard: com.xcloud.godmode.thermal.GodModeThermalGuard
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Prevent WebView IllegalArgumentException: WebView cache is not a directory
-        try {
-            val webViewCacheDir = java.io.File(cacheDir, "WebView")
-            if (webViewCacheDir.exists() && !webViewCacheDir.isDirectory) {
-                webViewCacheDir.delete()
-            }
-            if (!webViewCacheDir.exists()) {
-                webViewCacheDir.mkdirs()
-            }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                val processName = android.app.Application.getProcessName()
-                if (packageName != processName) {
-                    android.webkit.WebView.setDataDirectorySuffix(processName)
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.w("MainActivity", "WebView cache dir init warning: ${e.message}")
-        }
 
         // Install StrictMode guard to prevent NetworkOnMainThreadException
         com.xcloud.godmode.core.NetworkThreadGuard.installStrictModeNetworkGuard()
@@ -74,7 +55,7 @@ class MainActivity : FragmentActivity() {
         // Initialize Network with DoH for bypass
         networkClient = NetworkClient(enableDoh = true)
         xboxAuthManager = XboxFullAuthManager(networkClient)
-        streamManager = WebRTCStreamManager(this, networkClient)
+        streamManager = NativeStreamPipelineManager(this, networkClient)
         geminiService = GeminiService()
 
         // Initialize God Mode Native Sound Engine
@@ -239,7 +220,7 @@ class MainActivity : FragmentActivity() {
 @Composable
 fun MainNavigation(
     authManager: XboxFullAuthManager,
-    streamManager: WebRTCStreamManager,
+    streamManager: NativeStreamPipelineManager,
     geminiService: GeminiService,
     homeViewModel: HomeViewModel
 ) {

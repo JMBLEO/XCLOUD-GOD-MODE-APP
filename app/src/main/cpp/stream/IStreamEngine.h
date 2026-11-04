@@ -39,7 +39,7 @@
 
 namespace GodMode::Stream {
 
-// Enum estricto de los seis motores nativos (Estado 0: Cero WebView)
+// Enum estricto de los seis motores nativos (Estado 0: Pure Native Pipeline)
 enum class StreamEngineType : int {
     ENGINE_1_RUST_SECURE_VULKAN = 1,          // Rust Zero-Trust + OpenH264/rav1d + Vulkan
     ENGINE_2_VULKAN_VIDEO_ASIC = 2,           // Vulkan Video Hardware Direct (VK_KHR_video_decode_queue)
@@ -565,12 +565,16 @@ public:
 // -----------------------------------------------------------------------------
 enum class BbrMode { STARTUP, DRAIN, PROBE_BW, PROBE_RTT };
 
-class BbrNetworkPacingController {
+class BbrNanoCongestionController {
 private:
     BbrMode mode = BbrMode::STARTUP;
     double maxBandwidthBps = 15000000.0;
     uint64_t minRttUs = UINT64_MAX;
     std::chrono::steady_clock::time_point lastAckTime = std::chrono::steady_clock::now();
+    
+    // CWND (Congestion Window) in bytes
+    size_t cwnd = 100000; // Initial CWND
+    size_t inFlightBytes = 0;
     
     // Filtro de Kalman para el RTT (Jitter removal)
     double kalmanEstimate = 20.0;
@@ -585,7 +589,17 @@ private:
     uint32_t startupCount = 0;
 
 public:
-    void updateTelemetry(size_t bytesAcked, uint64_t rttUs) {
+    void process_packet_sent(size_t size) {
+        inFlightBytes += size;
+    }
+
+    void process_ack(size_t bytesAcked, uint64_t rttUs) {
+        if (bytesAcked > inFlightBytes) {
+            inFlightBytes = 0;
+        } else {
+            inFlightBytes -= bytesAcked;
+        }
+
         // 1. Kalman RTT Filtering
         double measurement = static_cast<double>(rttUs) / 1000.0;
         double predEst = kalmanEstimate;
@@ -603,17 +617,21 @@ public:
         std::chrono::duration<double> elapsed = now - lastAckTime;
         lastAckTime = now;
 
-        if (elapsed.count() > 0.001) {
+        if (elapsed.count() > 0.0005) { // 500us resolution
             double instantBw = (static_cast<double>(bytesAcked) * 8.0) / elapsed.count();
             if (instantBw > maxBandwidthBps) {
                 maxBandwidthBps = instantBw;
             } else {
                 // Suavizado EMA para bajadas
-                maxBandwidthBps = maxBandwidthBps * 0.98 + instantBw * 0.02;
+                maxBandwidthBps = maxBandwidthBps * 0.95 + instantBw * 0.05;
             }
         }
 
-        // 3. State Machine Transitions
+        // 3. Update BDP (Bandwidth Delay Product) and CWND
+        double bdp = (maxBandwidthBps * (static_cast<double>(minRttUs) / 1000000.0)) / 8.0;
+        cwnd = static_cast<size_t>(bdp * 2.0); // CWND = 2 * BDP for high throughput
+
+        // 4. State Machine Transitions
         updateStateMachine();
     }
 
@@ -644,12 +662,10 @@ public:
 private:
     void updateStateMachine() {
         if (mode == BbrMode::STARTUP) {
-            if (filledPipe) {
+            startupCount++;
+            if (startupCount > 50) { // Heurística simple de pipe lleno
                 mode = BbrMode::DRAIN;
             }
-            // Heurística simple de pipe lleno: 3 samples sin crecimiento > 25%
-            startupCount++;
-            if (startupCount > 50) filledPipe = true;
         } else if (mode == BbrMode::DRAIN) {
             // Salir de DRAIN cuando el RTT baje al mínimo (buffer vacío)
             if (kalmanEstimate < (static_cast<double>(minRttUs)/1000.0 * 1.1)) {

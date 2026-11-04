@@ -10,7 +10,7 @@ import androidx.core.app.NotificationCompat
 import com.xcloud.godmode.R
 
 /**
- * StreamingService is a Foreground Service that keeps the WebRTC stream alive
+ * StreamingService is a Foreground Service that keeps the native stream alive
  * even when the app is in the background or in Picture-in-Picture mode.
  */
 class StreamingService : Service() {

@@ -17,6 +17,7 @@ class SecureRamVault {
 private:
     std::mutex vaultMutex;
     std::vector<uint8_t> encryptedPayload;
+    uint8_t rollingXorKey = 0xAA;
     bool isLocked = true;
 
     // Secure zeroing memory function
@@ -25,6 +26,12 @@ private:
         volatile uint8_t* p = static_cast<volatile uint8_t*>(ptr);
         while (size--) {
             *p++ = 0;
+        }
+    }
+
+    void applyXorObfuscation(uint8_t* data, size_t size) {
+        for (size_t i = 0; i < size; ++i) {
+            data[i] ^= (rollingXorKey ^ static_cast<uint8_t>(i & 0xFF));
         }
     }
 
@@ -39,6 +46,7 @@ public:
         purgeInternal();
         if (data && size > 0) {
             encryptedPayload.assign(data, data + size);
+            applyXorObfuscation(encryptedPayload.data(), size);
             isLocked = false;
         }
     }
@@ -51,6 +59,7 @@ public:
         }
         outLen = encryptedPayload.size();
         std::memcpy(outData, encryptedPayload.data(), outLen);
+        applyXorObfuscation(outData, outLen); // De-obfuscate
         return true;
     }
 

@@ -16,7 +16,7 @@ import org.json.JSONObject
 sealed class StreamLaunchPhase {
     object Idle : StreamLaunchPhase()
     data class Initializing(val detail: String, val queueWaitSeconds: Int? = null) : StreamLaunchPhase()
-    data class ReadyForWebRtc(
+    data class ReadyForNativeStream(
         val sessionId: String,
         val sessionPath: String,
         val serverSdpOfferOrAnswer: String,
@@ -201,7 +201,7 @@ class XboxStreamSessionLauncher {
             )
 
             // 6. Negociación SDP
-            _phase.value = StreamLaunchPhase.Initializing("Negociando descriptores multimedia WebRTC (SDP)...")
+            _phase.value = StreamLaunchPhase.Initializing("Negociando descriptores multimedia nativos (SDP)...")
             val localSdpOffer = createLocalSdpOffer()
             val sdpPostBody = JSONObject().apply {
                 put("messageType", "offer")
@@ -269,11 +269,11 @@ class XboxStreamSessionLauncher {
 
             val cleanRemoteCandidates = parseAndStripAEqualsPrefix(iceRespJson)
 
-            // 8. Entregar SDP y Candidatos ICE al motor WebRTC / NDK
+            // 8. Entregar SDP y Candidatos ICE al pipeline nativo NDK
             _phase.value = StreamLaunchPhase.Initializing("Conectando flujo de video a superficie Zero-Copy...")
             applyRemoteSdpAndIce(remoteSdp, cleanRemoteCandidates, validSurface)
 
-            _phase.value = StreamLaunchPhase.ReadyForWebRtc(
+            _phase.value = StreamLaunchPhase.ReadyForNativeStream(
                 sessionId = sessionPath.substringAfterLast("/"),
                 sessionPath = sessionPath,
                 serverSdpOfferOrAnswer = remoteSdp,

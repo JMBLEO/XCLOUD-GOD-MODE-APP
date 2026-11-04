@@ -877,7 +877,7 @@ object AzureBypassConfig {
     }
 
     /**
-     * Resolves the actual IP string to send in HTTP X-Forwarded-For headers or WebRTC routing.
+     * Resolves the actual IP string to send in HTTP X-Forwarded-For headers or native socket routing.
      * Returns null or empty string if bypass is disabled.
      */
     fun resolveEffectiveBypassIp(settings: SettingsModel): String? {

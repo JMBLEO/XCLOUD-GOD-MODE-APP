@@ -7,6 +7,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withTimeoutOrNull
@@ -24,7 +28,7 @@ sealed class StreamLaunchState {
     data class Authenticating(val step: String) : StreamLaunchState()
     data class InQueue(val waitTimeSeconds: Int, val elapsedSeconds: Int) : StreamLaunchState()
     data class Provisioning(val serverState: String, val regionName: String) : StreamLaunchState()
-    data class NegotiatingWebRtc(val step: String) : StreamLaunchState()
+    data class NegotiatingTunnel(val step: String) : StreamLaunchState()
     data class StreamingActive(val sessionPath: String, val regionBaseUri: String) : StreamLaunchState()
     data class Failed(
         val reason: String,
@@ -47,7 +51,8 @@ data class GssvSessionConfig(
     val gssvXstsToken: String? = null,
     val fallbackGsToken: String? = null,
     val fallbackRegionUri: String? = null,
-    val offeringId: String = "xgpuweb"
+    val offeringId: String = "xgpuweb",
+    val enableIPv6: Boolean = true
 )
 
 class GssvSignalingOrchestrator(
@@ -56,6 +61,8 @@ class GssvSignalingOrchestrator(
     private val TAG = "GssvSignalingOrchestrator"
     private val _launchState = MutableStateFlow<StreamLaunchState>(StreamLaunchState.Idle)
     val launchState: StateFlow<StreamLaunchState> = _launchState
+
+    private var keepaliveJob: Job? = null
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
@@ -116,7 +123,7 @@ class GssvSignalingOrchestrator(
 
     suspend fun startCloudStream(
         config: GssvSessionConfig?,
-        streamManager: WebRTCStreamManager
+        streamManager: NativeStreamPipelineManager
     ) = withContext(Dispatchers.IO) {
         // 1. VALIDACIÓN ESTRICTA DE SESIÓN (Evita abrir reproductor en negro sin login)
         if (config == null || config.gsToken.isBlank()) {
@@ -134,6 +141,24 @@ class GssvSignalingOrchestrator(
             if (validSurface == null) {
                 Log.w(TAG, "Superficie de hardware no entregada a tiempo, procediendo con inicialización de red...")
             }
+
+            // 2. AUTO-APPLY GAME PROFILE (Room DB & Predefined Presets per GameID)
+            val profileManager = com.xcloud.godmode.services.GameProfileManager(streamManager.context)
+            val gameProfile = profileManager.getProfile(config.titleId, "")
+
+            val (effectiveWidth, effectiveHeight) = when {
+                gameProfile.resolutionOverride.contains("1440") || gameProfile.resolutionOverride.contains("2K") -> 2560 to 1440
+                gameProfile.resolutionOverride.contains("4K") || gameProfile.resolutionOverride.contains("2160") -> 3840 to 2160
+                gameProfile.resolutionOverride.contains("1080") -> 1920 to 1080
+                gameProfile.resolutionOverride.contains("720") -> 1280 to 720
+                else -> config.targetWidth to config.targetHeight
+            }
+            val effectiveBitrateKbps = gameProfile.targetBitrateKbps.coerceIn(15000, 50000)
+
+            // Auto-compensate audio lip-sync clock drift
+            NativeStreamBridge.setPtsOffsetUs(gameProfile.audioPtsOffsetUs)
+
+            Log.i(TAG, "[Signaling Phase] GameID '${config.titleId}' detectado. Auto-aplicando GameProfile: Res=${gameProfile.resolutionOverride} (${effectiveWidth}x${effectiveHeight}), Bitrate=${effectiveBitrateKbps}kbps, Motor=${gameProfile.preferredEngineId}, Shader=${gameProfile.shaderPreset}, AI Preset=${gameProfile.aiOptimizationPreset}, BBR Ultra=${gameProfile.bbrUltraPacing}")
 
             var currentGsToken = config.gsToken
             var currentRegionBaseUri = config.regionBaseUri.trimEnd('/')
@@ -176,7 +201,7 @@ class GssvSignalingOrchestrator(
                 }
 
                 // Resolver TitleID real para el offering activo
-                val resolvedTitleId = resolveTitleId(currentRegionBaseUri, currentGsToken, config.titleId)
+                val resolvedTitleId = resolveTitleId(currentRegionBaseUri, currentGsToken, config.titleId, effectiveWidth, effectiveHeight)
                     ?: config.titleId.takeIf { it.isNotBlank() && it != "null" }
                     ?: "9NKX70BBCDRN"
 
@@ -196,8 +221,8 @@ class GssvSignalingOrchestrator(
                         put("sdkType", "native")
                         put("osName", "windows")
                         put("osVersion", "22631.2715")
-                        put("screenWidth", config.targetWidth)
-                        put("screenHeight", config.targetHeight)
+                        put("screenWidth", effectiveWidth)
+                        put("screenHeight", effectiveHeight)
                     })
                     put("serverId", "")
                     put("fallbackRegionNames", JSONArray())
@@ -206,7 +231,7 @@ class GssvSignalingOrchestrator(
                 val playReqBuilder = Request.Builder()
                     .url("$currentRegionBaseUri/v5/sessions/cloud/play")
                     .addHeader("Authorization", "Bearer $currentGsToken")
-                    .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
+                    .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(effectiveWidth, effectiveHeight))
                     .addHeader("x-gssv-client", "XboxNative")
                     .post(playPayload.toString().toRequestBody(jsonMediaType))
 
@@ -259,7 +284,7 @@ class GssvSignalingOrchestrator(
                 val stateReq = Request.Builder()
                     .url("$currentRegionBaseUri/$sessionPath/state")
                     .addHeader("Authorization", "Bearer $currentGsToken")
-                    .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
+                    .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(effectiveWidth, effectiveHeight))
                     .get()
                     .build()
 
@@ -298,7 +323,7 @@ class GssvSignalingOrchestrator(
                                 .url("$currentRegionBaseUri/$sessionPath/connect")
                                 .addHeader("Authorization", "Bearer $currentGsToken")
                                 .addHeader("Content-Type", "application/json")
-                                .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
+                                .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(effectiveWidth, effectiveHeight))
                                 .post(connectBody.toRequestBody(jsonMediaType))
                                 .build()
                             httpClient.newCall(connectReq).execute().close()
@@ -306,6 +331,38 @@ class GssvSignalingOrchestrator(
                     }
                     "Provisioned" -> {
                         isReady = true
+                        // Extracción de configuración de sesión (/configuration): accessKey y llaves directas SRTP
+                        try {
+                            val configReq = Request.Builder()
+                                .url("$currentRegionBaseUri/$sessionPath/configuration")
+                                .addHeader("Authorization", "Bearer $currentGsToken")
+                                .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(effectiveWidth, effectiveHeight))
+                                .get()
+                                .build()
+                            httpClient.newCall(configReq).execute().use { configRes ->
+                                if (configRes.isSuccessful) {
+                                    val configBody = configRes.body?.string().orEmpty()
+                                    if (configBody.isNotBlank()) {
+                                        val configJson = JSONObject(configBody)
+                                        val serverDetails = configJson.optJSONObject("serverDetails")
+                                        val accessKey = serverDetails?.optString("accessKey")
+                                        if (!accessKey.isNullOrBlank()) {
+                                            streamManager.setAccessKey(accessKey)
+                                            Log.i(TAG, "Configuración xCloud: accessKey dinámica obtenida: $accessKey")
+                                        }
+                                        val srtpObj = serverDetails?.optJSONObject("srtp")
+                                        val srtpKey = srtpObj?.optString("key")
+                                        val srtpSalt = srtpObj?.optString("salt")
+                                        if (!srtpKey.isNullOrBlank() && !srtpSalt.isNullOrBlank()) {
+                                            NativeStreamBridge.injectDirectSrtpKeys(srtpKey, srtpSalt)
+                                            Log.i(TAG, "Configuración xCloud: Llaves maestras SRTP directas inyectadas")
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Consulta /configuration omitida o no disponible: ${e.message}")
+                        }
                     }
                     "Failed", "Cancelled" -> {
                         val errDetails = stateJson.optJSONObject("errorDetails")
@@ -318,17 +375,22 @@ class GssvSignalingOrchestrator(
             }
 
             // 5. GENERACIÓN Y ENVÍO DE SDP OFFER
-            _launchState.value = StreamLaunchState.NegotiatingWebRtc("Generando oferta SDP y abriendo canales SCTP...")
+            _launchState.value = StreamLaunchState.NegotiatingTunnel("Generando oferta SDP y abriendo canales SCTP...")
             
-            val localSdpOffer = streamManager.createOfferSync(
-                targetWidth = config.targetWidth,
-                targetHeight = config.targetHeight,
-                maxBitrateKbps = 20000
+            val rawSdpOffer = streamManager.createOfferSync(
+                targetWidth = effectiveWidth,
+                targetHeight = effectiveHeight,
+                maxBitrateKbps = effectiveBitrateKbps
             ) ?: throw IllegalStateException("Fallo al generar oferta SDP local")
+
+            // Sanitización extrema de SDP para Azure: Eliminar msid/mslabel y forzar tie-breaker
+            val sdpOffer = rawSdpOffer.lines().filter {
+                !it.contains("a=msid:") && !it.contains("a=mslabel:")
+            }.joinToString("\r\n")
 
             val sdpPostPayload = JSONObject().apply {
                 put("messageType", "offer")
-                put("sdp", localSdpOffer)
+                put("sdp", sdpOffer)
                 put("requestId", 1)
                 put("configuration", JSONObject().apply {
                     put("chatConfiguration", JSONObject().apply {
@@ -348,23 +410,25 @@ class GssvSignalingOrchestrator(
             val sdpReq = Request.Builder()
                 .url("$currentRegionBaseUri/$sessionPath/sdp")
                 .addHeader("Authorization", "Bearer $currentGsToken")
-                .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
+                .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(effectiveWidth, effectiveHeight))
                 .post(sdpPostPayload.toString().toRequestBody(jsonMediaType))
                 .build()
 
             httpClient.newCall(sdpReq).execute().close()
 
             // 6. POLLING DE SDP ANSWER DEL SERVIDOR (Tolerando HTTP 204 No Content y respuestas vacías)
-            _launchState.value = StreamLaunchState.NegotiatingWebRtc("Esperando respuesta SDP de Xbox Cloud...")
+            _launchState.value = StreamLaunchState.NegotiatingTunnel("Esperando respuesta SDP de Xbox Cloud...")
             var remoteSdpApplied = false
             var sdpAttempts = 0
+            var currentRemoteSdp = ""
+            
             while (!remoteSdpApplied && sdpAttempts < 35) {
                 sdpAttempts++
                 val sdpGetRes = httpClient.newCall(
                     Request.Builder()
                         .url("$currentRegionBaseUri/$sessionPath/sdp")
                         .addHeader("Authorization", "Bearer $currentGsToken")
-                        .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
+                        .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(effectiveWidth, effectiveHeight))
                         .get()
                         .build()
                 ).execute()
@@ -374,12 +438,21 @@ class GssvSignalingOrchestrator(
                     if (sdpBody.isNotBlank()) {
                         val exchangeJson = JSONObject(sdpBody)
                         val exchangeResponseStr = exchangeJson.optString("exchangeResponse")
+                        
+                        // DOBLE PARSEO CRÍTICO: Deserializar el JSON escapado dentro de exchangeResponse
                         val sdpStr = if (exchangeResponseStr.isNotBlank()) {
-                            JSONObject(exchangeResponseStr).optString("sdp")
+                            try {
+                                JSONObject(exchangeResponseStr).optString("sdp")
+                            } catch (e: Exception) {
+                                // Fallback si no es un objeto JSON (algunas regiones devuelven solo SDP en el string)
+                                exchangeResponseStr
+                            }
                         } else {
                             exchangeJson.optString("sdp")
                         }
+                        
                         if (sdpStr.isNotBlank()) {
+                            currentRemoteSdp = sdpStr
                             streamManager.setRemoteDescriptionSync(sdpStr)
                             remoteSdpApplied = true
                         }
@@ -388,28 +461,33 @@ class GssvSignalingOrchestrator(
                     // HTTP 204 No Content es esperado mientras la máquina virtual procesa la oferta SDP
                 }
                 sdpGetRes.close()
-                if (!remoteSdpApplied) delay(1000)
+                if (!remoteSdpApplied) delay(200)
             }
 
             if (!remoteSdpApplied) {
                 throw IllegalStateException("Timeout esperando respuesta SDP del servidor Xbox")
             }
 
-            // 7. INTERCAMBIO DE CANDIDATOS ICE (Limpiando prefijo "a=")
-            _launchState.value = StreamLaunchState.NegotiatingWebRtc("Negociando ruta directa ICE (DTLS 1.2)...")
+            // 7. INTERCAMBIO DE CANDIDATOS ICE (Limpiando prefijo "a=", filtrando Teredo y Double-Parsing)
+            _launchState.value = StreamLaunchState.NegotiatingTunnel("Negociando ruta directa ICE (DTLS 1.2)...")
             
             delay(1000) 
             val localCandidates = streamManager.getLocalCandidates()
+            
+            // Randomized 64-bit tie-breaker (simulado por un long aleatorio)
+            val tieBreaker = java.util.Random().nextLong().toString()
+
             val icePostPayload = JSONObject().apply {
                 put("messageType", "iceCandidate")
                 put("requestId", 2)
                 put("candidates", JSONArray(localCandidates))
+                put("tieBreaker", tieBreaker)
             }
 
             val icePostReq = Request.Builder()
                 .url("$currentRegionBaseUri/$sessionPath/ice")
                 .addHeader("Authorization", "Bearer $currentGsToken")
-                .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
+                .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(effectiveWidth, effectiveHeight))
                 .post(icePostPayload.toString().toRequestBody(jsonMediaType))
                 .build()
 
@@ -418,13 +496,16 @@ class GssvSignalingOrchestrator(
             // Polling de candidatos ICE remotos (Tolerando HTTP 204)
             var remoteIceDone = false
             var iceRetry = 0
+            var finalRemoteIp = ""
+            var finalRemotePort = 0
+            
             while (!remoteIceDone && iceRetry < 25) {
                 iceRetry++
                 val iceGetRes = httpClient.newCall(
                     Request.Builder()
                         .url("$currentRegionBaseUri/$sessionPath/ice")
                         .addHeader("Authorization", "Bearer $currentGsToken")
-                        .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(config.targetWidth, config.targetHeight))
+                        .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(effectiveWidth, effectiveHeight))
                         .get()
                         .build()
                 ).execute()
@@ -434,30 +515,69 @@ class GssvSignalingOrchestrator(
                     if (iceBody.isNotBlank()) {
                         val iceJson = JSONObject(iceBody)
                         val exchangeResponseStr = iceJson.optString("exchangeResponse")
-                        val candidatesArr = when {
-                            exchangeResponseStr.trim().startsWith("[") -> JSONArray(exchangeResponseStr)
-                            exchangeResponseStr.trim().startsWith("{") -> JSONObject(exchangeResponseStr).optJSONArray("candidates")
-                            else -> iceJson.optJSONArray("candidates")
-                        }
-                        if (candidatesArr != null && candidatesArr.length() > 0) {
-                            // Limpiar prefijo "a=" de cada candidato
-                            val cleanCandidates = JSONArray()
-                            for (i in 0 until candidatesArr.length()) {
-                                val item = candidatesArr.optJSONObject(i)
-                                if (item != null) {
-                                    val rawCandidate = item.optString("candidate", "")
-                                    val cleanCandidate = if (rawCandidate.startsWith("a=")) rawCandidate.substring(2) else rawCandidate
-                                    val newItem = JSONObject(item.toString())
-                                    newItem.put("candidate", cleanCandidate)
-                                    cleanCandidates.put(newItem)
+                        
+                        // DOBLE PARSEO CRÍTICO: El campo exchangeResponse contiene un string con el JSON de candidatos
+                        val candidatesArr = if (exchangeResponseStr.isNotBlank()) {
+                            try {
+                                val innerVal = if (exchangeResponseStr.trim().startsWith("[")) {
+                                    JSONArray(exchangeResponseStr)
                                 } else {
-                                    val rawCandidate = candidatesArr.optString(i, "")
-                                    val cleanCandidate = if (rawCandidate.startsWith("a=")) rawCandidate.substring(2) else rawCandidate
-                                    cleanCandidates.put(cleanCandidate)
+                                    JSONObject(exchangeResponseStr).optJSONArray("candidates")
                                 }
+                                innerVal as? JSONArray
+                            } catch (e: Exception) { null }
+                        } else {
+                            iceJson.optJSONArray("candidates")
+                        }
+
+                        if (candidatesArr != null && candidatesArr.length() > 0) {
+                            // Estrategia de Selección Óptima: Priorizar IPv6 Native Host > IPv4 Host > Relay
+                            val evaluatedCandidates = mutableListOf<Triple<JSONObject, Int, String>>()
+
+                            for (i in 0 until candidatesArr.length()) {
+                                val item = candidatesArr.optJSONObject(i) ?: continue
+                                val rawCandidate = item.optString("candidate", "").trim()
+                                
+                                if (rawCandidate.isBlank() || rawCandidate.contains("end-of-candidates")) continue
+                                
+                                val cleanCandidate = if (rawCandidate.startsWith("a=")) rawCandidate.substring(2) else rawCandidate
+                                if (cleanCandidate.contains("2001:0:", ignoreCase = true)) continue // Filter Teredo
+
+                                // Calcular puntuación de preferencia
+                                var score = 0
+                                val isIpv6 = cleanCandidate.contains(":") && !cleanCandidate.contains(".")
+                                val isHost = cleanCandidate.contains("typ host", ignoreCase = true)
+                                val isSrflx = cleanCandidate.contains("typ srflx", ignoreCase = true)
+
+                                if (isIpv6) score += 1000 // Máxima prioridad a IPv6 (No NAT)
+                                if (isHost) score += 500  // Preferir conexión directa
+                                if (isSrflx) score += 200 // NAT Transversal público
+
+                                evaluatedCandidates.add(Triple(item, score, cleanCandidate))
                             }
-                            streamManager.addRemoteIceCandidatesSync(cleanCandidates)
-                            remoteIceDone = true
+
+                            // Ordenar por puntuación descendente
+                            val sortedCandidates = evaluatedCandidates.sortedByDescending { it.second }
+                            
+                            val cleanCandidates = JSONArray()
+                            for (eval in sortedCandidates) {
+                                val newItem = JSONObject(eval.first.toString())
+                                newItem.put("candidate", eval.third)
+                                cleanCandidates.put(newItem)
+                                Log.d("GssvSignaling", "Evaluated ICE Candidate: Score=${eval.second}, Candidate=${eval.third}")
+                            }
+
+                            if (cleanCandidates.length() > 0) {
+                                val bestCandidate = sortedCandidates.first()
+                                val parts = bestCandidate.third.split(" ")
+                                if (parts.size >= 6) {
+                                    finalRemoteIp = parts[4]
+                                    finalRemotePort = parts[5].toInt()
+                                }
+                                
+                                streamManager.addRemoteIceCandidatesSync(cleanCandidates)
+                                remoteIceDone = true
+                            }
                         }
                     }
                 } else if (iceGetRes.code == 204) {
@@ -465,12 +585,36 @@ class GssvSignalingOrchestrator(
                 }
                 iceGetRes.close()
                 if (!remoteIceDone) {
-                    delay(800)
+                    delay(200)
                 }
             }
 
-            // 8. TRANSICIÓN A STREAM ACTIVO
+            // 8. TRANSICIÓN A STREAM ACTIVO Y ARRANQUE DEL REACTOR NATIVO (ESTADO 0)
             _launchState.value = StreamLaunchState.StreamingActive(sessionPath, currentRegionBaseUri)
+
+            if (finalRemoteIp.isNotBlank()) {
+                // Extraer ufrag/pwd del SDP remoto
+                // Necesitamos el sdpStr que se obtuvo en el paso 6
+                // Lo declararemos fuera del bucle en el paso 6 para que esté disponible aquí.
+                
+                val remoteUfrag = extractSdpAttribute(currentRemoteSdp, "a=ice-ufrag:") ?: ""
+                val remotePwd = extractSdpAttribute(currentRemoteSdp, "a=ice-pwd:") ?: ""
+                val localUfrag = extractSdpAttribute(sdpOffer, "a=ice-ufrag:") ?: "godmode-client"
+
+                Log.i(TAG, "God Mode Reactor: Iniciando sobre $finalRemoteIp:$finalRemotePort (IPv6=${finalRemoteIp.contains(":")})")
+                
+                NativeStreamBridge.startNativeReactor(
+                    remoteIp = finalRemoteIp,
+                    remotePort = finalRemotePort,
+                    remoteUfrag = remoteUfrag,
+                    remotePwd = remotePwd,
+                    localUfrag = localUfrag,
+                    enableIPv6 = config.enableIPv6
+                )
+            }
+
+            // 9. INICIAR PULSO KEEPALIVE (POST /keepalive)
+            startKeepaliveLoop(currentRegionBaseUri, sessionPath, currentGsToken)
 
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -483,6 +627,35 @@ class GssvSignalingOrchestrator(
                 canFallbackToMotor2 = false
             )
         }
+    }
+
+    private fun startKeepaliveLoop(baseUri: String, sessionPath: String, token: String) {
+        keepaliveJob?.cancel()
+        // Use a background scope for the heartbeat
+        keepaliveJob = CoroutineScope(Dispatchers.IO).launch {
+            while (isActive) {
+                try {
+                    val req = Request.Builder()
+                        .url("$baseUri/$sessionPath/keepalive")
+                        .addHeader("Authorization", "Bearer $token")
+                        .post("{}".toRequestBody(jsonMediaType))
+                        .build()
+                    httpClient.newCall(req).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            Log.w(TAG, "Keepalive failed: ${response.code}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in keepalive loop", e)
+                }
+                delay(30_000L) // Azure default pulse is 30s
+            }
+        }
+    }
+
+    fun stopSignaling() {
+        keepaliveJob?.cancel()
+        keepaliveJob = null
     }
 
     private fun isLikelyFreeToPlay(titleIdOrName: String): Boolean {
@@ -532,6 +705,7 @@ class GssvSignalingOrchestrator(
             .addHeader("Content-Type", "application/json")
             .addHeader("Accept", "application/json")
             .addHeader("x-gssv-client", "XboxNative")
+            .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(1920, 1080)) // Default for login
             .post(payload.toString().toRequestBody(jsonMediaType))
 
         if (!bypassIp.isNullOrBlank()) {
@@ -571,14 +745,14 @@ class GssvSignalingOrchestrator(
         }
     }
 
-    private fun resolveTitleId(baseRegionUri: String, gsToken: String, productIdOrTitleId: String): String? {
+    private fun resolveTitleId(baseRegionUri: String, gsToken: String, productIdOrTitleId: String, width: Int = 1920, height: Int = 1080): String? {
         if (productIdOrTitleId.isBlank() || productIdOrTitleId == "null") return null
         val req = Request.Builder()
             .url("${baseRegionUri.trimEnd('/')}/v2/titles")
             .addHeader("Authorization", "Bearer $gsToken")
             .addHeader("Accept", "application/json")
             .addHeader("x-gssv-client", "XboxNative")
-            .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(1920, 1080))
+            .addHeader("X-MS-Device-Info", buildDeviceInfoHeader(width, height))
             .build()
 
         return try {
@@ -623,5 +797,12 @@ class GssvSignalingOrchestrator(
         } catch (_: Exception) {
             rawBody.take(120)
         }
+    }
+
+    private fun extractSdpAttribute(sdp: String, attributePrefix: String): String? {
+        return sdp.lines()
+            .firstOrNull { it.trim().startsWith(attributePrefix) }
+            ?.substringAfter(attributePrefix)
+            ?.trim()
     }
 }

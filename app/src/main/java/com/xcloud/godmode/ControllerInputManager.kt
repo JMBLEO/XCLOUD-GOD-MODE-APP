@@ -3,7 +3,7 @@ package com.xcloud.godmode
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
-import com.xcloud.godmode.streaming.WebRTCStreamManager
+import com.xcloud.godmode.streaming.NativeStreamPipelineManager
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -11,7 +11,7 @@ import java.nio.ByteOrder
  * ControllerInputManager: Manages multiple gamepads and motion sensors.
  * Translates Android inputs into the binary protocol expected by Xbox Cloud Gaming.
  */
-class ControllerInputManager(private val streamManager: WebRTCStreamManager) {
+class ControllerInputManager(private val streamManager: NativeStreamPipelineManager) {
 
     private val activeGamepads = mutableMapOf<Int, Int>() // deviceId -> slot (0-3)
     private var gyroSensitivity = 1.0f

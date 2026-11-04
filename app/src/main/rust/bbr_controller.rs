@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::cmp;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -9,11 +9,17 @@ pub enum BbrMode {
     ProbeRtt,
 }
 
-pub struct BbrPacingController {
+/// BbrNanoCongestionController: High-performance packet pacing and congestion control
+/// for 1440p/120FPS cloud gaming. Optimized for low-latency UDP transport.
+pub struct BbrNanoCongestionController {
     mode: BbrMode,
     max_bandwidth_bps: f64,
     min_rtt_us: u64,
     last_ack_time: Instant,
+    
+    // CWND (Congestion Window) in bytes
+    cwnd: usize,
+    in_flight_bytes: usize,
     
     // Kalman Filter for Jitter-Free RTT
     kalman_estimate: f64,
@@ -26,15 +32,20 @@ pub struct BbrPacingController {
     pacing_gains: [f64; 8],
     filled_pipe: bool,
     startup_count: u32,
+    
+    // Pacing metrics
+    target_pacing_rate_bps: f64,
 }
 
-impl BbrPacingController {
+impl BbrNanoCongestionController {
     pub fn new() -> Self {
         Self {
             mode: BbrMode::Startup,
             max_bandwidth_bps: 15_000_000.0,
             min_rtt_us: u64::MAX,
             last_ack_time: Instant::now(),
+            cwnd: 100_000, // Initial CWND
+            in_flight_bytes: 0,
             kalman_estimate: 20.0,
             kalman_error_cov: 1.0,
             q: 0.1,
@@ -43,11 +54,25 @@ impl BbrPacingController {
             pacing_gains: [1.25, 0.75, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
             filled_pipe: false,
             startup_count: 0,
+            target_pacing_rate_bps: 15_000_000.0,
         }
     }
 
-    pub fn update_telemetry(&mut self, bytes_acked: usize, rtt_us: u64) {
-        // 1. Kalman Filtering for RTT
+    /// Process a packet being sent to update the in-flight state.
+    pub fn process_packet_sent(&mut self, size: usize) {
+        self.in_flight_bytes += size;
+    }
+
+    /// Process an acknowledgment from the server.
+    /// This updates the bandwidth estimation and RTT filtering.
+    pub fn process_ack(&mut self, bytes_acked: usize, rtt_us: u64) {
+        if bytes_acked > self.in_flight_bytes {
+            self.in_flight_bytes = 0;
+        } else {
+            self.in_flight_bytes -= bytes_acked;
+        }
+
+        // 1. Kalman Filtering for RTT (Jitter removal)
         let measurement = rtt_us as f64 / 1000.0;
         let pred_est = self.kalman_estimate;
         let pred_cov = self.kalman_error_cov + self.q;
@@ -65,23 +90,28 @@ impl BbrPacingController {
         let elapsed = now.duration_since(self.last_ack_time).as_secs_f64();
         self.last_ack_time = now;
 
-        if elapsed > 0.001 {
+        if elapsed > 0.0005 { // 500us resolution
             let instant_bw = (bytes_acked as f64 * 8.0) / elapsed;
             if instant_bw > self.max_bandwidth_bps {
                 self.max_bandwidth_bps = instant_bw;
             } else {
-                self.max_bandwidth_bps = self.max_bandwidth_bps * 0.98 + instant_bw * 0.02;
+                // EMA smoothing for BW dips
+                self.max_bandwidth_bps = self.max_bandwidth_bps * 0.95 + instant_bw * 0.05;
             }
         }
 
-        // 3. State Machine Transitions
+        // 3. Update BDP (Bandwidth Delay Product) and CWND
+        let bdp = (self.max_bandwidth_bps * (self.min_rtt_us as f64 / 1_000_000.0)) / 8.0;
+        self.cwnd = (bdp * 2.0) as usize; // CWND = 2 * BDP for high throughput
+
+        // 4. State Machine Transitions
         self.update_state_machine();
     }
 
-    pub fn get_optimal_pacing_rate_bps(&self, ultra_1440p: bool) -> u64 {
+    pub fn get_target_pacing_rate_bps(&self, ultra_1440p: bool) -> f64 {
         let gain = match self.mode {
-            BbrMode::Startup => 2.89,
-            BbrMode::Drain => 0.35,
+            BbrMode::Startup => 2.89, // Aggressive growth
+            BbrMode::Drain => 0.35,   // Drain the queue
             BbrMode::ProbeBw => self.pacing_gains[self.cycle_index],
             BbrMode::ProbeRtt => 1.0,
         };
@@ -90,18 +120,15 @@ impl BbrPacingController {
         let ceiling = if ultra_1440p { 55_000_000.0 } else { 35_000_000.0 };
         let floor = 6_000_000.0;
 
-        base.clamp(floor, ceiling) as u64
+        base.clamp(floor, ceiling)
     }
 
     fn update_state_machine(&mut self) {
         match self.mode {
             BbrMode::Startup => {
-                if self.filled_pipe {
-                    self.mode = BbrMode::Drain;
-                }
                 self.startup_count += 1;
-                if self.startup_count > 50 {
-                    self.filled_pipe = true;
+                if self.startup_count > 50 { // simplified filled pipe detection
+                    self.mode = BbrMode::Drain;
                 }
             },
             BbrMode::Drain => {
@@ -113,7 +140,6 @@ impl BbrPacingController {
                 self.cycle_index = (self.cycle_index + 1) % 8;
             },
             BbrMode::ProbeRtt => {
-                // Return to BW probing after measuring min RTT
                 self.mode = BbrMode::ProbeBw;
             }
         }

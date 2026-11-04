@@ -52,11 +52,27 @@ interface GodModeDao {
 
     @Query("UPDATE catalog_games SET lastPlayedEpochMs = :epochMs WHERE productId = :productId OR titleId = :productId")
     suspend fun updateLastPlayed(productId: String, epochMs: Long = System.currentTimeMillis())
+
+    // Game Profiles (Per-Game Configuration)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGameProfile(profile: GameProfileEntity)
+
+    @Query("SELECT * FROM game_profiles WHERE gameId = :gameId")
+    suspend fun getGameProfile(gameId: String): GameProfileEntity?
+
+    @Query("SELECT * FROM game_profiles WHERE gameId = :gameId")
+    fun getGameProfileFlow(gameId: String): Flow<GameProfileEntity?>
+
+    @Query("SELECT * FROM game_profiles ORDER BY lastUpdatedEpochMs DESC")
+    fun getAllGameProfiles(): Flow<List<GameProfileEntity>>
+
+    @Query("DELETE FROM game_profiles WHERE gameId = :gameId")
+    suspend fun deleteGameProfile(gameId: String)
 }
 
 @Database(
-    entities = [TelemetryEntry::class, GameCacheEntry::class, CatalogEntity::class, CatalogFtsEntity::class],
-    version = 2,
+    entities = [TelemetryEntry::class, GameCacheEntry::class, CatalogEntity::class, CatalogFtsEntity::class, GameProfileEntity::class],
+    version = 3,
     exportSchema = false
 )
 abstract class GodModeDatabase : RoomDatabase() {

@@ -160,5 +160,34 @@ object NativeStreamBridge {
      * Debug: Simulates a Thermal Critical state to test QoS adaptation.
      */
     external fun forceThermalCritical()
+
+    /**
+     * Starts the native C++ stream reactor (ICE + DTLS + SRTP + SCTP) for zero-latency 120FPS throughput.
+     */
+    external fun startNativeReactor(
+        remoteIp: String,
+        remotePort: Int,
+        remoteUfrag: String,
+        remotePwd: String,
+        localUfrag: String,
+        enableIPv6: Boolean
+    ): Boolean
+
+    /**
+     * Stops the native C++ stream reactor.
+     */
+    external fun stopNativeReactor()
+
+    /**
+     * Inyecta directamente las llaves maestras SRTP desde /configuration para decodificación inmediata sin esperar DTLS.
+     */
+    external fun injectDirectSrtpKeys(keyBase64: String, saltBase64: String): Boolean
+
+    /**
+     * Retrieves the measured STUN round-trip time metrics from NativeIceDtlsSrtpBridge:
+     * [0: currentRttMs, 1: minRttMs, 2: maxRttMs, 3: smoothedRttMs, 4: jitterMs, 5: totalSuccessReceived]
+     */
+    external fun getStunLatencyMetrics(): FloatArray?
 }
+
 

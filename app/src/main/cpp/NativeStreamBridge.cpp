@@ -11,6 +11,9 @@
 #include "stream/XcloudPtpClockSynchronizer.h"
 #include "stream/AdaptiveJitterDropper.h"
 #include "stream/MasterAnnexBDepacketizer.h"
+#include "stream/ZeroTrustNetworkSecurityGatekeeper.h"
+#include "stream/UnifiedZeroCopyStreamReactor.h"
+#include "stream/NativeIceDtlsSrtpBridge.h"
 
 
 
@@ -35,11 +38,12 @@ static ANativeWindow* gActiveNativeWindow = nullptr;
 static std::mutex gEngineMutex;
 static CompleteAccessUnitAssembler gAuAssembler;
 static XcloudClockDriftCompensator gClockCompensator;
-static BbrNetworkPacingController gNetworkGovernor;
+static BbrNanoCongestionController gNetworkGovernor;
 static std::atomic<int32_t> gGlobalThermalStatus{0};
 static AThermalManager* gThermalManager = nullptr;
 static XcloudPtpClockSynchronizer gPtpSynchronizer;
 static godmode::AdaptiveJitterDropper gJitterDropper(90000); // 90ms threshold
+static ZeroTrustNetworkSecurityGatekeeper gSecurityGatekeeper;
 
 
 
@@ -364,8 +368,13 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_dispatchRtpPacket(
 
         // Actualizar estadísticas de telemetría hacia el buffer mapeado
         if (gTelemetryBufferPtr && gTelemetryBufferSize >= 48) {
+            auto stunReport = NativeIceDtlsSrtpBridge::getInstance().getLatencyReport();
+            if (stunReport.currentRttMs > 0.0f) {
+                *reinterpret_cast<int32_t*>(gTelemetryBufferPtr) = static_cast<int32_t>(stunReport.currentRttMs);
+                *reinterpret_cast<int32_t*>(gTelemetryBufferPtr + 4) = static_cast<int32_t>(stunReport.jitterMs);
+            }
             *reinterpret_cast<int32_t*>(gTelemetryBufferPtr + 16) = gCurrentActiveEngineId;
-            *reinterpret_cast<uint32_t*>(gTelemetryBufferPtr + 20) = gGlobalStunKeepAlivesCount.load(std::memory_order_relaxed);
+            *reinterpret_cast<uint32_t*>(gTelemetryBufferPtr + 20) = static_cast<uint32_t>(stunReport.totalSuccessReceived);
             *reinterpret_cast<uint32_t*>(gTelemetryBufferPtr + 24) = gGlobalHwcFencesClosedCount.load(std::memory_order_relaxed);
             *reinterpret_cast<int32_t*>(gTelemetryBufferPtr + 32) = gGlobalThermalStatus.load(std::memory_order_relaxed);
             // Clock drift populated later in this function
@@ -374,6 +383,16 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_dispatchRtpPacket(
         // Si el paquete contiene cabecera RTP (versión 2), omitir extensiones RFC 8285 (0xBEDE / 0x1000)
         ParsedRtpHeader parsed = stripRtpHeadersAndExtensions(ubytes, totalLen);
         
+        // 1. Zero-Trust Security Inspection
+        auto securityVerdict = gSecurityGatekeeper.inspectAndSanitizeIncomingFrame(
+            ubytes, totalLen, parsed.sequenceNumber
+        );
+        
+        if (securityVerdict != ZeroTrustNetworkSecurityGatekeeper::SecurityVerdict::ALLOW_PACKET) {
+            env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
+            return JNI_TRUE; // Packet dropped due to security violation or replay
+        }
+
         uint32_t rtpTs = (timestamp > 0) ? static_cast<uint32_t>(timestamp) : parsed.timestamp;
         uint64_t nowUs = getMonotonicMicros();
         gClockCompensator.updateSync(rtpTs, nowUs);
@@ -388,6 +407,9 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_dispatchRtpPacket(
 
              *reinterpret_cast<int64_t*>(gTelemetryBufferPtr + 36) = gClockCompensator.getEstimatedOffsetUs();
         }
+
+        // Track the packet in the BBR governor
+        gNetworkGovernor.process_packet_sent(totalLen);
 
         if (parsed.valid && parsed.payloadPtr && parsed.payloadSize > 0) {
             gAuAssembler.feedRtpPayload(
@@ -420,7 +442,7 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_dispatchRtpPacket(
 
 JNIEXPORT void JNICALL
 Java_com_xcloud_godmode_streaming_NativeStreamBridge_reportPacketAck(JNIEnv* env, jobject thiz, jint bytes, jdouble rtt_us) {
-    gNetworkGovernor.updateTelemetry(static_cast<size_t>(bytes), static_cast<uint64_t>(rtt_us));
+    gNetworkGovernor.process_ack(static_cast<size_t>(bytes), static_cast<uint64_t>(rtt_us));
     
     // Actualizar el buffer de telemetría con el RTT filtrado por Kalman para suavidad en el sparkline
     if (gTelemetryBufferPtr && gTelemetryBufferSize >= 48) {
@@ -449,6 +471,143 @@ JNIEXPORT void JNICALL
 Java_com_xcloud_godmode_streaming_NativeStreamBridge_dispatchPtpHeartbeat(
         JNIEnv* env, jobject thiz, jlong t1, jlong t2, jlong t3, jlong t4) {
     gPtpSynchronizer.processHeartbeat(t1, t2, t3, t4);
+}
+
+static std::unique_ptr<UnifiedZeroCopyStreamReactor> gReactor;
+
+JNIEXPORT jboolean JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_startNativeReactor(
+        JNIEnv *env, jobject thiz, jstring remote_ip, jint remote_port,
+        jstring remote_ufrag, jstring remote_pwd, jstring local_ufrag, jboolean enable_ipv6) {
+    
+    std::lock_guard<std::mutex> lock(gEngineMutex);
+    if (!gActiveEngine) return JNI_FALSE;
+
+    if (!gReactor) {
+        gReactor = std::make_unique<UnifiedZeroCopyStreamReactor>(gActiveEngine.get());
+    } else {
+        gReactor->setStreamEngine(gActiveEngine.get());
+    }
+
+    const char* ip = env->GetStringUTFChars(remote_ip, nullptr);
+    const char* r_ufrag = env->GetStringUTFChars(remote_ufrag, nullptr);
+    const char* r_pwd = env->GetStringUTFChars(remote_pwd, nullptr);
+    const char* l_ufrag = env->GetStringUTFChars(local_ufrag, nullptr);
+
+    UnifiedZeroCopyStreamReactor::Configuration config;
+    config.remoteIp = ip;
+    config.remotePort = static_cast<uint16_t>(remote_port);
+    config.remoteUfrag = r_ufrag;
+    config.remotePwd = r_pwd;
+    config.localUfrag = l_ufrag;
+    config.enableIPv6 = static_cast<bool>(enable_ipv6);
+
+    bool started = gReactor->start(config);
+
+    env->ReleaseStringUTFChars(remote_ip, ip);
+    env->ReleaseStringUTFChars(remote_ufrag, r_ufrag);
+    env->ReleaseStringUTFChars(remote_pwd, r_pwd);
+    env->ReleaseStringUTFChars(local_ufrag, l_ufrag);
+
+    return started ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_stopNativeReactor(JNIEnv *env, jobject thiz) {
+    std::lock_guard<std::mutex> lock(gEngineMutex);
+    if (gReactor) {
+        gReactor->stop();
+        gReactor.reset();
+    }
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_injectDirectSrtpKeys(
+        JNIEnv *env, jobject thiz, jstring key_str, jstring salt_str) {
+    if (!key_str || !salt_str) return JNI_FALSE;
+
+    const char* keyCStr = env->GetStringUTFChars(key_str, nullptr);
+    const char* saltCStr = env->GetStringUTFChars(salt_str, nullptr);
+    if (!keyCStr || !saltCStr) {
+        if (keyCStr) env->ReleaseStringUTFChars(key_str, keyCStr);
+        if (saltCStr) env->ReleaseStringUTFChars(salt_str, saltCStr);
+        return JNI_FALSE;
+    }
+
+    uint8_t keyBytes[16]{};
+    uint8_t saltBytes[14]{};
+
+    auto decodeKey = [](const char* src, uint8_t* dst, size_t expectedLen) {
+        size_t srcLen = std::strlen(src);
+        static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        bool isHex = (srcLen == expectedLen * 2);
+        for (size_t i = 0; i < srcLen && isHex; ++i) {
+            char c = src[i];
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+                isHex = false;
+            }
+        }
+        if (isHex) {
+            for (size_t i = 0; i < expectedLen; ++i) {
+                unsigned int b = 0;
+                sscanf(src + i * 2, "%2x", &b);
+                dst[i] = static_cast<uint8_t>(b);
+            }
+            return true;
+        }
+        // Base64 decoding
+        int val = 0, valb = -8;
+        size_t outIdx = 0;
+        for (size_t i = 0; i < srcLen; ++i) {
+            char c = src[i];
+            if (c == '=') break;
+            const char* p = std::strchr(b64, c);
+            if (p) {
+                val = (val << 6) + static_cast<int>(p - b64);
+                valb += 6;
+                if (valb >= 0) {
+                    if (outIdx < expectedLen) {
+                        dst[outIdx++] = static_cast<uint8_t>((val >> valb) & 0xFF);
+                    }
+                    valb -= 8;
+                }
+            }
+        }
+        if (outIdx == expectedLen) return true;
+        std::memcpy(dst, src, std::min(srcLen, expectedLen));
+        return true;
+    };
+
+    decodeKey(keyCStr, keyBytes, 16);
+    decodeKey(saltCStr, saltBytes, 14);
+
+    std::lock_guard<std::mutex> lock(gEngineMutex);
+    if (!gReactor) {
+        gReactor = std::make_unique<UnifiedZeroCopyStreamReactor>(gActiveEngine ? gActiveEngine.get() : nullptr);
+    }
+    gReactor->injectDirectSrtpKeys(keyBytes, 16, saltBytes, 14);
+
+    env->ReleaseStringUTFChars(key_str, keyCStr);
+    env->ReleaseStringUTFChars(salt_str, saltCStr);
+    return JNI_TRUE;
+}
+
+JNIEXPORT jfloatArray JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_getStunLatencyMetrics(JNIEnv *env, jobject thiz) {
+    auto report = NativeIceDtlsSrtpBridge::getInstance().getLatencyReport();
+    jfloatArray result = env->NewFloatArray(6);
+    if (!result) return nullptr;
+
+    jfloat metrics[6] = {
+        report.currentRttMs,
+        report.minRttMs,
+        report.maxRttMs,
+        report.smoothedRttMs,
+        report.jitterMs,
+        static_cast<jfloat>(report.totalSuccessReceived)
+    };
+    env->SetFloatArrayRegion(result, 0, 6, metrics);
+    return result;
 }
 
 }

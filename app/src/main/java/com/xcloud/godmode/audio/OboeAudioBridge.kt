@@ -16,7 +16,7 @@ import java.util.concurrent.Executors
 /**
  * OboeAudioBridge: Real-time Voice Capture & Opus Compression Module.
  * Integrates with Oboe (C++ via JNI) or falls back to low-latency AudioRecord.
- * Compresses audio to 24kHz Opus for injection into WebRTC DataChannels.
+ * Compresses audio to 24kHz Opus for injection into SCTP DataChannels.
  */
 object OboeAudioBridge {
     private const val TAG = "OboeAudioBridge"

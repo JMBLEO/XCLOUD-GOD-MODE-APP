@@ -11,9 +11,7 @@
 -keep class com.xcloud.godmode.** { *; }
 -keepclassmembers class com.xcloud.godmode.** { *; }
 
-# Preserve WebRTC native bindings
--keep class org.webrtc.** { *; }
--keepclassmembers class org.webrtc.** { *; }
+
 
 # Preserve type annotations and signatures
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod

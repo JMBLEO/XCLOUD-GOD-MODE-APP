@@ -98,10 +98,7 @@
             </intent-filter>
         </activity>
 
-        <!-- EGL Hardware Acceleration Stability Config -->
-        <meta-data
-            android:name="android.webkit.WebView.EnableSafeBrowsing"
-            android:value="false" />
+
         <meta-data
             android:name="com.google.android.gms.vision.DEPENDENCIES"
             android:value="ocr" />

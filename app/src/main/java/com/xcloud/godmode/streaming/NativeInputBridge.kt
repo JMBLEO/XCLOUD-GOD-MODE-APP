@@ -6,7 +6,6 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import kotlinx.coroutines.*
-import org.webrtc.DataChannel
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.cos
@@ -16,14 +15,14 @@ import kotlin.math.sqrt
 /**
  * NativeInputBridge: High-performance 250Hz Controller and MKB Hardware Bridge.
  *
- * Replaces the 16ms HTML5 Gamepad API:
+ * Direct Native Pipeline:
  * 1. Reads raw MotionEvent & KeyEvent from Bluetooth/USB input devices.
  * 2. Processes mathematical radial deadzones and smooth acceleration curves.
- * 3. Serializes packets directly into the WebRTC RTCDataChannel at 250Hz (4ms).
+ * 3. Serializes packets directly into the native C++ SPSC lock-free ring buffer at 250Hz (4ms).
  * 4. Supports Local Co-Op (Slots 0 to 7) and MKB (Mouse & Keyboard) emulation.
  */
 class NativeInputBridge(
-    private val dataChannelProvider: () -> DataChannel?
+    private val inputPacketSink: ((ByteArray) -> Unit)? = null
 ) {
 
     private val TAG = "NativeInputBridge"
@@ -211,32 +210,33 @@ class NativeInputBridge(
 
         pollingJob = bridgeScope.launch {
             while (isActive) {
-                val channel = dataChannelProvider()
                 var hasActiveChange = false
-                if (channel != null && channel.state() == DataChannel.State.OPEN) {
-                    for (slot in 0 until 4) { // Active players
-                        val state = controllers[slot]
-                        val stateHash = state.hashCode()
-                        val isNonZero = state.buttons != 0 || state.leftStickX != 0f || state.leftStickY != 0f ||
-                                       state.rightStickX != 0f || state.rightStickY != 0f ||
-                                       state.leftTrigger != 0f || state.rightTrigger != 0f
+                for (slot in 0 until 4) { // Active players
+                    val state = controllers[slot]
+                    val stateHash = state.hashCode()
+                    val isNonZero = state.buttons != 0 || state.leftStickX != 0f || state.leftStickY != 0f ||
+                                   state.rightStickX != 0f || state.rightStickY != 0f ||
+                                   state.leftTrigger != 0f || state.rightTrigger != 0f
 
-                        if (stateHash != lastSentPacketHash[slot] || isNonZero) {
-                            hasActiveChange = true
-                            lastSentPacketHash[slot] = stateHash
-                            val packet = buildGamepadPacket(slot, state)
-                            channel.send(DataChannel.Buffer(packet.duplicate(), true))
-                            try {
-                                NativeStreamBridge.pushRawInput(packet.array(), packet.limit())
-                            } catch (ignored: Throwable) {}
-                        } else if (idleCount % 15 == 0) {
-                            // Enviar keepalive a 15Hz para mantener el watchdog de xCloud activo
-                            val packet = buildGamepadPacket(slot, state)
-                            channel.send(DataChannel.Buffer(packet.duplicate(), true))
-                            try {
-                                NativeStreamBridge.pushRawInput(packet.array(), packet.limit())
-                            } catch (ignored: Throwable) {}
-                        }
+                    if (stateHash != lastSentPacketHash[slot] || isNonZero) {
+                        hasActiveChange = true
+                        lastSentPacketHash[slot] = stateHash
+                        val packet = buildGamepadPacket(slot, state)
+                        val bytes = ByteArray(packet.remaining())
+                        packet.get(bytes)
+                        inputPacketSink?.invoke(bytes)
+                        try {
+                            NativeStreamBridge.pushRawInput(bytes, bytes.size)
+                        } catch (ignored: Throwable) {}
+                    } else if (idleCount % 15 == 0) {
+                        // Enviar keepalive a 15Hz para mantener el watchdog de xCloud activo
+                        val packet = buildGamepadPacket(slot, state)
+                        val bytes = ByteArray(packet.remaining())
+                        packet.get(bytes)
+                        inputPacketSink?.invoke(bytes)
+                        try {
+                            NativeStreamBridge.pushRawInput(bytes, bytes.size)
+                        } catch (ignored: Throwable) {}
                     }
                 }
                 if (hasActiveChange) {
@@ -258,12 +258,14 @@ class NativeInputBridge(
             controllers[slot] = ControllerState()
             lastSentPacketHash[slot] = 0
         }
-        val channel = dataChannelProvider()
-        if (channel != null && channel.state() == DataChannel.State.OPEN) {
-            val packet = buildGamepadPacket(slot, controllers[slot])
-            channel.send(DataChannel.Buffer(packet, true))
-            Log.d(TAG, "Input Wedge Recovery: Mando $slot reseteado a neutro.")
-        }
+        val packet = buildGamepadPacket(slot, controllers[slot])
+        val bytes = ByteArray(packet.remaining())
+        packet.get(bytes)
+        inputPacketSink?.invoke(bytes)
+        try {
+            NativeStreamBridge.pushRawInput(bytes, bytes.size)
+        } catch (ignored: Throwable) {}
+        Log.d(TAG, "Input Wedge Recovery: Mando $slot reseteado a neutro.")
     }
 
     fun stopPolling() {

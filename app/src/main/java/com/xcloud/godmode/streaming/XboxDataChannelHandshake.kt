@@ -1,5 +1,6 @@
 package com.xcloud.godmode.streaming
 
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -9,9 +10,61 @@ class XboxDataChannelHandshake(
     private val sendOnControlChannel: (String) -> Unit,
     private val sendClientMetadataOnInputChannel: () -> Unit
 ) {
+    private val TAG = "XboxHandshake"
+    private var currentAccessKey: String = "4BDB3609-C1F1-4195-9B37-FEFF45DA8B8E"
+    private var isControlAuthorized = false
+
+    fun setAccessKey(key: String) {
+        if (key.isNotBlank()) {
+            currentAccessKey = key
+        }
+    }
+
     /**
-     * Se debe llamar inmediatamente cuando el DataChannel 'message' (protocolo "messageV1") cambia a estado OPEN.
-     * Sin este handshake, el servidor GSSV mantiene el video en negro (0 kbps).
+     * Paso 1 y 2: Cuando el canal 'control' abre, se DEBE enviar videoPreference (2560x1440 o resolución objetivo)
+     * ANTES de authorizationRequest. Si se envía después o tras recibir frames, Azure bloquea la sesión a 720p/5Mbps.
+     */
+    fun onControlChannelOpened(
+        accessKey: String = currentAccessKey,
+        targetWidth: Int = 1920,
+        targetHeight: Int = 1080
+    ) {
+        setAccessKey(accessKey)
+        Log.i(TAG, "Control channel OPEN. Disparando secuencia de desbloqueo temprano (${targetWidth}x${targetHeight})...")
+
+        // 1. videoPreference (Paso 1 OBLIGATORIO antes de authorizationRequest)
+        val videoPref = JSONObject().apply {
+            put("message", "videoPreference")
+            put("width", targetWidth)
+            put("height", targetHeight)
+            put("fps", 60)
+            put("videoCodec", "H264")
+            put("colorSpaceFlags", 0)
+        }
+        sendOnControlChannel(videoPref.toString())
+
+        // 2. authorizationRequest con accessKey dinámica
+        val authReq = JSONObject().apply {
+            put("message", "authorizationRequest")
+            put("accessKey", currentAccessKey)
+        }
+        sendOnControlChannel(authReq.toString())
+        isControlAuthorized = true
+
+        // 3. Conectar virtualmente el mando 0
+        val gamepadAdd = JSONObject().apply {
+            put("message", "gamepadChanged")
+            put("gamepadIndex", 0)
+            put("wasAdded", true)
+        }
+        sendOnControlChannel(gamepadAdd.toString())
+
+        // 4. Solicitar IDR Keyframe inicial
+        requestImmediateKeyframe()
+    }
+
+    /**
+     * Paso 3: Se debe llamar inmediatamente cuando el DataChannel 'message' cambia a OPEN.
      */
     fun onMessageChannelOpened() {
         val handshakeFrame = JSONObject().apply {
@@ -24,22 +77,25 @@ class XboxDataChannelHandshake(
     }
 
     /**
-     * Se debe llamar cada vez que llega un mensaje de texto por el DataChannel 'message'.
-     * Responde a las transacciones del servidor y dispara el arranque del canal 'control'.
+     * Procesa respuestas en el canal 'message'.
+     * Al recibir HandshakeAck, se despacha la configuración de dimensiones (Paso 4) y UI.
      */
     fun onMessageChannelReceived(rawText: String, targetWidth: Int = 1920, targetHeight: Int = 1080) {
         val msg = JSONObject(rawText)
         val type = msg.optString("type")
 
         if (type == "HandshakeAck") {
-            // 1. Notificar configuración de UI del sistema y dimensiones fijadas (Resolution Pinning)
+            // Paso 4: Fijar dimensiones personalizadas en 'message'
             sendSystemUiAndDimensionsConfiguration(targetWidth, targetHeight)
-            // 2. Despertar el flujo de video en el canal 'control'
-            wakeUpVideoAndGamepadOnControlChannel()
-            // 3. Enviar el reporte inicial de metadatos binarios (0x08) en el canal 'input'
+            // Asegurar que el canal de control también despierte si aún no se había autorizado
+            if (!isControlAuthorized) {
+                onControlChannelOpened(currentAccessKey, targetWidth, targetHeight)
+            }
+            // Enviar metadatos de input (V8 / 0x08)
             sendClientMetadataOnInputChannel()
+            // Solicitar keyframe tras confirmación
+            requestImmediateKeyframe()
         } else if (type == "TransactionStart") {
-            // El servidor de Xbox exige un TransactionComplete con el mismo 'id' y 'cv'
             val txId = msg.optString("id")
             val cv = msg.optString("cv", "0")
             val ack = JSONObject().apply {
@@ -52,7 +108,7 @@ class XboxDataChannelHandshake(
         }
     }
 
-    private fun sendSystemUiAndDimensionsConfiguration(width: Int, height: Int) {
+    fun sendSystemUiAndDimensionsConfiguration(width: Int, height: Int) {
         val uiConfigMsg = JSONObject().apply {
             put("type", "Message")
             put("id", UUID.randomUUID().toString())
@@ -65,7 +121,7 @@ class XboxDataChannelHandshake(
         }
         sendOnMessageChannel(uiConfigMsg.toString())
 
-        // Resolution Pinning (Evita que el servidor salte a 1440p sin aviso)
+        // Resolution Pinning con soporte de resolución personalizada (1440p / 1080p)
         val dimensionsMsg = JSONObject().apply {
             put("type", "Message")
             put("id", UUID.randomUUID().toString())
@@ -86,28 +142,8 @@ class XboxDataChannelHandshake(
         sendOnMessageChannel(dimensionsMsg.toString())
     }
 
-    /**
-     * Envía la secuencia de arranque en el DataChannel 'control' (protocolo "controlV1")
-     * que fuerza al codificador H.264 del servidor de Xbox a emitir el primer IDR Keyframe + SPS/PPS.
-     */
-    fun wakeUpVideoAndGamepadOnControlChannel() {
-        // 1. Autorización del canal de control
-        val authReq = JSONObject().apply {
-            put("message", "authorizationRequest")
-            put("accessKey", "4BDB3609-C1F1-4195-9B37-FEFF45DA8B8E")
-        }
-        sendOnControlChannel(authReq.toString())
-
-        // 2. Conectar virtualmente el mando 0
-        val gamepadAdd = JSONObject().apply {
-            put("message", "gamepadChanged")
-            put("gamepadIndex", 0)
-            put("wasAdded", true)
-        }
-        sendOnControlChannel(gamepadAdd.toString())
-
-        // 3. Solicitar el primer IDR Keyframe (SPS + PPS + IDR Slice)
-        requestImmediateKeyframe()
+    fun wakeUpVideoAndGamepadOnControlChannel(width: Int = 1920, height: Int = 1080) {
+        onControlChannelOpened(currentAccessKey, width, height)
     }
 
     fun requestImmediateKeyframe() {
@@ -118,3 +154,4 @@ class XboxDataChannelHandshake(
         sendOnControlChannel(keyframeReq.toString())
     }
 }
+

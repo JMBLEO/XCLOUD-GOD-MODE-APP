@@ -36,7 +36,7 @@ enum class SoundEventType {
 
 enum class ActiveInputLayer {
     COMPOSE_HOME,     // En menús nativos: Sonidos completos
-    STREAM_ACTIVE,    // Jugando en WebRTC: Sonidos de foco bloqueados
+    STREAM_ACTIVE,    // Jugando en Stream: Sonidos de foco bloqueados
     STREAM_OVERLAY    // Guía Optimizer sobre el juego: Sonidos de overlay permitidos
 }
 
@@ -80,12 +80,12 @@ object GodModeSoundEngine {
         chameleonPitchMultiplier = (0.92f + normLum * 0.16f).coerceIn(0.88f, 1.12f)
     }
 
-    fun play(event: SoundEventType, fromWebView: Boolean = false) {
+    fun play(event: SoundEventType) {
         if (!isEnabled || volumePercent <= 0) return
 
         // Audio Policy: Silence focus sounds during active stream
         if (currentInputLayer == ActiveInputLayer.STREAM_ACTIVE && event == SoundEventType.FOCUS) return
-        if (currentInputLayer != ActiveInputLayer.COMPOSE_HOME && !fromWebView && event == SoundEventType.FOCUS) return
+        if (currentInputLayer != ActiveInputLayer.COMPOSE_HOME && event == SoundEventType.FOCUS) return
 
         val now = System.currentTimeMillis()
         if (event == SoundEventType.FOCUS && now - lastFocusTimestamp < 38L) return

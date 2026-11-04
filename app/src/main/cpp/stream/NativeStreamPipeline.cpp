@@ -5,6 +5,7 @@
 #include "RtpH265Depacketizer.h"
 #include "RtpAV1Depacketizer.h"
 #include "RtpVVCDepacketizer.h"
+#include "IStreamEngine.h"
 #include <android/log.h>
 #include <cstring>
 #include <sstream>
@@ -64,13 +65,17 @@ std::string NativeZeroCopyPipeline::rewriteSdpForUltraQuality(const std::string&
     while (std::getline(stream, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
 
-        // 1. Filtrado de candidatos ICE:
+        // 1. Filtrado de candidatos ICE y atributos propietarios:
         // Descartar candidatos TURN ('typ relay') para forzar ruta directa UDP (host / srflx)
         // Descartar candidatos mDNS ('.local') para prevenir rechazo de conexión en servidores Xbox / Azure
+        // Descartar 'msid' y 'mslabel' que causan anomalías en el motor de transporte nativo de Azure
         if (line.find("a=candidate:") == 0) {
-            if (line.find("typ relay") != std::string::npos || line.find(".local") != std::string::npos) {
+            if (line.find("typ relay") != std::string::npos || line.find(".local") != std::string::npos || line.find("2001:0:") != std::string::npos) {
                 continue;
             }
+        }
+        if (line.find("a=msid:") == 0 || line.find("a=mslabel:") == 0 || line.find("a=ssrc:") == 0 && (line.find("msid:") != std::string::npos || line.find("mslabel:") != std::string::npos)) {
+            continue;
         }
 
         if (line.find("m=video") == 0) {
@@ -108,8 +113,15 @@ std::string NativeZeroCopyPipeline::rewriteSdpForUltraQuality(const std::string&
             }
             // Enriquecer parámetros de formato (fmtp) en video para baja latencia, HDR y alto bitrate
             if (line.find("a=fmtp:") == 0) {
-                out << line << ";max-br=" << maxBitrateKbps
-                    << ";x-google-max-bitrate=" << maxBitrateKbps
+                std::string upgraded = line;
+                // Elevar perfil a High Profile Level 5.0 (640032) para 1440p/120fps
+                size_t pos = upgraded.find("profile-level-id=");
+                if (pos != std::string::npos) {
+                    upgraded.replace(pos + 17, 6, "640032");
+                }
+                
+                out << upgraded << ";max-br=" << maxBitrateKbps
+                    << ";max-fr=120;max-fs=14400;x-google-max-bitrate=" << maxBitrateKbps
                     << ";x-google-min-bitrate=" << (maxBitrateKbps / 2)
                     << ";x-google-start-bitrate=" << (maxBitrateKbps * 3 / 4) << "\r\n";
                 continue;
@@ -349,18 +361,9 @@ bool NativeZeroCopyPipeline::initializeHardwareDecoder(ANativeWindow* window, St
 
     AMediaFormat* format = AMediaFormat_new();
     AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, mimeType);
-    AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, static_cast<int32_t>(width));
-    AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, static_cast<int32_t>(height));
-
-    // Directivas estrictas de Ultra-Baja Latencia (Android 11+ / API 30+)
-    AMediaFormat_setInt32(format, "low-latency", 1);
-    AMediaFormat_setInt32(format, "vendor.qti-ext-dec-low-latency.enable", 1);   // Qualcomm Snapdragon
-    AMediaFormat_setInt32(format, "vendor.rtc-ext-dec-low-latency.enable", 1);   // MediaTek / Mali / Exynos
-    AMediaFormat_setInt32(format, "vendor.hisi-ext-low-latency-video-dec.video-scene-for-low-latency-req", 1);
-    AMediaFormat_setInt32(format, "priority", 0); // Prioridad Tiempo Real (0)
-
-    // Rango de color completo para el pipeline OLED Rec.709 -> DCI-P3
-    AMediaFormat_setInt32(format, "color-range", 1); // COLOR_RANGE_FULL
+    
+    // Aplicar parámetros de ultra-calidad y 1440p si las dimensiones lo indican
+    applyUltraQualityDecoderParameters(format, width > 1920 || height > 1080);
 
     // Vinculación directa del decodificador HW a la superficie nativa (Zero-Copy)
     media_status_t status = AMediaCodec_configure(mediaCodec, format, outputWindow, nullptr, 0);
@@ -447,7 +450,7 @@ bool NativeZeroCopyPipeline::injectAccessUnitZeroCopy(const uint8_t* auBuffer, s
             outTelemetry.frameSubmittedUs = nowMicros();
             
             // Si el buffer no tiene start codes de Annex-B, podríamos inyectarlos aquí si fuera necesario.
-            // Pero confiamos en que el depacketizer de WebRTC o el emisor ya los envió o el decoder los tolera.
+            // Pero confiamos en que el depacketizer RTP o el emisor ya los envió o el decoder los tolera.
             
             // Aplicar profundidad del jitter buffer y compensación A/V Bluetooth para suavizar el timing de presentación
             int64_t offsetUs = ptsOffsetUs.load(std::memory_order_relaxed);

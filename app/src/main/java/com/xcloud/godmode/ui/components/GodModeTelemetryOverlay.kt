@@ -34,9 +34,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xcloud.godmode.models.SettingsModel
 import com.xcloud.godmode.streaming.LiveTelemetryMetrics
+import com.xcloud.godmode.streaming.NativeStreamPipelineManager
 import com.xcloud.godmode.streaming.StreamEngineType
 import com.xcloud.godmode.streaming.TelemetryBridge
-import com.xcloud.godmode.streaming.WebRTCStreamManager
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -47,7 +47,7 @@ import kotlin.math.roundToInt
  */
 @Composable
 fun GodModeTelemetryOverlay(
-    streamManager: WebRTCStreamManager,
+    streamManager: NativeStreamPipelineManager,
     settings: SettingsModel,
     modifier: Modifier = Modifier,
     videoCodec: String = settings.videoCodec,
@@ -549,7 +549,7 @@ fun GodModeTelemetryOverlay(
 // Helper to update history buffers
 @Composable
 fun GodModeTelemetryHUDUpdater(
-    stats: com.xcloud.godmode.streaming.WebRTCStreamManager.StreamStats,
+    stats: com.xcloud.godmode.streaming.NativeStreamPipelineManager.StreamStats,
     rttHistory: MutableList<Float>,
     jitterHistory: MutableList<Float>,
     frameTimeHistory: MutableList<Float>

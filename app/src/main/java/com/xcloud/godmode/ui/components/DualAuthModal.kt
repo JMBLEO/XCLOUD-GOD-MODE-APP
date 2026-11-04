@@ -1120,7 +1120,7 @@ fun DualAuthModal(
                                     color = Color.White
                                 )
                                 Text(
-                                    text = "Rehidrata sesiones existentes desde las cookies de WebView o recibe credenciales de forma inalámbrica desde tu teléfono en la misma red Wi-Fi.",
+                                    text = "Rehidrata sesiones existentes desde tokens almacenados o recibe credenciales de forma inalámbrica desde tu teléfono en la misma red Wi-Fi.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color.LightGray,
                                     textAlign = TextAlign.Center

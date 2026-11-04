@@ -38,7 +38,7 @@ object StreamSessionHolder {
         avgJitter: Double = 1.1, 
         packetLoss: Double = 0.02, 
         resolution: String = "1080p", 
-        motor: String = "Native WebRTC + FSR",
+        motor: String = "Native Zero-Copy + FSR",
         serverId: String = "ChileCentral",
         networkType: String = "Wi-Fi 6"
     ) {

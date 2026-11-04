@@ -7,6 +7,10 @@
 
 #define AUDIO_LOG_TAG "GodModeAudio"
 
+#include "AudioVideoClockSynchronizer.h"
+
+using namespace GodMode::Audio;
+
 class GodModeAdaptiveSyncAudioEngine {
 private:
     AAudioStream* audioStream = nullptr;
@@ -15,14 +19,12 @@ private:
     size_t bufferSize = 0;
     std::mutex audioMtx;
     
-    // PI Controller state for PLL Resampling
+    // Resampling state
     double phase = 0.0;
-    double currentSpeedRatio = 1.0;
-    double integralError = 0.0;
-    const double Kp = 0.000005; // Ganancia Proporcional
-    const double Ki = 0.00000001; // Ganancia Integral
     
-    int64_t lastVideoPtsUs = 0;
+    // Sync Engine
+    AudioVideoClockSynchronizer syncEngine;
+    
     int64_t lastAudioClockUs = 0;
 
     static aaudio_data_callback_result_t audioDataCallback(
@@ -36,12 +38,14 @@ private:
         
         std::lock_guard<std::mutex> lock(self->audioMtx);
         
-        // Output with adaptive cubic hermite resampling (higher quality than linear)
+        double currentRatio = self->syncEngine.getSpeedRatio();
+
+        // Output with adaptive cubic hermite resampling
         for (int32_t i = 0; i < numFrames; ++i) {
             size_t idx = static_cast<size_t>(self->phase);
             double frac = self->phase - idx;
             
-            // Catmull-Rom / Cubic Hermite Spline for high-fidelity resampling
+            // Catmull-Rom Cubic Hermite Spline Resampling
             size_t i0 = (idx > 0) ? (idx - 1) % self->bufferSize : (self->bufferSize - 1);
             size_t i1 = idx % self->bufferSize;
             size_t i2 = (idx + 1) % self->bufferSize;
@@ -61,18 +65,24 @@ private:
                 outFloat[i * 2 + ch] = static_cast<float>(((a * frac + b) * frac + c) * frac + d);
             }
             
-            self->phase += self->currentSpeedRatio;
+            self->phase += currentRatio;
             if (self->phase >= self->bufferSize) self->phase -= self->bufferSize;
         }
         
-        // Track internal audio clock for drift calculation
-        self->lastAudioClockUs += (static_cast<int64_t>(numFrames) * 1000000LL) / 48000;
+        // Track internal audio clock using AAudio frame timestamps for higher precision
+        int64_t frameTimestamp = 0;
+        int64_t nanoTimestamp = 0;
+        if (AAudioStream_getTimestamp(stream, CLOCK_MONOTONIC, &frameTimestamp, &nanoTimestamp) == AAUDIO_OK) {
+             self->lastAudioClockUs = (frameTimestamp * 1000000LL) / 48000;
+        } else {
+             self->lastAudioClockUs += (static_cast<int64_t>(numFrames) * 1000000LL) / 48000;
+        }
         
         return AAUDIO_CALLBACK_RESULT_CONTINUE;
     }
 
 public:
-    GodModeAdaptiveSyncAudioEngine(size_t capacityFrames = 19200) { // 400ms buffer
+    GodModeAdaptiveSyncAudioEngine(size_t capacityFrames = 19200) {
         bufferSize = capacityFrames;
         pcmCircularBuffer.assign(bufferSize * 2, 0.0f);
     }
@@ -96,29 +106,14 @@ public:
 
         if (result == AAUDIO_OK && audioStream) {
             AAudioStream_requestStart(audioStream);
-            __android_log_print(ANDROID_LOG_INFO, AUDIO_LOG_TAG, "Adaptive Sync Audio Engine Ready (Exclusive)");
+            __android_log_print(ANDROID_LOG_INFO, AUDIO_LOG_TAG, "Adaptive Sync Audio Engine with PLL Synchronizer Ready");
             return true;
         }
         return false;
     }
 
     void calibrateSync(int64_t audioTimestampUs, int64_t videoTimestampUs) {
-        std::lock_guard<std::mutex> lock(audioMtx);
-        
-        // 1. Calcular error de fase (drift)
-        int64_t driftUs = videoTimestampUs - audioTimestampUs;
-        
-        // 2. Controlador PI para el Speed Ratio del remuestreador
-        double error = static_cast<double>(driftUs);
-        integralError += error;
-        
-        // Limitar la integral para evitar windup
-        integralError = std::clamp(integralError, -5000000.0, 5000000.0);
-        
-        double newRatio = 1.0 + (Kp * error) + (Ki * integralError);
-        
-        // Limitar el ajuste a +/- 1% para que sea imperceptible al oído
-        currentSpeedRatio = std::clamp(newRatio, 0.99, 1.01);
+        syncEngine.updateDrift(audioTimestampUs, videoTimestampUs);
     }
 
     void injectPcmData(const float* data, size_t numFrames) {

@@ -68,7 +68,7 @@ object GeminiAiAssistant {
             val systemInstruction = JSONObject().apply {
                 val partsArr = JSONArray().apply {
                     val p = JSONObject().apply {
-                        put("text", "Eres God Mode AI Gaming Copilot, un asistente experto en optimización de Xbox Cloud Gaming, Remote Play, análisis de baja latencia WebRTC, shaders (Real-ESRGAN, SeedVR2), tasas de refresco 120Hz, y tácticas de juego. Responde de forma clara, directa y estructurada en español.")
+                        put("text", "Eres God Mode AI Gaming Copilot, un asistente experto en optimización de Xbox Cloud Gaming, Remote Play, análisis de transporte de ultra-baja latencia UDP Zero-Copy, shaders (Real-ESRGAN, SeedVR2), tasas de refresco 120Hz, y tácticas de juego. Responde de forma clara, directa y estructurada en español.")
                     }
                     put(p)
                 }

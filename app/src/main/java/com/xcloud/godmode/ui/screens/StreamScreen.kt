@@ -22,7 +22,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.xcloud.godmode.services.StreamSessionHolder
-import com.xcloud.godmode.streaming.WebRTCStreamManager
+import com.xcloud.godmode.streaming.NativeStreamPipelineManager
 import com.xcloud.godmode.streaming.NativeStreamBridge
 import android.view.SurfaceView
 import android.view.SurfaceHolder
@@ -30,6 +30,7 @@ import android.widget.Toast
 import com.xcloud.godmode.services.GameProfile
 import com.xcloud.godmode.services.GameProfileManager
 import com.xcloud.godmode.ui.components.LatencyHUD
+import com.xcloud.godmode.ui.components.RealTimeLatencyHUD
 import com.xcloud.godmode.ui.components.TrueAchievementsOverlay
 import com.xcloud.godmode.ui.components.InStreamGameBar
 import com.xcloud.godmode.engine.GyroscopeProvider
@@ -37,7 +38,6 @@ import com.xcloud.godmode.ControllerInputManager
 import com.xcloud.godmode.services.StreamingService
 import android.content.Intent
 import android.os.Build
-import org.webrtc.SurfaceViewRenderer
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import android.view.MotionEvent
 import android.view.Surface
@@ -50,7 +50,7 @@ import com.xcloud.godmode.ui.components.GodModeToggle
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun StreamScreen(
-    streamManager: WebRTCStreamManager,
+    streamManager: NativeStreamPipelineManager,
     gsToken: String,
     sessionPath: String,
     settings: com.xcloud.godmode.models.SettingsModel,
@@ -69,17 +69,20 @@ fun StreamScreen(
     val gameProfile = remember(titleId) { profileManager.getProfile(titleId, gameTitle) }
 
     var isHudVisible by remember { mutableStateOf(settings.showStats) }
-    var selectedMotor by remember { mutableIntStateOf(settings.selectedMotor.coerceIn(1, 6)) } // 1..6 Native Engines
+    var selectedMotor by remember { mutableIntStateOf(gameProfile.preferredEngineId.coerceIn(1, 6)) } // 1..6 Native Engines
+    var currentResolution by remember { mutableStateOf(gameProfile.resolutionOverride) }
+    var currentShaderPreset by remember { mutableStateOf(gameProfile.shaderPreset) }
+    var bbrUltraPacing by remember { mutableStateOf(gameProfile.bbrUltraPacing) }
 
     // In-stream quick tuners
-    var fsrEnabled by remember { mutableStateOf(true) }
-    var fsrSharpness by remember { mutableFloatStateOf(gameProfile.fsrSharpness) }
-    var selectedAspectRatio by remember { mutableStateOf("16:9") } // "16:9", "20:9", "Stretch"
+    var fsrEnabled by remember { mutableStateOf(gameProfile.enableAiUpscale) }
+    var fsrSharpness by remember { mutableFloatStateOf(gameProfile.sharpeningStrength) }
+    var selectedAspectRatio by remember { mutableStateOf(if (gameProfile.resolutionOverride.contains("20:9")) "20:9" else "16:9") } // "16:9", "20:9", "Stretch"
     var volumeBoost by remember { mutableIntStateOf(gameProfile.volumeBoostPercent) } // 50 to 250%
     var isMuted by remember { mutableStateOf(false) }
     var showQuickMenu by remember { mutableStateOf(false) }
     var showInStreamGameBar by remember { mutableStateOf(false) }
-    var isVsyncOff by remember { mutableStateOf(settings.vsyncOff) }
+    var isVsyncOff by remember { mutableStateOf(gameProfile.lowLatencyVsyncOff || settings.vsyncOff) }
     val isTv = remember {
         context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
     }
@@ -109,13 +112,6 @@ fun StreamScreen(
     var showLoss by remember { mutableStateOf(settings.hudShowPacketLoss) }
     var showBitrate by remember { mutableStateOf(settings.hudShowBitrate) }
     var showProfilePill by remember { mutableStateOf(settings.hudShowProfilePill) }
-
-    val surfaceViewRenderer = remember {
-        SurfaceViewRenderer(context).apply {
-            init(streamManager.eglBase.eglBaseContext, null)
-            setEnableHardwareScaler(true)
-        }
-    }
 
     val micPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
@@ -163,7 +159,6 @@ fun StreamScreen(
                 fallbackRegionUri = fallbackRegionUri.takeIf { it.isNotBlank() } ?: com.xcloud.godmode.network.XboxFullAuthManager.latestF2pRegionUri
             )
 
-            streamManager.setVideoSink(surfaceViewRenderer)
             orchestrator.startCloudStream(sessionConfig, streamManager)
             StreamSessionHolder.recordStart(null, gsToken, sessionPath)
         }
@@ -209,7 +204,6 @@ fun StreamScreen(
             isRendererReleased = true
             try {
                 streamManager.stopStream()
-                surfaceViewRenderer.release()
             } catch (e: Exception) {
                 // Ignore if already released
             }
@@ -331,9 +325,9 @@ fun StreamScreen(
                 val state = launchState as com.xcloud.godmode.streaming.StreamLaunchState.Provisioning
                 StreamStatusOverlay(title = state.serverState, subtitle = "Región activa: ${state.regionName}")
             }
-            is com.xcloud.godmode.streaming.StreamLaunchState.NegotiatingWebRtc -> {
-                val state = launchState as com.xcloud.godmode.streaming.StreamLaunchState.NegotiatingWebRtc
-                StreamStatusOverlay(title = "Estableciendo túnel WebRTC Zero-Copy...", subtitle = state.step)
+            is com.xcloud.godmode.streaming.StreamLaunchState.NegotiatingTunnel -> {
+                val state = launchState as com.xcloud.godmode.streaming.StreamLaunchState.NegotiatingTunnel
+                StreamStatusOverlay(title = "Estableciendo túnel Zero-Copy...", subtitle = state.step)
             }
             is com.xcloud.godmode.streaming.StreamLaunchState.Failed -> {
                 val state = launchState as com.xcloud.godmode.streaming.StreamLaunchState.Failed
@@ -560,15 +554,20 @@ fun StreamScreen(
             }
         }
 
-        // GodModeTelemetryOverlay: Real-time network latency, FPS, resolution, CPU & GPU HUD
+        // RealTimeLatencyHUD: Direct C++ Zero-Copy telemetry (RTT, Jitter, BBR Pacing, Sparkline)
         if (isHudVisible) {
-            GodModeTelemetryOverlay(
-                streamManager = streamManager,
-                settings = settings,
-                videoCodec = settings.videoCodec,
-                resolutionLabel = if (selectedAspectRatio == "Stretch") "Pantalla Completa" else "$selectedAspectRatio (1080p 60 FPS)",
-                modifier = Modifier.align(if (hudPosition == "BOTTOM") Alignment.BottomStart else Alignment.TopStart),
-                onDismiss = { isHudVisible = false }
+            RealTimeLatencyHUD(
+                modifier = Modifier
+                    .align(if (hudPosition == "BOTTOM") Alignment.BottomStart else Alignment.TopStart)
+                    .padding(16.dp),
+                initialExpanded = false,
+                gameTitle = gameTitle,
+                shaderPreset = currentShaderPreset,
+                resolution = currentResolution,
+                aiOptimizationPreset = gameProfile.aiOptimizationPreset,
+                onTogglePosition = {
+                    hudPosition = if (hudPosition == "BOTTOM") "TOP" else "BOTTOM"
+                }
             )
         }
 
@@ -595,7 +594,7 @@ fun StreamScreen(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("• Región: ${settings.forceServer} (Bypass IP: ${settings.bypassIp})", color = Color.LightGray)
-                        Text("• Protocolo: WebRTC TLS 1.3 Strict + Anonymized Local IPs", color = Color.LightGray)
+                        Text("• Protocolo: UDP Dual-Stack Direct Sockets (BBR Nano Pacing)", color = Color.LightGray)
                         Text("• Audio: Opus Hi-Fi Downmix Center Voice Boost 3dB", color = Color.LightGray)
                         Text("• Decodificador: Android Low-Latency NPU/Hardware", color = Color.LightGray)
                         Text("• Motor Activo: ${when(selectedMotor) {
@@ -815,11 +814,18 @@ fun StreamScreen(
                     Button(
                         onClick = {
                             val updatedProfile = gameProfile.copy(
-                                fsrSharpness = fsrSharpness,
+                                preferredEngineId = selectedMotor,
+                                resolutionOverride = currentResolution,
+                                shaderPreset = currentShaderPreset,
+                                sharpeningStrength = fsrSharpness,
                                 volumeBoostPercent = volumeBoost,
+                                bbrUltraPacing = bbrUltraPacing,
+                                enableAiUpscale = fsrEnabled,
+                                lowLatencyVsyncOff = isVsyncOff,
                                 mkbEnabled = mkbEnabled,
                                 mouseSensitivity = mouseSensitivity,
-                                stickDeadzoneLeft = stickDeadzone
+                                stickDeadzoneLeft = stickDeadzone,
+                                isCustom = true
                             )
                             profileManager.saveProfile(updatedProfile)
                             Toast.makeText(
@@ -929,7 +935,7 @@ fun StreamScreen(
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun NativeZeroCopyViewport(
-    streamManager: WebRTCStreamManager,
+    streamManager: NativeStreamPipelineManager,
     settings: com.xcloud.godmode.models.SettingsModel,
     modifier: Modifier = Modifier,
     engineType: Int = 3,

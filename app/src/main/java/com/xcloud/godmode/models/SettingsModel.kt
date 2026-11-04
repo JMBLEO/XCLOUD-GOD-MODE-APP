@@ -33,11 +33,11 @@ data class SettingsModel(
 
     // 3. Seguridad & Renderizado
     val enforceTls13Strict: Boolean = true,
-    val anonymizeWebRtcLocalIps: Boolean = true,
+    val anonymizeLocalIps: Boolean = true,
     val filterTeredoCandidates: Boolean = true,
     val enableGpuRasterization: Boolean = true,
-    val autoDarkModeWebContents: Boolean = true,
-    val webrtcAudioDownmixMethod: String = "CENTER_VOICE_BOOST_3DB", // "ITU_R_BS775", "CENTER_VOICE_BOOST", "PASSTHROUGH"
+    val autoDarkModeContents: Boolean = true,
+    val nativeAudioDownmixMethod: String = "CENTER_VOICE_BOOST_3DB", // "ITU_R_BS775", "CENTER_VOICE_BOOST", "PASSTHROUGH"
 
     // 4. Pantalla & Escala UI
     val appLanguage: String = "AUTO", // "AUTO", "ES", "EN"

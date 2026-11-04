@@ -18,7 +18,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.xcloud.godmode.streaming.WebRTCStreamManager
+import com.xcloud.godmode.streaming.NativeStreamPipelineManager
 
 /**
  * LatencyHUD: Real-time telemetry overlay with Render Pass separation.
@@ -27,7 +27,7 @@ import com.xcloud.godmode.streaming.WebRTCStreamManager
  */
 @Composable
 fun LatencyHUD(
-    streamManager: WebRTCStreamManager,
+    streamManager: NativeStreamPipelineManager,
     position: String = "TOP",
     showFps: Boolean = true,
     showRtt: Boolean = true,

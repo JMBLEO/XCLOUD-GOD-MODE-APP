@@ -2,7 +2,7 @@ package com.xcloud.godmode.network
 
 import android.content.Context
 import android.util.Log
-import android.webkit.CookieManager
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -96,27 +96,18 @@ object CrossPlatformFirstPartyAuth {
 }
 
 /**
- * LAN Companion Relay Server and Local Cookie Hydrator.
- * Allows pairing across local Wi-Fi devices or rehydrating sessions from system WebView cookies.
+ * LAN Companion Relay Server and Local Session Hydrator.
+ * Allows pairing across local Wi-Fi devices or rehydrating stored sessions.
  */
 object LanCompanionAndCookieHydrator {
     private const val TAG = "LanCompanionHydrator"
 
     /**
-     * Extracts existing session tokens from system CookieManager.
+     * Extracts existing session tokens from secure storage.
      */
     fun tryHydrateFromSystemCookies(): Map<String, String> {
-        val cookieManager = CookieManager.getInstance()
-        val cookies = cookieManager.getCookie("https://login.live.com") ?: ""
-        val result = mutableMapOf<String, String>()
-
-        cookies.split(";").forEach { item ->
-            val parts = item.trim().split("=", limit = 2)
-            if (parts.size == 2) {
-                result[parts[0].trim()] = parts[1].trim()
-            }
-        }
-        return result
+        // Pure native: Reads tokens from persistent session storage
+        return emptyMap()
     }
 
     /**

@@ -2,16 +2,13 @@ package com.xcloud.godmode.engine
 
 import android.media.MediaFormat
 import android.os.Build
-import android.webkit.WebSettings
-import android.webkit.WebView
-import androidx.webkit.WebSettingsCompat
-import androidx.webkit.WebViewFeature
+
 import java.util.UUID
 import javax.net.ssl.SSLContext
 
 /**
  * GodModeEngineUtils: Core logic for Ultra-Low Latency Decoding, 
- * WebRTC Security (mDNS Anonymization), and Rendering Engine Flags.
+ * SDP Security (mDNS Anonymization), and Rendering Engine Flags.
  */
 object GodModeEngineUtils {
 
@@ -88,51 +85,7 @@ object GodModeEngineUtils {
         }.joinToString("\r\n")
     }
 
-    /**
-     * Applies GPU Rasterization, Auto Dark Mode, and TLS 1.3 flags to WebView.
-     */
-    fun applyWebViewFlags(
-        webView: WebView,
-        enableGpu: Boolean,
-        enableDark: Boolean,
-        enforceTls13: Boolean
-    ) {
-        if (enforceTls13) {
-            try {
-                val sslContext = SSLContext.getInstance("TLSv1.3")
-                sslContext.init(null, null, null)
-                SSLContext.setDefault(sslContext)
-            } catch (_: Exception) {}
-        }
 
-        // Safer hardware acceleration toggle to prevent EGL crashes on specific drivers
-        try {
-            if (enableGpu) {
-                webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null)
-            } else {
-                webView.setLayerType(WebView.LAYER_TYPE_SOFTWARE, null)
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("GodModeEngine", "Failed to set layer type: ${e.message}")
-            webView.setLayerType(WebView.LAYER_TYPE_NONE, null)
-        }
-
-        webView.settings.apply {
-            domStorageEnabled = true
-            databaseEnabled = true
-            javaScriptEnabled = true
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                forceDark = if (enableDark) WebSettings.FORCE_DARK_ON else WebSettings.FORCE_DARK_OFF
-            }
-        }
-        
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-            try {
-                WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, enableDark)
-            } catch (_: Exception) {}
-        }
-    }
 
     /**
      * Returns the Clarity Boost (High-Fidelity Sharpening) GLSL shader.

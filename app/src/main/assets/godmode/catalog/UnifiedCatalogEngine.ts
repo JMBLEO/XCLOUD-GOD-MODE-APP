@@ -154,7 +154,7 @@ export class UnifiedCatalogEngine {
       trailerUrl = mp4?.Uri || vid.URI;
     }
 
-    // Extracción obligatoria de xboxTitleId para el handshake de WebRTC
+    // Extracción obligatoria de xboxTitleId para el handshake del pipeline nativo Zero-Copy
     const alternateIds: any[] = product.AlternateIds || [];
     const titleIdObj =
       alternateIds.find((id) => id.IdType === 'XboxTitleId') ||
