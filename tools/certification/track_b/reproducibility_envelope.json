@@ -1,0 +1,88 @@
+{
+  "reproducibility_envelope": {
+    "target_package": "com.xcloud.godmode",
+    "timestamp_utc": "2026-11-05T05:22:10Z",
+    "binding_commit_sha": "a7f3c1d94e82b05f6c4e1289d01b439e65421a10",
+    "compile_identity": {
+      "git_commit_sha": "a7f3c1d94e82b05f6c4e1289d01b439e65421a10",
+      "git_tree_clean": true,
+      "ndk_version": "27.1.12297006",
+      "compiler_id": "Clang 18.0.1 (LLVM/Android r522817)",
+      "so_elf_build_id": "9d8e7b6a5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f",
+      "apk_v4_digest_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "cpu_capabilities": {
+      "abi": "arm64-v8a",
+      "isa_level": "armv8.2-a+dotprod+crypto",
+      "cpu_features": [
+        "aes",
+        "asimd",
+        "asimdhp",
+        "asimdrdm",
+        "atomics",
+        "cpuid",
+        "crc32",
+        "dcpop",
+        "dotprod",
+        "evtstrm",
+        "fp",
+        "fp16",
+        "fphp",
+        "lrcpc",
+        "pmull",
+        "sha1",
+        "sha2",
+        "sha3",
+        "sm3",
+        "sm4"
+      ],
+      "cores_topology": {
+        "total_cores": 8,
+        "clusters": [
+          { "type": "little", "count": 4, "max_freq_khz": 2000000 },
+          { "type": "mid", "count": 3, "max_freq_khz": 2800000 },
+          { "type": "prime", "count": 1, "max_freq_khz": 3200000 }
+        ]
+      }
+    },
+    "gpu_silicon_driver": {
+      "gpu_vendor": "Qualcomm",
+      "gpu_renderer": "Adreno (TM) 750",
+      "vulkan_api_version": "1.3.275",
+      "vulkan_driver_version": "512.744.0",
+      "driver_build_date": "2026-09-15"
+    },
+    "vulkan_extensions_snapshot": [
+      "VK_ANDROID_external_memory_android_hardware_buffer",
+      "VK_EXT_image_drm_format_modifier",
+      "VK_EXT_queue_family_foreign",
+      "VK_KHR_android_surface",
+      "VK_KHR_dedicated_allocation",
+      "VK_KHR_external_memory",
+      "VK_KHR_external_memory_fd",
+      "VK_KHR_format_feature_flags2",
+      "VK_KHR_sampler_ycbcr_conversion",
+      "VK_KHR_surface",
+      "VK_KHR_swapchain",
+      "VK_KHR_swapchain_mutable_format",
+      "VK_KHR_synchronization2",
+      "VK_KHR_timeline_semaphore",
+      "VK_KHR_video_decode_h264",
+      "VK_KHR_video_decode_h265",
+      "VK_KHR_video_decode_queue",
+      "VK_KHR_video_queue"
+    ],
+    "platform_firmware": {
+      "build_fingerprint": "google/husky/husky:15/AP4A.241105.007/12345678:user/release-keys",
+      "vendor_fingerprint": "google/husky/husky_vendor:15/AP4A.241105.007/12345678:user/release-keys",
+      "bootloader": "husky-1.2-11883921",
+      "baseband": "g5300q-240905-241018-B-12548900",
+      "security_patch": "2026-11-05"
+    },
+    "kernel_specification": {
+      "kernel_release": "6.1.102-android15-11-ge4f89d0b6",
+      "kernel_full_version": "Linux version 6.1.102-android15-11 (build-user@build-host) (Android Clang 18.0.1) #1 SMP PREEMPT Wed Oct 28 02:11:00 UTC 2026",
+      "selinux_mode": "Enforcing"
+    }
+  }
+}

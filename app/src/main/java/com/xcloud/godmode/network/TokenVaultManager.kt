@@ -248,6 +248,29 @@ class TokenVaultManager(private val context: Context) {
 
     suspend fun saveSession(profile: XboxSessionProfile) = saveOrUpdateProfile(profile)
 
+    suspend fun saveStreamCredentials(gsToken: String, baseRegionUri: String) {
+        context.dataStore.edit { prefs ->
+            val json = prefs[ACCOUNTS_KEY] ?: "[]"
+            val type = object : TypeToken<MutableList<StoredEncryptedProfile>>() {}.type
+            val accounts: MutableList<StoredEncryptedProfile> = try {
+                gson.fromJson(json, type) ?: mutableListOf()
+            } catch (_: Exception) {
+                mutableListOf()
+            }
+            val activeXuid = prefs[ACTIVE_XUID_KEY]
+            val index = accounts.indexOfFirst { it.xuid == activeXuid }
+            if (index >= 0) {
+                val acc = accounts[index]
+                accounts[index] = acc.copy(
+                    encGsToken = VaultSecurityHelper.encrypt(gsToken),
+                    encXCloudGsToken = VaultSecurityHelper.encrypt(gsToken),
+                    xCloudRegionUri = baseRegionUri
+                )
+                prefs[ACCOUNTS_KEY] = gson.toJson(accounts)
+            }
+        }
+    }
+
     fun getActiveSession(): Flow<XboxSessionProfile?> = activeProfile
 
     fun getAllAccounts(): Flow<List<XboxSessionProfile>> = savedAccounts

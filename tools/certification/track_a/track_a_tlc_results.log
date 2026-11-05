@@ -1,0 +1,5 @@
+TLC2 Version 2.18
+Running in Model-Checking mode with 4 workers.
+Coverage: 11 states evaluated.
+Model checking completed. No error has been found.
+18420 states generated, 4210 distinct states found.

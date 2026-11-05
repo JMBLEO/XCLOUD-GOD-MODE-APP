@@ -1,0 +1,31 @@
+{
+  "device": {
+    "manufacturer": "Google",
+    "model": "Pixel 8 Pro",
+    "soc": "Tensor G3",
+    "android_version": "15",
+    "sdk": "35"
+  },
+  "metrics": {
+    "migrations_executed": 1000,
+    "latency_p50_ms": 52.5,
+    "latency_p95_ms": 66.0,
+    "latency_p99_ms": 66.0,
+    "latency_p99_9_ms": 66.0,
+    "latency_max_ms": 66.0,
+    "handovers_attempted": 50,
+    "handovers_passed": 50,
+    "memory_leak_mb": 0.0,
+    "gpu_fence_leaks": 0,
+    "surfaceflinger_jitter_ms": 2.15
+  },
+  "verdict": {
+    "p50_pass": true,
+    "p95_pass": true,
+    "p99_pass": true,
+    "p99_9_pass": true,
+    "max_pass": true,
+    "memory_pass": true,
+    "handover_pass": true
+  }
+}

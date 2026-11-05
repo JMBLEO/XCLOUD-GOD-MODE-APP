@@ -1,0 +1,16 @@
+{
+  "binding_commit_sha": "a7f3c1d94e82b05f6c4e1289d01b439e65421a10",
+  "manifest_version": "2.0.0",
+  "signature_algorithm": "Ed25519 (RFC 8032)",
+  "signed_artifacts": {
+    "track_a/GodModeGovernance.cfg": "3d714783671c154fbcc355f7db83bdaecaa964c67a5cb890ec1c73af54601708",
+    "track_a/GodModeGovernance.tla": "03e0431e08eafc388fd96520adda7e78b8ded8ae9355e61680173fa4c3f350e7",
+    "track_a/cbmc_harness_vyukov_pool.c": "9bd1e2dbc605d3ed7216bca8784c220db3bd32e2ff4c5bea6aaa65f2f315c377",
+    "track_a/track_a_cbmc_results.json": "2733a2430c0bd5ff240655e73531197ee599fc62f980a1b1ce7e7c1e2b08a244",
+    "track_a/track_a_tlc_results.log": "ff82d672f38deb396c5c7ef3a31ce47306a5d26270bd4b9397c4d5d69b580e16",
+    "track_b/reproducibility_envelope.json": "af5a4e7a887f8d717fb0a998eab0ff84908abd05be5e144aa5fcba4b2e18734e",
+    "track_b/track_b_silicon_report.json": "9a8e44bd2a478942ac05867ce727605c75a6603a5c1c8ecde34c5d7b80aaee10",
+    "track_c/CARRIER_GRADE_CERTIFICATION_DOSSIER.md": "cb3a91ec2f937b7688b7a67bf3cd3d6da4b489592993f05daed3d4625fa758ca"
+  },
+  "timestamp_utc": "2026-11-05T05:24:56.260205+00:00"
+}

@@ -14,6 +14,9 @@ find_package(oboe REQUIRED CONFIG)
 # Try to find OpenSSL
 find_package(OpenSSL)
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # Add the main native library
 add_library(godmode_native SHARED
         NativeStreamBridge.cpp
@@ -40,6 +43,11 @@ add_library(godmode_native SHARED
         ConsoleHardwareBridge.cpp
         stream/UnifiedZeroCopyStreamReactor.cpp
         stream/NativeIceDtlsSrtpBridge.cpp
+        godmode_six_engines.cpp
+        godmode_jni_bridge.cpp
+        godmode_carrier_runtime.cpp
+        godmode_six_engine_session_injector.cpp
+        godmode_reproducibility_anchor.cpp
 )
 
 # Link zlib for STUN fingerprint CRC32
