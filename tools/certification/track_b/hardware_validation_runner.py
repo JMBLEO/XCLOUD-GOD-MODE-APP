@@ -191,6 +191,12 @@ def run_track_b_campaign():
     with open(out_file, "w") as f:
         json.dump(report, f, indent=2)
 
+    try:
+        from generate_recharts_dashboard import generate_dashboard
+        generate_dashboard(out_file)
+    except Exception as e:
+        print(f"[TRACK-B] Nota: Generador Recharts: {e}")
+
     print("\n======================================================================")
     print("                    AUDITORÍA OPERACIONAL TRACK B                    ")
     print("======================================================================")

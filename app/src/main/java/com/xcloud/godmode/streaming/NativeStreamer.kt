@@ -48,6 +48,24 @@ class NativeStreamer(
         NativeStreamBridge.injectAudio(pcmFrames, pcmFrames.size / 2)
     }
 
+    fun injectFloatAudio(pcmFrames: FloatArray) {
+        NativeStreamBridge.injectAudioFloat(pcmFrames, pcmFrames.size / 2)
+    }
+
+    fun syncAudioClock(audioClockUs: Long, videoPtsUs: Long) {
+        NativeStreamBridge.syncAudioClock(audioClockUs, videoPtsUs)
+    }
+
+    fun recordAudioPacketArrival(sendTimeUs: Long, arrivalTimeUs: Long) {
+        NativeStreamBridge.recordAudioPacketArrival(sendTimeUs, arrivalTimeUs)
+    }
+
+    fun getAudioLatencyMs(): Float = NativeStreamBridge.getAudioLatencyMs()
+
+    fun getAudioJitterMs(): Float = NativeStreamBridge.getAudioJitterMs()
+
+    fun getAudioBufferDepthMs(): Float = NativeStreamBridge.getAudioBufferDepthMs()
+
     fun pushRawControllerInput(data: ByteArray): Boolean {
         return NativeStreamBridge.pushRawInput(data, data.size)
     }

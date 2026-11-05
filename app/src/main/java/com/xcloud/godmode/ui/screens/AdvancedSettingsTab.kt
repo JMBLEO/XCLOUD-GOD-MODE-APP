@@ -168,11 +168,11 @@ fun AdvancedSettingsTab(
                 }
             }
 
-            // Barra de sub-pestañas anclada: Red | Controles | Sistema
+            // Barra de sub-pestañas anclada: Red | Controles | Sistema | SLA
             val tabs = if (settings.appLanguage == "en") {
-                listOf("Red" to "Network", "Controles" to "Controls", "Sistema" to "System")
+                listOf("Red" to "Network", "Controles" to "Controls", "Sistema" to "System", "SLA" to "SLA")
             } else {
-                listOf("Red" to "Red", "Controles" to "Controles", "Sistema" to "Sistema")
+                listOf("Red" to "Red", "Controles" to "Controles", "Sistema" to "Sistema", "SLA" to "SLA")
             }
 
             Row(
@@ -552,6 +552,12 @@ fun AdvancedSettingsTab(
                             }
                         }
                     }
+                }
+            } else if (activeTab == "SLA") {
+                item {
+                    com.xcloud.godmode.ui.components.LatencyDashboard(
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
                 }
             } else {
                 item {

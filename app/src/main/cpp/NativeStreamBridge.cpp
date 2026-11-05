@@ -224,11 +224,18 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_purgeSecureVault(JNIEnv *en
 JNIEXPORT jboolean JNICALL
 Java_com_xcloud_godmode_streaming_NativeStreamBridge_startAudio(JNIEnv *env, jobject thiz) {
     std::lock_guard<std::mutex> lock(gPipelineMutex);
-    return gAudioEngine && gAudioEngine->start() ? JNI_TRUE : JNI_FALSE;
+    if (!gAudioEngine) {
+        gAudioEngine = std::make_unique<GodModeAudioEngine>();
+    }
+    return gAudioEngine->start() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
 Java_com_xcloud_godmode_streaming_NativeStreamBridge_stopAudio(JNIEnv *env, jobject thiz) {
+    std::lock_guard<std::mutex> lock(gPipelineMutex);
+    if (gAudioEngine) {
+        gAudioEngine->stop();
+    }
     stopAudioEngine();
 }
 
@@ -237,14 +244,70 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_injectAudio(JNIEnv *env, jo
     if (!data) return;
     jshort* frames = env->GetShortArrayElements(data, nullptr);
     if (frames) {
-        // Convert shorts to floats for the new AAudio engine
-        std::vector<float> floatFrames(num_frames * 2);
-        for (int i = 0; i < num_frames * 2; ++i) {
-            floatFrames[i] = static_cast<float>(frames[i]) / 32768.0f;
+        if (gAudioEngine && gAudioEngine->isRunning()) {
+            gAudioEngine->injectAudio(reinterpret_cast<const int16_t*>(frames), num_frames);
+        } else {
+            std::vector<float> floatFrames(num_frames * 2);
+            for (int i = 0; i < num_frames * 2; ++i) {
+                floatFrames[i] = static_cast<float>(frames[i]) / 32768.0f;
+            }
+            injectAudioFrames(floatFrames.data(), num_frames);
         }
-        injectAudioFrames(floatFrames.data(), num_frames);
         env->ReleaseShortArrayElements(data, frames, JNI_ABORT);
     }
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_injectAudioFloat(JNIEnv *env, jobject thiz, jfloatArray data, jint num_frames) {
+    if (!data) return;
+    jfloat* frames = env->GetFloatArrayElements(data, nullptr);
+    if (frames) {
+        if (gAudioEngine && gAudioEngine->isRunning()) {
+            gAudioEngine->injectAudioFloat(frames, num_frames);
+        } else {
+            injectAudioFrames(frames, num_frames);
+        }
+        env->ReleaseFloatArrayElements(data, frames, JNI_ABORT);
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_syncAudioClock(JNIEnv *env, jobject thiz, jlong audio_clock_us, jlong video_pts_us) {
+    if (gAudioEngine && gAudioEngine->isRunning()) {
+        gAudioEngine->syncAudioClock(audio_clock_us, video_pts_us);
+    }
+    syncAudioClock(audio_clock_us, video_pts_us);
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_recordAudioPacketArrival(JNIEnv *env, jobject thiz, jlong send_time_us, jlong arrival_time_us) {
+    if (gAudioEngine && gAudioEngine->isRunning()) {
+        gAudioEngine->recordPacketArrival(send_time_us, arrival_time_us);
+    }
+}
+
+JNIEXPORT jfloat JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_getAudioLatencyMs(JNIEnv *env, jobject thiz) {
+    if (gAudioEngine && gAudioEngine->isRunning()) {
+        return gAudioEngine->getTelemetry().latencyMs;
+    }
+    return 0.0f;
+}
+
+JNIEXPORT jfloat JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_getAudioJitterMs(JNIEnv *env, jobject thiz) {
+    if (gAudioEngine && gAudioEngine->isRunning()) {
+        return gAudioEngine->getTelemetry().jitterMs;
+    }
+    return 0.0f;
+}
+
+JNIEXPORT jfloat JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_getAudioBufferDepthMs(JNIEnv *env, jobject thiz) {
+    if (gAudioEngine && gAudioEngine->isRunning()) {
+        return gAudioEngine->getTelemetry().bufferDepthMs;
+    }
+    return 0.0f;
 }
 
 static uint8_t* gTelemetryBufferPtr = nullptr;

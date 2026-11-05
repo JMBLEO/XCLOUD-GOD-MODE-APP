@@ -81,6 +81,16 @@
             android:foregroundServiceType="connectedDevice" />
 
         <service
+            android:name=".services.ThermalMonitorService"
+            android:enabled="true"
+            android:exported="false" />
+
+        <service
+            android:name=".services.BatteryDrainMonitorService"
+            android:enabled="true"
+            android:exported="false" />
+
+        <service
             android:name=".ai.IsolatedAiEngineService"
             android:enabled="true"
             android:exported="false"

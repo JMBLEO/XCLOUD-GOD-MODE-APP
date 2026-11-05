@@ -136,6 +136,36 @@ object NativeStreamBridge {
     external fun injectAudio(data: ShortArray, numFrames: Int)
 
     /**
+     * Injects decoded float PCM audio frames (48kHz Stereo) into the Oboe pipeline.
+     */
+    external fun injectAudioFloat(data: FloatArray, numFrames: Int)
+
+    /**
+     * Synchronizes audio presentation clock with video PTS to maintain zero-click A/V sync.
+     */
+    external fun syncAudioClock(audioClockUs: Long, videoPtsUs: Long)
+
+    /**
+     * Records audio UDP packet transmission and arrival timestamps for RFC 3550 jitter calculation.
+     */
+    external fun recordAudioPacketArrival(sendTimeUs: Long, arrivalTimeUs: Long)
+
+    /**
+     * Retrieves current end-to-end audio output latency in milliseconds from Oboe.
+     */
+    external fun getAudioLatencyMs(): Float
+
+    /**
+     * Retrieves current calculated audio network jitter in milliseconds.
+     */
+    external fun getAudioJitterMs(): Float
+
+    /**
+     * Retrieves current audio jitter buffer queue depth in milliseconds.
+     */
+    external fun getAudioBufferDepthMs(): Float
+
+    /**
      * Binds a 48-byte Direct ByteBuffer for zero-copy JNI telemetry transfer:
      * [0..31: Legacy/Core metrics], [32..35: Thermal], [36..43: Clock Drift]
      */

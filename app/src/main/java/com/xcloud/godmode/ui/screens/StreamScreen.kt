@@ -234,10 +234,22 @@ fun StreamScreen(
     }
 
     DisposableEffect(Unit) {
+        com.xcloud.godmode.services.ThermalMonitorService.startService(context)
+        com.xcloud.godmode.services.BatteryDrainMonitorService.startService(context)
+        val capListener: (Int?) -> Unit = { cap ->
+            if (cap != null) {
+                android.util.Log.w("StreamScreen", "[ThermalCap] Enforcing frame rate cap: $cap FPS due to SoC thermals (> 45°C)")
+            }
+        }
+        com.xcloud.godmode.services.ThermalMonitorService.registerFrameRateCapListener(capListener)
+
         onDispose {
+            com.xcloud.godmode.services.ThermalMonitorService.unregisterFrameRateCapListener(capListener)
             com.xcloud.godmode.streaming.NativeInputBridge.isRawTouchEnabled = false
             if (!isMinimizingToHub) {
                 safeReleaseRenderer()
+                com.xcloud.godmode.services.ThermalMonitorService.stopService(context)
+                com.xcloud.godmode.services.BatteryDrainMonitorService.stopService(context)
             }
         }
     }

@@ -123,5 +123,51 @@ class CarrierRuntimeTest {
         assertTrue(score.refreshTokenValid)
         assertEquals(85, score.overallScore)
     }
+
+    @Test
+    fun testStreamControllerFrameRateCapping() {
+        val controller = com.xcloud.godmode.services.StreamController(initialTargetFps = 120)
+        assertEquals(120, controller.getEffectiveFps())
+        assertFalse(controller.isThrottled())
+
+        // Apply thermal throttle cap to 45 FPS
+        controller.applyFrameRateCap(45)
+        assertEquals(45, controller.getEffectiveFps())
+        assertTrue(controller.isThrottled())
+
+        // Clear cap restores baseline
+        controller.clearFrameRateCap()
+        assertEquals(120, controller.getEffectiveFps())
+        assertFalse(controller.isThrottled())
+    }
+
+    @Test
+    fun testThermalSocTemperatureResolution() {
+        val zones = listOf(
+            com.xcloud.godmode.services.SocThermalZoneInfo(0, "battery", 32.5f),
+            com.xcloud.godmode.services.SocThermalZoneInfo(1, "cpu-1-0-usr", 43.8f),
+            com.xcloud.godmode.services.SocThermalZoneInfo(2, "gpu-therm", 46.2f),
+            com.xcloud.godmode.services.SocThermalZoneInfo(3, "modem", 35.0f)
+        )
+        val socTemp = com.xcloud.godmode.services.ThermalMonitorService.determineSocTemperature(zones)
+        assertEquals(46.2f, socTemp, 0.01f)
+        assertTrue(socTemp >= com.xcloud.godmode.services.ThermalMonitorService.THERMAL_THROTTLE_THRESHOLD_CELSIUS)
+    }
+
+    @Test
+    fun testGamingOptimizationProfiles() {
+        val profiles = com.xcloud.godmode.services.GamingOptimizationProfile.entries
+        assertEquals(4, profiles.size)
+        assertTrue(profiles.contains(com.xcloud.godmode.services.GamingOptimizationProfile.PERFORMANCE))
+        assertTrue(profiles.contains(com.xcloud.godmode.services.GamingOptimizationProfile.BALANCED))
+        assertTrue(profiles.contains(com.xcloud.godmode.services.GamingOptimizationProfile.BATTERY_SAVER))
+        assertTrue(profiles.contains(com.xcloud.godmode.services.GamingOptimizationProfile.THERMAL_THROTTLED))
+
+        assertEquals(120, com.xcloud.godmode.services.GamingOptimizationProfile.PERFORMANCE.targetFps)
+        assertEquals(60, com.xcloud.godmode.services.GamingOptimizationProfile.BALANCED.targetFps)
+        assertEquals(45, com.xcloud.godmode.services.GamingOptimizationProfile.BATTERY_SAVER.targetFps)
+        assertEquals(30, com.xcloud.godmode.services.GamingOptimizationProfile.THERMAL_THROTTLED.targetFps)
+    }
 }
+
 

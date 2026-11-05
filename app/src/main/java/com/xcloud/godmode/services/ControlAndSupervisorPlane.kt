@@ -201,11 +201,31 @@ class SessionController(
 // ============================================================================
 // 2. STREAM CONTROLLER (Recepción A/V, Buffers, A/V Sync y Frame Pacing)
 // ============================================================================
-class StreamController(targetFps: Int = 60) {
-    private val frameBudgetNs = 1_000_000_000L / targetFps
+class StreamController(initialTargetFps: Int = 60) {
+    private val baselineFps = AtomicInteger(initialTargetFps)
+    private val currentFps = AtomicInteger(initialTargetFps)
+    private val isThermalThrottled = AtomicBoolean(false)
+    private val frameBudgetNs = AtomicLong(1_000_000_000L / initialTargetFps)
     private val audioPtsUs = AtomicLong(0L)
     private val videoPtsUs = AtomicLong(0L)
     private val jitterBufferDepthPackets = AtomicInteger(12)
+
+    fun applyFrameRateCap(cappedFps: Int) {
+        val safeCap = cappedFps.coerceIn(15, baselineFps.get())
+        currentFps.set(safeCap)
+        frameBudgetNs.set(1_000_000_000L / safeCap)
+        isThermalThrottled.set(true)
+    }
+
+    fun clearFrameRateCap() {
+        val original = baselineFps.get()
+        currentFps.set(original)
+        frameBudgetNs.set(1_000_000_000L / original)
+        isThermalThrottled.set(false)
+    }
+
+    fun getEffectiveFps(): Int = currentFps.get()
+    fun isThrottled(): Boolean = isThermalThrottled.get()
 
     fun onAudioPacketReceived(ptsUs: Long) {
         audioPtsUs.set(ptsUs)
@@ -219,10 +239,11 @@ class StreamController(targetFps: Int = 60) {
     fun computeOptimalPresentTimeNs(capturePtsUs: Long): Long {
         val nowNs = System.nanoTime()
         val avDriftUs = computeAvSyncOffsetUs(capturePtsUs)
+        val budget = frameBudgetNs.get()
         return when {
-            avDriftUs > 25_000L -> nowNs + (frameBudgetNs / 2) // Video adelantado: suavizar pacing
-            avDriftUs < -25_000L -> nowNs                     // Video atrasado: presentación inmediata
-            else -> nowNs + frameBudgetNs
+            avDriftUs > 25_000L -> nowNs + (budget / 2) // Video adelantado: suavizar pacing
+            avDriftUs < -25_000L -> nowNs               // Video atrasado: presentación inmediata
+            else -> nowNs + budget
         }
     }
 
