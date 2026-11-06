@@ -49,6 +49,7 @@ import com.xcloud.godmode.models.SettingsModel
 import com.xcloud.godmode.services.StreamSessionHolder
 import com.xcloud.godmode.network.XboxFullAuthManager
 import com.xcloud.godmode.ui.components.*
+import com.xcloud.godmode.ui.GodModeSettingsScreen
 import com.xcloud.godmode.viewmodels.HomeViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -245,10 +246,8 @@ fun HomeScreen(
                         authManager = authManager,
                         viewModel = viewModel
                     )
-                    2 -> AdvancedSettingsTab(
-                        settings = settings,
-                        viewModel = viewModel,
-                        onSettingsChanged = { viewModel.setSettings(it) }
+                    2 -> GodModeSettingsScreen(
+                        configRepository = viewModel.configRepository
                     )
                 }
 
@@ -268,15 +267,26 @@ fun HomeScreen(
 
         // Modals
         if (selectedGameForDetails != null) {
+            val context = LocalContext.current
             GameDetailsModal(
                 game = selectedGameForDetails!!,
                 settings = settings,
                 onClose = { viewModel.hideDetails() },
                 onStartStream = {
-                    viewModel.hideDetails()
-                    com.xcloud.godmode.audio.GodModeSoundEngine.play(com.xcloud.godmode.audio.SoundEventType.LAUNCH)
-                    val targetRegion = userSession?.xCloudRegionUri?.ifBlank { "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user" } ?: "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user"
-                    onLaunchGame(selectedGameForDetails!!.id, targetRegion)
+                    val missingPermissions = mutableListOf<String>()
+                    if (!viewModel.isAuthorized(android.Manifest.permission.RECORD_AUDIO)) missingPermissions.add("Micrófono")
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                        if (!viewModel.isAuthorized(android.Manifest.permission.BLUETOOTH_CONNECT)) missingPermissions.add("Bluetooth")
+                    }
+                    
+                    if (missingPermissions.isNotEmpty()) {
+                        android.widget.Toast.makeText(context, "Faltan permisos críticos: ${missingPermissions.joinToString(", ")}. Autorízalos en el Hub.", android.widget.Toast.LENGTH_LONG).show()
+                    } else {
+                        viewModel.hideDetails()
+                        com.xcloud.godmode.audio.GodModeSoundEngine.play(com.xcloud.godmode.audio.SoundEventType.LAUNCH)
+                        val targetRegion = userSession?.xCloudRegionUri?.ifBlank { "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user" } ?: "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user"
+                        onLaunchGame(selectedGameForDetails!!.id, targetRegion)
+                    }
                 }
             )
         }
@@ -292,8 +302,10 @@ fun HomeScreen(
         }
 
         if (postStreamSummary != null) {
+            val siliconReport by viewModel.siliconReport.collectAsState()
             PostStreamPerformanceModal(
                 summary = postStreamSummary!!,
+                siliconReport = siliconReport,
                 onClose = { viewModel.hideSummary() },
                 onQuickReconnect = {
                     viewModel.hideSummary()

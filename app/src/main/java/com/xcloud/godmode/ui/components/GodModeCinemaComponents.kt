@@ -729,12 +729,13 @@ fun QuickActionModal(
 @Composable
 fun StreamStatusOverlay(
     title: String,
-    subtitle: String
+    subtitle: String,
+    onCancel: (() -> Unit)? = null
 ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.85f))
+            .background(Color.Black.copy(alpha = 0.90f))
             .clickable(enabled = false) {},
         contentAlignment = Alignment.Center
     ) {
@@ -763,6 +764,18 @@ fun StreamStatusOverlay(
                 color = Color.Gray,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
+            if (onCancel != null) {
+                Spacer(modifier = Modifier.height(24.dp))
+                OutlinedButton(
+                    onClick = onCancel,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF3F3F46))
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Cancelar y Volver al Hub")
+                }
+            }
         }
     }
 }

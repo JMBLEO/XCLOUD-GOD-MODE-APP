@@ -218,6 +218,21 @@ object NativeStreamBridge {
      * [0: currentRttMs, 1: minRttMs, 2: maxRttMs, 3: smoothedRttMs, 4: jitterMs, 5: totalSuccessReceived]
      */
     external fun getStunLatencyMetrics(): FloatArray?
+
+    /**
+     * Enforces a hard frame rate cap in the native rendering pipeline to mitigate thermal stress.
+     */
+    external fun setFrameRateCap(fps: Int)
+
+    /**
+     * Triggers a Picture Loss Indication (PLI) over RTCP to request a new keyframe from the server.
+     */
+    external fun requestPli()
+
+    /**
+     * Triggers a keyframe request via the native transport layer.
+     */
+    external fun requestKeyframe()
 }
 
 

@@ -5,6 +5,12 @@ import android.content.Intent
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import android.view.WindowManager
+import android.os.Build
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -25,6 +31,7 @@ import com.xcloud.godmode.streaming.NativeStreamPipelineManager
 import com.xcloud.godmode.network.XboxFullAuthManager
 import com.xcloud.godmode.ui.screens.HomeScreen
 import com.xcloud.godmode.ui.screens.StreamScreen
+import com.xcloud.godmode.ui.StreamPhase
 import com.xcloud.godmode.ui.components.GodModePermissionHandler
 import com.xcloud.godmode.ui.theme.AppLocaleManager
 import com.xcloud.godmode.ui.theme.LocalAppStrings
@@ -48,6 +55,22 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+
+        // 1. Evitar que la ventana reserve espacio para las barras del sistema
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // 2. Extender el contenido bajo el notch o recorte de cámara
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+
+        // 3. Mantener la pantalla encendida durante sesiones de juego
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        applyPersistentImmersiveMode()
 
         // Install StrictMode guard to prevent NetworkOnMainThreadException
         com.xcloud.godmode.core.NetworkThreadGuard.installStrictModeNetworkGuard()
@@ -55,7 +78,7 @@ class MainActivity : FragmentActivity() {
         // Initialize Network with DoH for bypass
         networkClient = NetworkClient(enableDoh = true)
         xboxAuthManager = XboxFullAuthManager(networkClient)
-        streamManager = NativeStreamPipelineManager(this, networkClient)
+        streamManager = NativeStreamPipelineManager(this, networkClient, com.xcloud.godmode.catalog.CloudLaunchDiagnostics())
         geminiService = GeminiService()
 
         // Initialize God Mode Native Sound Engine
@@ -78,7 +101,8 @@ class MainActivity : FragmentActivity() {
         thermalGuard = com.xcloud.godmode.thermal.GodModeThermalGuard(this) {
             // Callback: Degrade quality to 1080p HQ preventively
             android.util.Log.w("MainActivity", "Thermal stress detected! Forcing quality degradation for hardware safety.")
-            // Logic to signal streamManager or viewmodel to lower resolution
+            com.xcloud.godmode.streaming.NativeStreamBridge.forceThermalCritical()
+            com.xcloud.godmode.streaming.NativeStreamBridge.setFrameRateCap(45)
         }
         thermalGuard.registerListener()
 
@@ -127,6 +151,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
+        com.xcloud.godmode.security.OAuthDesktopAndCookiePersistence.flush()
         handleIntent(intent)
     }
 
@@ -138,6 +163,7 @@ class MainActivity : FragmentActivity() {
             }
             val code = xboxAuthManager.extractAuthCode(data.toString())
             if (code.isNotEmpty()) {
+                com.xcloud.godmode.security.OAuthDesktopAndCookiePersistence.flush()
                 homeViewModel.setCapturedAuthCode(code)
             }
         } else if (data != null && data.scheme == "godmode") {
@@ -208,12 +234,43 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    fun applyPersistentImmersiveMode() {
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        insetsController.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        insetsController.hide(WindowInsetsCompat.Type.systemBars())
+    }
+
+    override fun onResume() {
+        super.onResume()
+        window.decorView.post { applyPersistentImmersiveMode() }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            window.decorView.postDelayed({ applyPersistentImmersiveMode() }, 100L)
+        }
+    }
+
     override fun onDestroy() {
         if (::thermalGuard.isInitialized) {
             thermalGuard.unregisterListener()
         }
         stopService(Intent(this, com.xcloud.godmode.services.StreamingService::class.java))
         super.onDestroy()
+    }
+
+    companion object {
+        fun restoreImmersiveMode(activity: android.app.Activity?) {
+            activity?.window?.let { win ->
+                WindowCompat.setDecorFitsSystemWindows(win, false)
+                val controller = WindowCompat.getInsetsController(win, win.decorView)
+                controller.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
     }
 }
 
@@ -225,59 +282,52 @@ fun MainNavigation(
     homeViewModel: HomeViewModel
 ) {
     val navController = rememberNavController()
-    val settings by homeViewModel.settings.collectAsState()
-    val userSession by homeViewModel.userSession.collectAsState()
+    val uiState by homeViewModel.launchState.collectAsState()
 
-    var activeGsToken by remember { mutableStateOf("") }
-    var activeSessionPath by remember { mutableStateOf("https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user") }
-    var activeTitleId by remember { mutableStateOf("9NKX70BBCDRN") }
-    var activeTitleName by remember { mutableStateOf("Forza Horizon 5") }
+    // Reactive Navigation: Handle transitions based on StreamPhase
+    LaunchedEffect(uiState.phase) {
+        when (uiState.phase) {
+            StreamPhase.PREPARING -> {
+                if (navController.currentDestination?.route != "stream") {
+                    navController.navigate("stream")
+                }
+            }
+            StreamPhase.IDLE -> {
+                if (navController.currentDestination?.route == "stream") {
+                    navController.popBackStack("home", inclusive = false)
+                }
+            }
+            else -> {}
+        }
+    }
 
     NavHost(navController = navController, startDestination = "home") {
         composable("home") {
             HomeScreen(
                 authManager = authManager,
-                onLaunchGame = { titleId, path ->
-                    val token = userSession?.xCloudGsToken
-                    if (token != null) {
-                        activeGsToken = token
-                        activeSessionPath = path
-                        activeTitleId = titleId
-                        activeTitleName = "Xbox Cloud Title"
-                        navController.navigate("stream")
-                    } else {
-                        homeViewModel.showAuth(true)
-                    }
+                onLaunchGame = { titleId, _ ->
+                    homeViewModel.launchGame(titleId)
+                    // Navigation handled by LaunchedEffect
                 },
                 onLaunchConsole = { consoleId ->
-                    val token = userSession?.xHomeGsToken
-                    if (token != null) {
-                        activeGsToken = token
-                        activeSessionPath = "https://ukw.core.gssv-play-prod.xboxlive.com/v2/login/user"
-                        activeTitleId = consoleId
-                        activeTitleName = "Xbox Console Remote Play"
-                        navController.navigate("stream")
-                    } else {
-                        homeViewModel.showAuth(true)
-                    }
+                    // Simplified: just show auth for now if no session
+                    homeViewModel.showAuth(true)
                 },
                 viewModel = homeViewModel
             )
         }
         composable("stream") {
-            val hwProfile by homeViewModel.hardwareProfile.collectAsState()
             StreamScreen(
-                streamManager = streamManager,
-                gsToken = activeGsToken,
-                sessionPath = activeSessionPath,
-                settings = settings,
-                titleId = activeTitleId,
-                gameTitle = activeTitleName,
-                gssvXstsToken = userSession?.gssvXstsToken.orEmpty(),
-                fallbackGsToken = userSession?.f2pGsToken.orEmpty(),
-                fallbackRegionUri = userSession?.f2pRegionUri.orEmpty(),
-                hwProfile = hwProfile,
-                onClose = { navController.popBackStack() }
+                viewModel = homeViewModel,
+                onClose = { 
+                    homeViewModel.stopStream()
+                    // popBackStack handled by LaunchedEffect
+                },
+                onAction = { action ->
+                    homeViewModel.handleStreamAction(action) {
+                        // popBackStack handled by LaunchedEffect
+                    }
+                }
             )
         }
     }

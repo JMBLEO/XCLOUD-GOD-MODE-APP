@@ -17,11 +17,9 @@ import org.json.JSONObject
 object JoseCripto {
     private const val ALGORITHM = "SHA256withECDSA"
     
-    // Persistent KeyPair for the session
+    // Persistent KeyPair for the session, backed by AndroidKeyStore
     val keyPair: KeyPair by lazy {
-        val keyGen = KeyPairGenerator.getInstance("EC")
-        keyGen.initialize(ECGenParameterSpec("secp256r1"))
-        keyGen.generateKeyPair()
+        PersistentJoseCriptoSigner.getKeyPair()
     }
 
     fun getPublicJwk(): JSONObject {

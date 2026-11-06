@@ -3,9 +3,6 @@ package com.xcloud.godmode.workers
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.xcloud.godmode.network.TokenVaultManager
-import com.xcloud.godmode.network.XboxFullAuthManager
-import com.xcloud.godmode.network.XboxSessionProfile
 import kotlinx.coroutines.flow.first
 import android.util.Log
 
@@ -17,34 +14,22 @@ class TokenRefreshWorker(appContext: Context, workerParams: WorkerParameters) :
     CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
-        val vault = TokenVaultManager(applicationContext)
-        val activeProfile = vault.activeProfile.first() ?: return Result.success()
+        val vault = com.xcloud.godmode.security.UnifiedPersistentAuthVault.getInstance(applicationContext)
+        val envelope = vault.loadEnvelope() ?: return Result.success()
+        val sessionState = vault.sessionState.first()
 
-        val currentTime = System.currentTimeMillis()
-        val timeRemainingMs = activeProfile.expiresAtMs - currentTime
+        val currentTime = android.os.SystemClock.elapsedRealtime()
+        val timeRemainingMs = envelope.gsExpiresAtElapsedMs - currentTime
 
-        // If less than 20 minutes (1,200,000 ms) remain for the 4-hour token
+        // If less than 20 minutes (1,200,000 ms) remain
         if (timeRemainingMs < 1200000) {
             Log.d("TokenRefreshWorker", "Token expiring soon. Initiating silent refresh...")
             
             val networkClient = com.xcloud.godmode.network.NetworkClient()
-            val authManager = XboxFullAuthManager(networkClient)
+            val authManager = com.xcloud.godmode.network.XboxFullAuthManager(networkClient)
 
             return try {
-                // 1. Refresh MSA Tokens
-                val (newAccessToken, newRefreshToken) = authManager.refreshMsaAccessToken(activeProfile.refreshToken)
-                
-                // 2. Perform Sisu Authorization
-                // We use a simplified flow here or reuse the existing authManager logic
-                // For a robust refresh, we re-run the sisu flow if possible.
-                // In this implementation, completeSisuAuth usually needs a code, 
-                // but for refresh we only need the refresh_token.
-                
-                // Let's assume the authManager has a logic for token-based refresh.
-                // If not, we'd need to add it. Let's check authManager methods.
-                
-                // Since authManager.completeAuth(msaTokens) already handles the chain, 
-                // we'll use a simulated result or expand authManager.
+                val (newAccessToken, newRefreshToken) = authManager.refreshMsaAccessToken(String(envelope.msaRefreshToken))
                 
                 val simulatedMsaJson = org.json.JSONObject().apply {
                     put("access_token", newAccessToken)
@@ -53,17 +38,25 @@ class TokenRefreshWorker(appContext: Context, workerParams: WorkerParameters) :
                 
                 val newSession = authManager.completeAuth(simulatedMsaJson)
 
-                // 3. Update vault with new session data
-                vault.saveOrUpdateProfile(
-                    activeProfile.copy(
-                        refreshToken = newRefreshToken,
-                        xCloudGsToken = newSession.xCloudGsToken,
-                        xHomeGsToken = newSession.xHomeGsToken,
-                        expiresAtMs = System.currentTimeMillis() + (4 * 60 * 60 * 1000) // Extend for 4 hours
-                    )
+                val newEnvelope = com.xcloud.godmode.network.SecureTokenEnvelope(
+                    msaAccessToken = newAccessToken.toCharArray(),
+                    msaRefreshToken = newRefreshToken.toCharArray(),
+                    msaExpiresAtElapsedMs = android.os.SystemClock.elapsedRealtime() + 14_400_000L,
+                    lptTransferToken = CharArray(0),
+                    xblUserToken = newSession.webXstsToken.toCharArray(),
+                    userHashUhs = newSession.uhs.toCharArray(),
+                    xstsWebToken = CharArray(0),
+                    xstsGssvToken = newSession.webXstsToken.toCharArray(),
+                    xstsExpiresAtElapsedMs = android.os.SystemClock.elapsedRealtime() + 14_400_000L,
+                    gsStreamToken = newSession.xCloudGsToken.toCharArray(),
+                    gsExpiresAtElapsedMs = android.os.SystemClock.elapsedRealtime() + 14_400_000L,
+                    discoveredBaseRegionUri = newSession.xCloudRegionUri,
+                    market = "CL"
                 )
                 
-                Log.d("TokenRefreshWorker", "Silent refresh successful for ${activeProfile.gamertag}")
+                vault.saveSession(sessionState.gamertag, sessionState.subscriptionTier, newEnvelope)
+                
+                Log.d("TokenRefreshWorker", "Silent refresh successful for ${sessionState.gamertag}")
                 Result.success()
             } catch (e: Exception) {
                 Log.e("TokenRefreshWorker", "Silent refresh failed: ${e.message}")

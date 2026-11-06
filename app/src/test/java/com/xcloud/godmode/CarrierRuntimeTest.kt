@@ -168,6 +168,64 @@ class CarrierRuntimeTest {
         assertEquals(45, com.xcloud.godmode.services.GamingOptimizationProfile.BATTERY_SAVER.targetFps)
         assertEquals(30, com.xcloud.godmode.services.GamingOptimizationProfile.THERMAL_THROTTLED.targetFps)
     }
+
+    @Test
+    fun testCloudSessionDiagnosticToolExtraction() {
+        val sample400ResponseBody = """
+            {
+              "code": "BadRequest",
+              "errorDetails": {
+                "code": "NoEntitlement",
+                "message": "User is not allowed to play title 1716328221. Auth Status Code: NoEntitlement"
+              },
+              "correlationId": "test-corr-abc-123"
+            }
+        """.trimIndent()
+
+        val report = com.xcloud.godmode.network.CloudSessionDiagnosticTool.captureAndLogSessionFailure(
+            httpStatusCode = 400,
+            requestUrl = "https://uks.core.gssv-play-prod.xboxlive.com/v5/sessions/cloud/play",
+            requestedTitleId = "1716328221",
+            sentTitleId = "1716328221",
+            offeringId = "xgpuweb",
+            region = "uks",
+            rawResponseBody = sample400ResponseBody,
+            correlationId = "test-corr-abc-123"
+        )
+
+        assertEquals(400, report.httpStatusCode)
+        assertEquals("1716328221", report.requestedTitleId)
+        assertEquals("1716328221", report.sentTitleId)
+        assertEquals("xgpuweb", report.offeringId)
+        assertEquals("NoEntitlement", report.authStatusCode)
+        assertEquals("test-corr-abc-123", report.correlationId)
+        assertTrue(report.serverMessage!!.contains("User is not allowed to play title"))
+        assertTrue(report.formattedDiagnosticLog.contains("NoEntitlement"))
+    }
+
+    @Test
+    fun testDiagnosticReportSlugDetection() {
+        val slugResponseBody = """
+            {
+              "code": "NoEntitlement",
+              "message": "User is not allowed to play title THELEGENDOFTIANDING. Auth Status Code: NoEntitlement"
+            }
+        """.trimIndent()
+
+        val report = com.xcloud.godmode.network.CloudSessionDiagnosticTool.captureAndLogSessionFailure(
+            httpStatusCode = 400,
+            requestUrl = "https://uks.core.gssv-play-prod.xboxlive.com/v5/sessions/cloud/play",
+            requestedTitleId = "THELEGENDOFTIANDING",
+            sentTitleId = "THELEGENDOFTIANDING",
+            offeringId = "xgpuweb",
+            region = "uks",
+            rawResponseBody = slugResponseBody
+        )
+
+        assertEquals("THELEGENDOFTIANDING", report.sentTitleId)
+        assertEquals("NoEntitlement", report.authStatusCode)
+        assertTrue(report.formattedDiagnosticLog.contains("Se envió un nombre/slug ('THELEGENDOFTIANDING')"))
+    }
 }
 
 

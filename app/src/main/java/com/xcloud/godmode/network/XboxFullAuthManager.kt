@@ -79,6 +79,9 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
         val gamertag: String,
         val uhs: String,
         val msaRefreshToken: String,
+        val msaAccessToken: String = "",
+        val msaExpiresIn: Int = 3600,
+        val xblUserToken: String = "",
         val webXstsToken: String,
         val xHomeGsToken: String,
         val xHomeRegionUri: String,
@@ -89,7 +92,8 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
         val webXstsTokenFull: JSONObject? = null,
         val gssvXstsToken: String = "",
         val f2pGsToken: String = "",
-        val f2pRegionUri: String = ""
+        val f2pRegionUri: String = "",
+        val lptToken: String = ""
     )
 
     /**

@@ -104,7 +104,7 @@ fun UserAccountHeaderButton(
                 style = MaterialTheme.typography.labelSmall,
                 color = XboxGreen
             )
-            savedAccounts.forEach { profile ->
+            for (profile in savedAccounts) {
                 DropdownMenuItem(
                     text = {
                         Row(verticalAlignment = Alignment.CenterVertically) {

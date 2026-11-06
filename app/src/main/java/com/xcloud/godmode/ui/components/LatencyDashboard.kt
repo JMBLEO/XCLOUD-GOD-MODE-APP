@@ -59,7 +59,17 @@ data class SessionLatencyPercentiles(
 @Composable
 fun LatencyDashboard(
     modifier: Modifier = Modifier,
-    percentiles: SessionLatencyPercentiles = remember { SessionLatencyPercentiles() },
+    report: com.xcloud.godmode.hardware.SiliconValidationReport? = null,
+    percentiles: SessionLatencyPercentiles = remember(report) {
+        if (report != null) {
+            SessionLatencyPercentiles(
+                p50 = report.p50LatencyMs,
+                p95 = report.p95LatencyMs,
+                p99 = report.p99LatencyMs,
+                memoryLeakMb = report.memoryLeakBytesDetected / (1024f * 1024f)
+            )
+        } else SessionLatencyPercentiles()
+    },
     onClose: (() -> Unit)? = null
 ) {
     val context = LocalContext.current

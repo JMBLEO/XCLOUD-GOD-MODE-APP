@@ -37,8 +37,10 @@ class XboxStreamSessionLauncher {
 
     // Barrera asíncrona para evitar NullPointerException cuando el SurfaceView aún no se ha creado
     private var surfaceReadyDeferred = CompletableDeferred<Surface>()
+    private var lastKnownSurface: Surface? = null
 
     fun notifySurfaceCreated(surface: Surface) {
+        lastKnownSurface = surface
         if (!surfaceReadyDeferred.isCompleted) {
             surfaceReadyDeferred.complete(surface)
         }
@@ -46,6 +48,10 @@ class XboxStreamSessionLauncher {
 
     fun resetSurfaceBarrier() {
         surfaceReadyDeferred = CompletableDeferred()
+        val surface = lastKnownSurface
+        if (surface != null && surface.isValid) {
+            surfaceReadyDeferred.complete(surface)
+        }
     }
 
     /**
@@ -126,11 +132,11 @@ class XboxStreamSessionLauncher {
 
             val baseRegionUri = session.defaultRegionUri.trimEnd('/')
 
-            // 2. Esperar hasta 5 segundos a que el SurfaceView de Android entregue la Surface nativa
+            // 2. Esperar de forma asíncrona a que el SurfaceView de Android entregue la Surface nativa
             _phase.value = StreamLaunchPhase.Initializing("Inicializando superficie de hardware Zero-Copy...")
-            val validSurface = withTimeoutOrNull(5_000L) {
+            val validSurface = (if (lastKnownSurface?.isValid == true) lastKnownSurface else withTimeoutOrNull(5_000L) {
                 surfaceReadyDeferred.await()
-            } ?: throw IllegalStateException("El SurfaceView nativo no entregó una superficie gráfica a tiempo.")
+            }) ?: throw IllegalStateException("El SurfaceView nativo no entregó una superficie gráfica a tiempo.")
 
             // 3. Resolver el titleId real si el catálogo solo tenía productId
             val resolvedTitleId = if (!isXHomeConsole) {

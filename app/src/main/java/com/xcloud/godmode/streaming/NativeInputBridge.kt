@@ -42,11 +42,18 @@ class NativeInputBridge(
         var lastUpdateNano: Long = 0L
     )
 
-    private val controllers = Array(8) { ControllerState() }
+    val controllers = Array(8) { ControllerState() }
+    var lastInputProcessingLatencyMs: Long = 0L
+        private set
+
     private var isMkbEnabled = false
     private var mouseSensitivity = 1.0f
     private var mouseSmoothX = 0f
     private var mouseSmoothY = 0f
+
+    // New Touch Customization fields
+    var touchSensitivity = 1.0f
+    var touchDeadzone = 0.1f
 
     // Xbox Button bitmasks (Standard XInput / xCloud report)
     companion object {
@@ -157,9 +164,9 @@ class NativeInputBridge(
                 touchSmoothedY = 0f
             }
             val radius = 120f
-            val dx = (x - touchOriginX).coerceIn(-radius, radius) / radius
-            val dy = (y - touchOriginY).coerceIn(-radius, radius) / radius
-            val (normX, normY) = applyEllipticalDeadzone(dx, dy, state.deadzone, state.deadzone * 0.9f)
+            val dx = ((x - touchOriginX).coerceIn(-radius, radius) / radius) * touchSensitivity
+            val dy = ((y - touchOriginY).coerceIn(-radius, radius) / radius) * touchSensitivity
+            val (normX, normY) = applyEllipticalDeadzone(dx, dy, touchDeadzone, touchDeadzone * 0.9f)
             // EMA Trajectory smoothing (Extensión 8: Touch De-jitter)
             touchSmoothedX = (touchSmoothedX * 0.3f) + (normX * 0.7f)
             touchSmoothedY = (touchSmoothedY * 0.3f) + (normY * 0.7f)
@@ -227,6 +234,9 @@ class NativeInputBridge(
                         inputPacketSink?.invoke(bytes)
                         try {
                             NativeStreamBridge.pushRawInput(bytes, bytes.size)
+                            if (state.lastUpdateNano > 0) {
+                                lastInputProcessingLatencyMs = (System.nanoTime() - state.lastUpdateNano) / 1_000_000L
+                            }
                         } catch (ignored: Throwable) {}
                     } else if (idleCount % 15 == 0) {
                         // Enviar keepalive a 15Hz para mantener el watchdog de xCloud activo

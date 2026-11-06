@@ -91,13 +91,23 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_attachSurface(JNIEnv *env, 
     std::lock_guard<std::mutex> lock(gPipelineMutex);
     if (!gPipeline) return JNI_FALSE;
 
+    // Si gActiveEngine ya está gestionando la superficie, evitar adjuntar gPipeline para prevenir conflicto en BufferQueueProducer
+    {
+        std::lock_guard<std::mutex> engineLock(gEngineMutex);
+        if (gActiveEngine) {
+            LOGD("attachSurface: gActiveEngine ya se encuentra activo en la superficie; omitiendo attach redundante");
+            return JNI_TRUE;
+        }
+    }
+
     ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
     if (!window) return JNI_FALSE;
 
     StreamCodecProfile codecProfile = static_cast<StreamCodecProfile>(profile);
     bool success = gPipeline->initializeHardwareDecoder(window, codecProfile, width, height);
     
-    // ANativeWindow_fromSurface acquires a reference, initializeHardwareDecoder should handle release if it fails or when shutting down
+    // ANativeWindow_fromSurface adquiere una referencia.
+    // initializeHardwareDecoder toma posesión o libera la ventana en shutdown() si falla.
     return success ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -333,6 +343,14 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_initStreamPipeline(
         JNIEnv* env, jobject thiz, jobject surface, jint engineType,
         jint width, jint height, jboolean enableAiUpscale) {
     try {
+        // Desconectar gPipeline si estuviera activo para liberar el BufferQueueProducer
+        {
+            std::lock_guard<std::mutex> pipeLock(gPipelineMutex);
+            if (gPipeline) {
+                gPipeline->shutdown();
+            }
+        }
+
         std::lock_guard<std::mutex> lock(gEngineMutex);
         if (gActiveEngine) {
             gActiveEngine->shutdown();
@@ -359,6 +377,15 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_initStreamPipeline(
             resolvedEngineId
         );
 
+        if (!gActiveEngine) {
+            if (gActiveNativeWindow) {
+                ANativeWindow_release(gActiveNativeWindow);
+                gActiveNativeWindow = nullptr;
+            }
+            LOGE("initStreamPipeline: Fallaron todos los motores de la cascada para la superficie.");
+            return JNI_FALSE;
+        }
+
         gCurrentActiveEngineId = resolvedEngineId;
 
         if (gTelemetryBufferPtr && gTelemetryBufferSize >= 48) {
@@ -371,7 +398,7 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_initStreamPipeline(
         }
 
         LOGD("initStreamPipeline resultado: activo=%d (solicitado=%d)", gCurrentActiveEngineId, engineType);
-        return (gActiveEngine != nullptr) ? JNI_TRUE : JNI_FALSE;
+        return JNI_TRUE;
     } catch (const std::exception& e) {
         LOGE("Excepción crítica en initStreamPipeline: %s", e.what());
         return JNI_FALSE;

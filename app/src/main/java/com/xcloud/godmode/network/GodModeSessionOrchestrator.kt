@@ -45,7 +45,7 @@ data class NativeTransportEndpoint(
  */
 class GodModeSessionOrchestrator(
     private val context: Context,
-    private val tokenVault: TokenVaultManager
+    private val unifiedVault: com.xcloud.godmode.security.UnifiedPersistentAuthVault
 ) {
     companion object {
         private const val TAG = "GodModeSessionOrch"
@@ -109,7 +109,23 @@ class GodModeSessionOrchestrator(
             }
         }
 
-        tokenVault.saveStreamCredentials(gsToken, selectedBaseUri)
+        val newEnvelope = com.xcloud.godmode.network.SecureTokenEnvelope(
+            msaAccessToken = oauthAccessToken.toCharArray(), // Simplified for fallback
+            msaRefreshToken = oauthAccessToken.toCharArray(), // Simplified for fallback
+            msaExpiresAtElapsedMs = android.os.SystemClock.elapsedRealtime() + 14_400_000L,
+            lptTransferToken = CharArray(0),
+            xblUserToken = userToken.toCharArray(),
+            userHashUhs = uhs.toCharArray(),
+            xstsWebToken = CharArray(0),
+            xstsGssvToken = xstsToken.toCharArray(),
+            xstsExpiresAtElapsedMs = android.os.SystemClock.elapsedRealtime() + 14_400_000L,
+            gsStreamToken = gsToken.toCharArray(),
+            gsExpiresAtElapsedMs = android.os.SystemClock.elapsedRealtime() + 14_400_000L,
+            discoveredBaseRegionUri = selectedBaseUri,
+            market = market
+        )
+        
+        unifiedVault.saveSession("Xbox Gamer", "Game Pass Ultimate", newEnvelope)
         GssvStreamCredentials(gsToken, selectedBaseUri, market)
     }
 

@@ -354,6 +354,7 @@ bool NativeZeroCopyPipeline::initializeHardwareDecoder(ANativeWindow* window, St
     mediaCodec = AMediaCodec_createDecoderByType(mimeType);
     if (!mediaCodec) {
         LOGE("Failed to create decoder for MIME: %s", mimeType);
+        shutdown();
         return false;
     }
 
@@ -371,15 +372,13 @@ bool NativeZeroCopyPipeline::initializeHardwareDecoder(ANativeWindow* window, St
 
     if (status != AMEDIA_OK) {
         LOGE("AMediaCodec_configure failed: %d", status);
-        AMediaCodec_delete(mediaCodec);
-        mediaCodec = nullptr;
+        shutdown();
         return false;
     }
 
     if (AMediaCodec_start(mediaCodec) != AMEDIA_OK) {
         LOGE("AMediaCodec_start failed");
-        AMediaCodec_delete(mediaCodec);
-        mediaCodec = nullptr;
+        shutdown();
         return false;
     }
 
@@ -524,15 +523,36 @@ void NativeZeroCopyPipeline::shutdown() {
     }
 
     if (isGlesInitialized) {
-        eglMakeCurrent(eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        if (eglSurface != EGL_NO_SURFACE) eglDestroySurface(eglDisplay, eglSurface);
-        if (eglContext != EGL_NO_CONTEXT) eglDestroyContext(eglDisplay, eglContext);
-        
-        glDeleteProgram(computeProgram);
-        glDeleteTextures(1, &inputTexture);
-        glDeleteTextures(1, &outputTexture);
-        glDeleteBuffers(1, &paramsUbo);
-        
+        if (eglDisplay != EGL_NO_DISPLAY && eglContext != EGL_NO_CONTEXT) {
+            eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext);
+            if (computeProgram) {
+                glDeleteProgram(computeProgram);
+                computeProgram = 0;
+            }
+            if (inputTexture) {
+                glDeleteTextures(1, &inputTexture);
+                inputTexture = 0;
+            }
+            if (outputTexture) {
+                glDeleteTextures(1, &outputTexture);
+                outputTexture = 0;
+            }
+            if (paramsUbo) {
+                glDeleteBuffers(1, &paramsUbo);
+                paramsUbo = 0;
+            }
+        }
+        if (eglDisplay != EGL_NO_DISPLAY) {
+            eglMakeCurrent(eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+            if (eglSurface != EGL_NO_SURFACE) {
+                eglDestroySurface(eglDisplay, eglSurface);
+                eglSurface = EGL_NO_SURFACE;
+            }
+            if (eglContext != EGL_NO_CONTEXT) {
+                eglDestroyContext(eglDisplay, eglContext);
+                eglContext = EGL_NO_CONTEXT;
+            }
+        }
         isGlesInitialized = false;
     }
 }

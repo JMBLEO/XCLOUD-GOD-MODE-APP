@@ -2,8 +2,10 @@ package com.xcloud.godmode.viewmodels
 
 import android.app.Application
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import androidx.compose.ui.graphics.Color
+import com.xcloud.godmode.network.SecureTokenEnvelope
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -15,7 +17,6 @@ import com.xcloud.godmode.models.SettingsModel
 import com.xcloud.godmode.network.CatalogRepository
 import com.xcloud.godmode.services.SessionTelemetrySummary
 import com.xcloud.godmode.services.StreamSessionHolder
-import com.xcloud.godmode.network.TokenVaultManager
 import com.xcloud.godmode.network.XboxFullAuthManager
 import com.xcloud.godmode.network.XboxSessionProfile
 import com.xcloud.godmode.hardware.DeviceHardwareProfile
@@ -23,6 +24,7 @@ import com.xcloud.godmode.hardware.HardwareCapabilityProfiler
 import androidx.datastore.preferences.core.longPreferencesKey
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -32,10 +34,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val TAG = "HomeViewModel"
     private val context = application.applicationContext
     private val catalogRepo = CatalogRepository()
-    private val vault = TokenVaultManager(context)
     private val FAVORITES_KEY = stringSetPreferencesKey("favorites")
-    private val SESSION_KEY = stringSetPreferencesKey("xbox_session")
     private val CAROUSEL_LAST_SHOWN_PREFIX = "carousel_shown_"
+    private val networkClient = com.xcloud.godmode.network.NetworkClient(enableDoh = true)
+    private val xboxAuthManager = com.xcloud.godmode.network.XboxFullAuthManager(networkClient)
 
     // Search query
     private val _searchQuery = MutableStateFlow("")
@@ -52,11 +54,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val _userSession = MutableStateFlow<XboxFullAuthManager.XboxReadySession?>(null)
     val userSession: StateFlow<XboxFullAuthManager.XboxReadySession?> = _userSession.asStateFlow()
 
-    val savedAccounts: StateFlow<List<XboxSessionProfile>> = vault.savedAccounts
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val activeVaultProfile: StateFlow<XboxSessionProfile?> = vault.activeProfile
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    val savedAccounts: StateFlow<List<XboxSessionProfile>> = MutableStateFlow(emptyList<XboxSessionProfile>()).asStateFlow()
+    val activeVaultProfile: StateFlow<XboxSessionProfile?> = MutableStateFlow(null).asStateFlow()
 
     // Controller detection state
     data class ControllerInfo(val name: String, val vendorId: Int, val productId: Int)
@@ -113,6 +112,152 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     // Permission Authorization State (Microphone, Storage, Bluetooth)
     private val _permissionsState = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     val permissionsState: StateFlow<Map<String, Boolean>> = _permissionsState.asStateFlow()
+
+    // Carrier-Grade Launch Orchestration
+    val uiController = com.xcloud.godmode.ui.StreamUiController()
+    val launchState = uiController.state
+    
+    private val surfaceHostRegistry = com.xcloud.godmode.session.SurfaceHostRegistry()
+    private val surfaceValidityRegistry = com.xcloud.godmode.launch.SurfaceValidityRegistry()
+    private val activeEngineSession = com.xcloud.godmode.session.ActiveEngineSession()
+    private val activeStreamRegistry = com.xcloud.godmode.session.ActiveStreamRuntimeRegistry()
+    private val startupGates = com.xcloud.godmode.launch.StreamStartupStateMachine()
+    private val hardwareLocks = com.xcloud.godmode.hardware.LowLatencyHardwareLocks(application)
+    
+    private var coordinator: com.xcloud.godmode.session.PlayNowCoordinator? = null
+
+    val configRepository = com.xcloud.godmode.config.AppConfigurationRepository.getInstance(context)
+    val globalConfig = configRepository.configFlow
+
+    private val unifiedVault = com.xcloud.godmode.security.UnifiedPersistentAuthVault.getInstance(context)
+    val headerState = unifiedVault.sessionState
+
+    private fun initCoordinator(session: XboxFullAuthManager.XboxReadySession) {
+        val authPort = object : com.xcloud.godmode.session.AuthSessionPort {
+            override val activeOfferingId = com.xcloud.godmode.catalog.OfferingId("xgpuweb")
+            override val currentAuthHealthScore: Int
+                get() = runBlocking { if (unifiedVault.hasValidSession()) 100 else 0 }
+            
+            override suspend fun requireHealthyEnvelope(): SecureTokenEnvelope {
+                return unifiedVault.loadEnvelope() ?: throw IllegalStateException("No hay sesión activa en el Vault.")
+            }
+            override suspend fun refreshCredentialsOnce(): SecureTokenEnvelope {
+                return requireHealthyEnvelope() 
+            }
+        }
+        
+        val httpClient = com.xcloud.godmode.integration.OkHttpSessionClient(networkClient.httpClient)
+        val diagnostics = com.xcloud.godmode.catalog.CloudLaunchDiagnostics()
+        val sessionClient = com.xcloud.godmode.session.CloudSessionClient(httpClient, diagnostics)
+        
+        val catalogApi = com.xcloud.godmode.integration.CatalogApiBridge(
+            catalogRepo, xboxAuthManager, session.xCloudGsToken, session.xCloudRegionUri
+        )
+        val catalogRepo = com.xcloud.godmode.catalog.CloudCatalogRepository(catalogApi)
+        
+        val streamManager = com.xcloud.godmode.streaming.NativeStreamPipelineManager(context, networkClient, diagnostics)
+        val orchestrator = com.xcloud.godmode.streaming.GssvSignalingOrchestrator(networkClient.httpClient)
+        
+        val transportNegotiator = com.xcloud.godmode.integration.GssvTransportBridge(orchestrator, streamManager)
+        val remoteLifecycle = com.xcloud.godmode.integration.RemoteSessionBridge(networkClient.httpClient)
+        val engineAttachPort = com.xcloud.godmode.integration.NativeEngineBridge(streamManager)
+        
+        coordinator = com.xcloud.godmode.session.PlayNowCoordinator(
+            coordinatorScope = viewModelScope,
+            catalogRepository = catalogRepo,
+            preflightValidator = com.xcloud.godmode.catalog.CloudLaunchPreflightValidator(),
+            authPort = authPort,
+            sessionClient = sessionClient,
+            transportNegotiator = transportNegotiator,
+            remoteSessionLifecycle = remoteLifecycle,
+            surfaceRegistry = surfaceHostRegistry,
+            surfaceValidityRegistry = surfaceValidityRegistry,
+            activeEngineSession = activeEngineSession,
+            activeStreamRegistry = activeStreamRegistry,
+            engineAttachPort = engineAttachPort,
+            startupGates = startupGates,
+            recoveryPolicy = com.xcloud.godmode.launch.CloudLaunchRecoveryPolicy(),
+            uiController = uiController,
+            deviceInfoProvider = { 
+                runBlocking { configRepository.getCurrent().toDeviceInfoJson() }
+            },
+            hardwareLocks = hardwareLocks,
+            httpClient = httpClient
+        )
+    }
+
+    fun launchGame(recordId: String) {
+        viewModelScope.launch {
+            val session = _userSession.value
+            if (session == null && unifiedVault.hasValidSession()) {
+                loadSession()
+            }
+            
+            val activeSession = _userSession.value
+            if (coordinator == null && activeSession != null) initCoordinator(activeSession)
+            
+            coordinator?.launchFromGlobalConfig(
+                recordId = com.xcloud.godmode.catalog.CatalogRecordId(recordId),
+                configRepository = configRepository,
+                onRequireLoginModal = { _isAuthModalOpen.value = true }
+            )
+        }
+    }
+
+    fun handleStreamAction(action: com.xcloud.godmode.ui.StreamErrorAction, onNavigateBack: () -> Unit) {
+        viewModelScope.launch {
+            coordinator?.handleErrorAction(
+                action = action,
+                configRepository = configRepository,
+                onNavigateBackToHub = onNavigateBack,
+                onOpenLoginModal = { _isAuthModalOpen.value = true }
+            )
+        }
+    }
+
+    fun cancelLaunch() {
+        coordinator?.cancelLaunch()
+    }
+
+    fun stopStream() {
+        viewModelScope.launch {
+            coordinator?.stopActiveStream(com.xcloud.godmode.launch.EngineDetachReason.USER_EXIT)
+        }
+    }
+
+    fun onSurfaceCreated(attemptId: com.xcloud.godmode.launch.LaunchAttemptId, view: android.view.SurfaceView) {
+        surfaceHostRegistry.onSurfaceViewCreated(attemptId, view)
+    }
+
+    val surfaceRegistry get() = surfaceHostRegistry
+
+    // Track B Silicon Validation
+    private val _siliconReport = MutableStateFlow<com.xcloud.godmode.hardware.SiliconValidationReport?>(null)
+    val siliconReport: StateFlow<com.xcloud.godmode.hardware.SiliconValidationReport?> = _siliconReport.asStateFlow()
+
+    fun runHardwareValidation(titleId: String) {
+        viewModelScope.launch {
+            val blackbox = com.xcloud.godmode.network.SessionBlackboxRecorder()
+            val vault = com.xcloud.godmode.network.HardwareTokenVault(context)
+            val scorer = com.xcloud.godmode.network.RegionScoringEngine(blackbox)
+            val authAuth = com.xcloud.godmode.network.AuthenticationAuthority(vault, scorer, blackbox)
+            val capEngine = com.xcloud.godmode.network.CapabilityNegotiationEngine()
+            
+            val authority = com.xcloud.godmode.network.GlobalSessionAuthority(
+                vault = vault,
+                authAuthority = authAuth,
+                capabilityEngine = capEngine,
+                blackbox = blackbox
+            )
+
+            val harness = com.xcloud.godmode.hardware.HardwareValidationHarness(
+                context = context,
+                sessionAuthority = authority,
+                blackbox = blackbox
+            )
+            _siliconReport.value = harness.executeSiliconStressSuite(titleId)
+        }
+    }
 
     fun updatePermissionState(permission: String, granted: Boolean) {
         _permissionsState.value = _permissionsState.value + (permission to granted)
@@ -288,43 +433,29 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadSession() {
         viewModelScope.launch {
-            context.dataStore.data.firstOrNull()?.get(SESSION_KEY)?.let { sessionSet ->
-                try {
-                    val list = sessionSet.toList()
-                    if (list.size >= 8) {
-                        _userSession.value = XboxFullAuthManager.XboxReadySession(
-                            gamertag = list[0],
-                            uhs = list[1],
-                            msaRefreshToken = list[2],
-                            webXstsToken = list[3],
-                            xHomeGsToken = list[4],
-                            xHomeRegionUri = list[5],
-                            xCloudGsToken = list[6],
-                            xCloudRegionUri = list[7]
-                        )
-                    }
-                } catch (_: Exception) {}
+            val envelope = unifiedVault.loadEnvelope()
+            if (envelope != null) {
+                val state = unifiedVault.sessionState.first()
+                _userSession.value = XboxFullAuthManager.XboxReadySession(
+                    gamertag = state.gamertag,
+                    uhs = String(envelope.userHashUhs),
+                    msaRefreshToken = String(envelope.msaRefreshToken),
+                    webXstsToken = String(envelope.xblUserToken),
+                    xHomeGsToken = String(envelope.gsStreamToken),
+                    xHomeRegionUri = envelope.discoveredBaseRegionUri,
+                    xCloudGsToken = String(envelope.gsStreamToken),
+                    xCloudRegionUri = envelope.discoveredBaseRegionUri
+                )
             }
         }
     }
 
     private fun saveSession(session: XboxFullAuthManager.XboxReadySession?) {
         viewModelScope.launch {
-            context.dataStore.edit { preferences ->
-                if (session == null) {
-                    preferences.remove(SESSION_KEY)
-                } else {
-                    preferences[SESSION_KEY] = setOf(
-                        session.gamertag,
-                        session.uhs,
-                        session.msaRefreshToken,
-                        session.webXstsToken,
-                        session.xHomeGsToken,
-                        session.xHomeRegionUri,
-                        session.xCloudGsToken,
-                        session.xCloudRegionUri
-                    )
-                }
+            if (session == null) {
+                unifiedVault.clearSession()
+            } else {
+                // Already saved via setSession -> unifiedVault.saveSession
             }
         }
     }
@@ -506,29 +637,26 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         _userSession.value = session
-        saveSession(session)
         
         // Also save to vault if it's a new session
         if (session != null) {
             viewModelScope.launch {
-                vault.saveOrUpdateProfile(
-                    XboxSessionProfile(
-                        xuid = session.uhs, // Using UHS as a proxy for XUID
-                        gamertag = session.gamertag,
-                        uhs = session.uhs,
-                        gamerpic = session.gamerpic,
-                        userToken = session.webXstsToken,
-                        xstsToken = session.webXstsToken,
-                        gsToken = session.xCloudGsToken,
-                        xCloudGsToken = session.xCloudGsToken,
-                        xHomeGsToken = session.xHomeGsToken,
-                        xCloudRegionUri = session.xCloudRegionUri.ifBlank { "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user" },
-                        refreshToken = session.msaRefreshToken,
-                        expiresAtMs = System.currentTimeMillis() + (4 * 60 * 60 * 1000),
-                        activeOffering = "xgpuweb",
-                        tierBadge = "Game Pass Ultimate"
-                    )
+                val envelope = SecureTokenEnvelope(
+                    msaAccessToken = session.msaRefreshToken.toCharArray(),
+                    msaRefreshToken = session.msaRefreshToken.toCharArray(),
+                    msaExpiresAtElapsedMs = SystemClock.elapsedRealtime() + 14_400_000L,
+                    lptTransferToken = CharArray(0),
+                    xblUserToken = session.webXstsToken.toCharArray(),
+                    userHashUhs = session.uhs.toCharArray(),
+                    xstsWebToken = CharArray(0),
+                    xstsGssvToken = session.webXstsToken.toCharArray(),
+                    xstsExpiresAtElapsedMs = SystemClock.elapsedRealtime() + 14_400_000L,
+                    gsStreamToken = session.xCloudGsToken.toCharArray(),
+                    gsExpiresAtElapsedMs = SystemClock.elapsedRealtime() + 14_400_000L,
+                    discoveredBaseRegionUri = session.xCloudRegionUri,
+                    market = "CL"
                 )
+                unifiedVault.saveSession(session.gamertag, session.ageGroup ?: "Game Pass Ultimate", envelope)
             }
         }
 
@@ -541,29 +669,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun switchAccount(xuid: String, authManager: XboxFullAuthManager) {
-        viewModelScope.launch {
-            vault.switchActiveAccount(xuid)
-            val profile = vault.activeProfile.first()
-            if (profile != null) {
-                val session = XboxFullAuthManager.XboxReadySession(
-                    gamertag = profile.gamertag,
-                    uhs = profile.uhs,
-                    msaRefreshToken = profile.refreshToken,
-                    webXstsToken = "", // Will be refreshed on first use
-                    xHomeGsToken = profile.xHomeGsToken,
-                    xHomeRegionUri = "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user",
-                    xCloudGsToken = profile.xCloudGsToken,
-                    xCloudRegionUri = "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user",
-                    gamerpic = profile.gamerpic
-                )
-                setSession(session, authManager)
-            }
-        }
+        // Implement switch logic if unifiedVault supports multiple accounts, 
+        // for now we just handle the current one.
     }
 
     fun removeAccount(xuid: String) {
         viewModelScope.launch {
-            vault.removeAccount(xuid)
             if (_userSession.value?.uhs == xuid) {
                 logout()
             }
@@ -634,10 +745,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     val hydratedList = mutableListOf<GameModel>()
                     for (pid in productIds) {
                         val prod = details.optJSONObject(pid) ?: continue
-                        // Reuse parseGamePassProduct logic from repo? No, it's private.
-                        // I'll just map it here or make it public.
-                        // Actually I can just call the repo to hydrate them if I modify it.
-                        // For now, I'll manually parse to keep it simple here.
                         hydratedList.add(parseGamePassProductLocal(prod))
                     }
                     _mruGames.value = hydratedList
@@ -727,16 +834,28 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logout() {
-        _userSession.value = null
-        saveSession(null)
+        viewModelScope.launch {
+            _userSession.value = null
+            unifiedVault.clearSession()
+        }
     }
     init {
-        val profiler = HardwareCapabilityProfiler(context)
+        val profiler = com.xcloud.godmode.hardware.HardwareCapabilityProfiler(context)
         _hardwareProfile.value = profiler.scanDeviceAndFilterEngines()
         
         loadGames()
         loadSession()
         startControllerDetection()
         startPeriodicCatalogShuffle()
+
+        viewModelScope.launch {
+            globalConfig.collect { cfg ->
+                com.xcloud.godmode.streaming.NativeInputBridge.activeInstance?.let { bridge ->
+                    bridge.touchSensitivity = cfg.touchSensitivity
+                    bridge.touchDeadzone = cfg.touchDeadzone
+                }
+            }
+        }
     }
+
 }

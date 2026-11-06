@@ -2,6 +2,7 @@
 #include <android/log.h>
 #include <pthread.h>
 #include <sched.h>
+#include <sys/resource.h>
 #include <thread>
 #include <cmath>
 #include <cstring>
@@ -43,8 +44,13 @@ bool GodModeAudioEngine::start() {
 
     oboe::Result result = builder.openStream(stream_);
     if (result != oboe::Result::OK) {
-        LOGE("Failed to open Oboe audio stream: %s", oboe::convertToText(result));
-        return false;
+        LOGW("Exclusive hardware audio mode unavailable (%s). Falling back to Shared LowLatency mode...", oboe::convertToText(result));
+        builder.setSharingMode(oboe::SharingMode::Shared);
+        result = builder.openStream(stream_);
+        if (result != oboe::Result::OK) {
+            LOGE("Failed to open fallback Oboe audio stream: %s", oboe::convertToText(result));
+            return false;
+        }
     }
 
     // Set buffer size to burst size * 2 for optimal ultra-low latency without underruns
@@ -283,14 +289,40 @@ void GodModeAudioEngine::onErrorAfterClose(oboe::AudioStream* stream, oboe::Resu
 
 void GodModeAudioEngine::setupThreadPriority() {
     pthread_t thisThread = pthread_self();
-    struct sched_param params;
-    params.sched_priority = sched_get_priority_max(SCHED_FIFO);
 
-    int result = pthread_setschedparam(thisThread, SCHED_FIFO, &params);
-    if (result == 0) {
-        LOGI("SCHED_FIFO real-time priority set successfully for Oboe audio callback thread");
-    } else {
-        LOGW("Failed to set SCHED_FIFO priority (error: %d), falling back to normal priority", result);
+    // Comprobación previa de permisos del sistema para planificación en tiempo real (RLIMIT_RTPRIO)
+    struct rlimit rlim{};
+    bool hasRtPermission = false;
+    if (getrlimit(RLIMIT_RTPRIO, &rlim) == 0) {
+        hasRtPermission = (rlim.rlim_cur > 0);
+    }
+
+    bool schedFifoSuccess = false;
+    if (hasRtPermission) {
+        int maxFifo = sched_get_priority_max(SCHED_FIFO);
+        if (maxFifo > 0) {
+            struct sched_param params{};
+            params.sched_priority = std::min(maxFifo, static_cast<int>(rlim.rlim_cur));
+            int rc = pthread_setschedparam(thisThread, SCHED_FIFO, &params);
+            if (rc == 0) {
+                schedFifoSuccess = true;
+                LOGI("Prioridad de tiempo real SCHED_FIFO activada exitosamente (prioridad=%d)", params.sched_priority);
+            }
+        }
+    }
+
+    // Mecanismo de contingencia: Si no hay permisos para SCHED_FIFO o falló la asignación,
+    // se aplica forzadamente la prioridad de audio urgente de Android (-19 / -16),
+    // impidiendo de manera estricta que el hilo decaiga a prioridades inferiores o normales.
+    if (!schedFifoSuccess) {
+        if (setpriority(PRIO_PROCESS, 0, -19) == 0) {
+            LOGD("Hilo de audio elevado a prioridad máxima: ANDROID_PRIORITY_URGENT_AUDIO (-19)");
+        } else if (setpriority(PRIO_PROCESS, 0, -16) == 0) {
+            LOGD("Hilo de audio elevado a prioridad alta: ANDROID_PRIORITY_AUDIO (-16)");
+        } else {
+            setpriority(PRIO_PROCESS, 0, -10);
+            LOGD("Hilo de audio elevado a prioridad de proceso alta (-10)");
+        }
     }
 }
 

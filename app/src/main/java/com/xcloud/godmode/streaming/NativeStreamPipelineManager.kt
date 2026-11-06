@@ -5,6 +5,7 @@ import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.util.Log
 import com.xcloud.godmode.network.NetworkClient
+import com.xcloud.godmode.launch.FirstFrameResult
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,10 +28,14 @@ import java.util.concurrent.Executors
  */
 class NativeStreamPipelineManager(
     val context: Context,
-    private val networkClient: NetworkClient
+    private val networkClient: NetworkClient,
+    private val diagnostics: com.xcloud.godmode.catalog.CloudLaunchDiagnostics
 ) {
     private val TAG = "NativeStreamPipeline"
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
+    
+    private var latencyMonitor: ControllerLatencyMonitor? = null
 
     private var wifiLock: WifiManager.WifiLock? = null
     private var watchdogJob: Job? = null
@@ -42,14 +47,14 @@ class NativeStreamPipelineManager(
     private var activeSessionPath: String? = null
 
     private val localCandidates = mutableListOf<JSONObject>()
-    private var dataChannelHandshake: XboxDataChannelHandshake? = null
+    private var _activeHandshake: XboxDataChannelHandshake? = null
+    val activeHandshake: XboxDataChannelHandshake? get() = _activeHandshake
 
     private var currentTargetWidth: Int = 1920
     private var currentTargetHeight: Int = 1080
     private var activeAccessKey: String? = null
     private var isConnectedState = false
 
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     val okHttpClient: OkHttpClient get() = networkClient.httpClient
 
     data class StreamStats(
@@ -64,21 +69,37 @@ class NativeStreamPipelineManager(
     private val _stats = MutableStateFlow(StreamStats())
     val stats: StateFlow<StreamStats> = _stats.asStateFlow()
 
+    private val _firstFramePresented = MutableStateFlow<FirstFrameResult?>(null)
+    val firstFramePresented: StateFlow<FirstFrameResult?> = _firstFramePresented.asStateFlow()
+
     fun setAccessKey(key: String) {
         this.activeAccessKey = key
-        dataChannelHandshake?.setAccessKey(key)
+        _activeHandshake?.setAccessKey(key)
     }
 
     fun updateTelemetry(rtt: Int, jitter: Double, packetLoss: Double, bitrate: Int, fps: Int) {
         _stats.value = StreamStats(rtt, jitter, packetLoss, bitrate, fps)
         bitrateController.onTelemetryTick(packetLoss.toFloat(), rtt)
-        TelemetryBridge.updateMetricsLocally(
+        
+        TelemetryBridge.updateCoreStats(
             rttMs = rtt,
             fps = fps,
             packetLossPct = packetLoss.toFloat(),
             bitrateKbps = bitrate / 1000,
             activeEngineId = NativeStreamBridge.getActiveEngineId()
         )
+
+        if (latencyMonitor == null && isConnectedState) {
+            NativeInputBridge.activeInstance?.let { input ->
+                latencyMonitor = ControllerLatencyMonitor(input, diagnostics, scope).apply {
+                    start()
+                }
+            }
+        }
+
+        if (fps > 0 && _firstFramePresented.value == null) {
+            _firstFramePresented.value = FirstFrameResult(true, 1L, System.nanoTime())
+        }
     }
 
     /**
@@ -90,7 +111,7 @@ class NativeStreamPipelineManager(
         currentTargetHeight = targetHeight
         val effectiveBitrate = if (targetWidth >= 2560 || targetHeight >= 1440) 35000 else maxBitrateKbps
 
-        dataChannelHandshake = XboxDataChannelHandshake(
+        _activeHandshake = XboxDataChannelHandshake(
             sendOnMessageChannel = { msg -> Log.d(TAG, "Native Msg Channel: $msg") },
             sendOnControlChannel = { msg -> Log.d(TAG, "Native Ctrl Channel: $msg") },
             sendClientMetadataOnInputChannel = { sendInput(byteArrayOf(0x08, 0x00, 0x00, 0x00)) }
@@ -164,82 +185,13 @@ class NativeStreamPipelineManager(
         return localCandidates
     }
 
-    fun startStream(gsToken: String, sessionPath: String, titleId: String? = null) {
-        this.activeGsToken = gsToken
-        this.activeSessionPath = sessionPath
-
-        // 1. Adquisición de Wi-Fi WMM Low-Latency Lock (<2ms contención en router)
-        try {
-            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "GodModeLowLatencyLock")?.apply {
-                setReferenceCounted(false)
-                acquire()
-                Log.d(TAG, "Wi-Fi WMM Full Low-Latency Lock adquirido")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "No se pudo adquirir Wi-Fi WMM Lock: ${e.message}")
-        }
-
-        // 2. Compensación Dinámica de Latencia A/V Bluetooth
-        try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            val isBtActive = audioManager?.isBluetoothA2dpOn == true || audioManager?.isBluetoothScoOn == true
-            if (isBtActive) {
-                NativeStreamBridge.setPtsOffsetUs(-125_000L)
-                Log.i(TAG, "Bluetooth Audio activo: compensación A/V PTS configurada a -125ms")
-            } else {
-                NativeStreamBridge.setPtsOffsetUs(0L)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error comprobando audio Bluetooth: ${e.message}")
-        }
-
-        // 3. Aislamiento en Bóveda de Memoria Segura C++
-        NativeStreamBridge.storeSecureToken(gsToken.toByteArray())
-        NativeStreamBridge.startAudio()
-
-        // 4. Iniciar Watchdog de enlace nativo
-        startConnectionWatchdog()
-
-        // 5. Orquestar señalización GSSV nativa
-        val orchestrator = GssvSignalingOrchestrator(okHttpClient)
-        val config = GssvSessionConfig(
-            gsToken = gsToken,
-            regionName = "Auto",
-            regionBaseUri = sessionPath.substringBefore("/v2/login/user"),
-            bypassIp = null,
-            titleId = titleId ?: "9NKX70BBCDRN",
-            targetWidth = currentTargetWidth,
-            targetHeight = currentTargetHeight
-        )
-
-        scope.launch {
-            orchestrator.startCloudStream(config, this@NativeStreamPipelineManager)
-        }
-    }
-
-    private fun startConnectionWatchdog() {
-        watchdogJob?.cancel()
-        lastTrafficMs = System.currentTimeMillis()
-        watchdogJob = scope.launch(Dispatchers.Default) {
-            while (isActive) {
-                delay(1000)
-                val now = System.currentTimeMillis()
-                if (isConnectedState && (now - lastTrafficMs) > 2500L) {
-                    Log.d(TAG, "Watchdog: Pulso de nominación ICE / STUN Consent...")
-                    lastTrafficMs = now
-                }
-            }
-        }
-    }
-
     fun isConnected(): Boolean = isConnectedState
 
     fun requestKeyframe(force: Boolean = false) {
         val now = System.currentTimeMillis()
         if (!force && (now - lastKeyframeRequestMs) < 1500L) return
         lastKeyframeRequestMs = now
-        dataChannelHandshake?.requestImmediateKeyframe()
+        _activeHandshake?.requestImmediateKeyframe()
     }
 
     fun restartIce() {
@@ -259,6 +211,8 @@ class NativeStreamPipelineManager(
 
     fun stopStream() {
         executor.execute {
+            latencyMonitor?.stop()
+            latencyMonitor = null
             watchdogJob?.cancel()
             watchdogJob = null
             isConnectedState = false
@@ -271,6 +225,7 @@ class NativeStreamPipelineManager(
                 Log.w(TAG, "Error liberando Wi-Fi lock: ${e.message}")
             }
             bitrateController.release()
+            _firstFramePresented.value = null
             NativeStreamBridge.stopNativeReactor()
             NativeStreamBridge.stopAudio()
             com.xcloud.godmode.audio.OboeAudioBridge.stopCapture()

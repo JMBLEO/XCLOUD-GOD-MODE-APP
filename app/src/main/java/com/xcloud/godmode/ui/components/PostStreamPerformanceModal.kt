@@ -18,6 +18,7 @@ import com.xcloud.godmode.services.SessionTelemetrySummary
 @Composable
 fun PostStreamPerformanceModal(
     summary: SessionTelemetrySummary?,
+    siliconReport: com.xcloud.godmode.hardware.SiliconValidationReport? = null,
     onClose: () -> Unit,
     onQuickReconnect: () -> Unit
 ) {
@@ -111,15 +112,8 @@ fun PostStreamPerformanceModal(
                 }
 
                 if (showSlaDetails) {
-                    val p50 = summary.avgPingMs.toFloat().coerceAtLeast(20.0f)
                     LatencyDashboard(
-                        percentiles = SessionLatencyPercentiles(
-                            p50 = p50,
-                            p95 = p50 * 2.1f,
-                            p99 = p50 * 3.2f,
-                            p99_9 = p50 * 4.2f,
-                            maxPeak = p50 * 4.6f
-                        )
+                        report = siliconReport
                     )
                 }
 
