@@ -231,7 +231,11 @@ class NativeInputBridge(
                         val packet = buildGamepadPacket(slot, state)
                         val bytes = ByteArray(packet.remaining())
                         packet.get(bytes)
-                        inputPacketSink?.invoke(bytes)
+                        
+                        // Use 16-byte packet for DataChannel sink if it exists
+                        val bytes16 = buildGamepadPacket16(slot, state)
+                        inputPacketSink?.invoke(bytes16)
+                        
                         try {
                             NativeStreamBridge.pushRawInput(bytes, bytes.size)
                             if (state.lastUpdateNano > 0) {
@@ -483,7 +487,25 @@ class NativeInputBridge(
     }
 
     /**
-     * Serializa estado del mando en trama binaria XInput de 20 bytes para el RTCDataChannel
+     * Serializa estado del mando en trama binaria XInput de 16 bytes para el RTCDataChannel 'input'.
+     * Formato compatible con el cliente web oficial (Little-Endian).
+     */
+    private fun buildGamepadPacket16(slot: Int, state: ControllerState): ByteArray {
+        val buttonsMask = state.buttons
+        val leftThumbX = (state.leftStickX * 32767).toInt().toShort()
+        val leftThumbY = (-state.leftStickY * 32767).toInt().toShort()
+        val rightThumbX = (state.rightStickX * 32767).toInt().toShort()
+        val rightThumbY = (-state.rightStickY * 32767).toInt().toShort()
+        val leftTrigger = (state.leftTrigger * 1023).toInt().toShort()
+        val rightTrigger = (state.rightTrigger * 1023).toInt().toShort()
+
+        return com.xcloud.godmode.bridge.XCloudInputPacketBuilder.buildGamepadStartPacket(
+            buttonsMask, leftThumbX, leftThumbY, rightThumbX, rightThumbY, leftTrigger, rightTrigger
+        )
+    }
+
+    /**
+     * Serializa estado del mando en trama binaria XInput de 24 bytes para el RTCDataChannel
      */
     private fun buildGamepadPacket(slot: Int, state: ControllerState): ByteBuffer {
         val buffer = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)

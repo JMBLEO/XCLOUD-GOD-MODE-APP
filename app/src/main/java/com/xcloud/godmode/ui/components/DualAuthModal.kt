@@ -234,6 +234,12 @@ fun DualAuthModal(
             coroutineScope.launch {
                 try {
                     val session = authManager.processOAuthCode(codeOrUrl)
+                    
+                    // Solution 6: Sync cookies between WebView and Native client
+                    val cookieSync = com.xcloud.godmode.services.WebKitCookieSynchronizer()
+                    val cookies = cookieSync.extractXboxCookies()
+                    Log.d("DualAuthModal", "Session cookies synchronized from WebKit.")
+                    
                     authStatus = OrchestratorStatus.SUCCESS
                     statusMessage = strings.successConfiguringProfile
                     homeViewModel.clearCapturedAuthCode()

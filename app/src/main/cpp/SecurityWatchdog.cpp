@@ -65,3 +65,8 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_xcloud_godmode_security_SecurityManager_nativeStartWatchdog(JNIEnv* env, jobject thiz) {
     godmode::SecurityWatchdog::start();
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_services_SecurityManager_nativeStartWatchdog(JNIEnv* env, jobject thiz) {
+    godmode::SecurityWatchdog::start();
+}

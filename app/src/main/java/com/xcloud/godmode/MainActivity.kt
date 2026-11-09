@@ -24,7 +24,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.runtime.CompositionLocalProvider
 import com.xcloud.godmode.ai.GeminiService
-import com.xcloud.godmode.security.SecurityManager
+import com.xcloud.godmode.services.SecurityManager
 
 import com.xcloud.godmode.network.NetworkClient
 import com.xcloud.godmode.streaming.NativeStreamPipelineManager
@@ -51,7 +51,7 @@ class MainActivity : FragmentActivity() {
     private lateinit var xboxAuthManager: XboxFullAuthManager
     private lateinit var streamManager: NativeStreamPipelineManager
     private lateinit var geminiService: GeminiService
-    private lateinit var thermalGuard: com.xcloud.godmode.thermal.GodModeThermalGuard
+    private lateinit var thermalGuard: com.xcloud.godmode.services.GodModeThermalGuard
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,12 +73,13 @@ class MainActivity : FragmentActivity() {
         applyPersistentImmersiveMode()
 
         // Install StrictMode guard to prevent NetworkOnMainThreadException
-        com.xcloud.godmode.core.NetworkThreadGuard.installStrictModeNetworkGuard()
+        com.xcloud.godmode.network.NetworkThreadGuard.installStrictModeNetworkGuard()
 
         // Initialize Network with DoH for bypass
         networkClient = NetworkClient(enableDoh = true)
         xboxAuthManager = XboxFullAuthManager(networkClient)
-        streamManager = NativeStreamPipelineManager(this, networkClient, com.xcloud.godmode.catalog.CloudLaunchDiagnostics())
+        val configRepo = com.xcloud.godmode.services.AppConfigurationRepository.getInstance(this)
+        streamManager = NativeStreamPipelineManager(this, networkClient, com.xcloud.godmode.network.CloudLaunchDiagnostics(), configRepo)
         geminiService = GeminiService()
 
         // Initialize God Mode Native Sound Engine
@@ -98,7 +99,7 @@ class MainActivity : FragmentActivity() {
         scheduleDynamicPatcherWorker()
         
         // Initialize Thermal Guard for protection against overheating during 1440p streaming
-        thermalGuard = com.xcloud.godmode.thermal.GodModeThermalGuard(this) {
+        thermalGuard = com.xcloud.godmode.services.GodModeThermalGuard(this) {
             // Callback: Degrade quality to 1080p HQ preventively
             android.util.Log.w("MainActivity", "Thermal stress detected! Forcing quality degradation for hardware safety.")
             com.xcloud.godmode.streaming.NativeStreamBridge.forceThermalCritical()
@@ -151,7 +152,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
-        com.xcloud.godmode.security.OAuthDesktopAndCookiePersistence.flush()
+        com.xcloud.godmode.services.OAuthDesktopAndCookiePersistence.flush()
         handleIntent(intent)
     }
 
@@ -163,7 +164,7 @@ class MainActivity : FragmentActivity() {
             }
             val code = xboxAuthManager.extractAuthCode(data.toString())
             if (code.isNotEmpty()) {
-                com.xcloud.godmode.security.OAuthDesktopAndCookiePersistence.flush()
+                com.xcloud.godmode.services.OAuthDesktopAndCookiePersistence.flush()
                 homeViewModel.setCapturedAuthCode(code)
             }
         } else if (data != null && data.scheme == "godmode") {

@@ -3,15 +3,33 @@ package com.xcloud.godmode.streaming
 import android.view.Surface
 
 enum class StreamEngineType(val id: Int, val title: String, val subtitle: String) {
-    ENGINE_1_RUST_SECURE_VULKAN(1, "Motor 1: Rust Secure + Vulkan", "Rust Zero-Trust + Decodificación Multi-hilo + Vulkan Zero-Copy"),
-    ENGINE_2_VULKAN_VIDEO_ASIC(2, "Motor 2: Vulkan Video ASIC Direct", "VK_KHR_video_decode_queue directo en silicio (0ms auto-fallback)"),
-    ENGINE_3_MEDIACODEC_AI_NPU(3, "Motor 3: AMediaCodec + NPU AI", "AMediaCodec Asíncrono + AHardwareBuffer + Super-Resolución AI"),
-    ENGINE_4_HWC2_SURFACE_TRANSACTION_AI(4, "Motor 4: HWC2 Direct Overlay AI", "ASurfaceTransaction + HWC Direct Plane + DPU AISR (Snapdragon/MiraVision)"),
-    ENGINE_5_MEDIACODEC_NPU_NNAPI_AI(5, "Motor 5: AMediaCodec + NNAPI AI", "HardwareBuffer + NPU Tensor Cores + Reconstrucción Neuronal"),
-    ENGINE_6_MEDIACODEC_EGLIMAGE_OES_AI(6, "Motor 6: EGLImage Zero-Copy OES AI", "EGLImageKHR Direct + GLES 3.2 OES + Shader AI Laplaciano");
+    MOTOR_1_NANO_RUST_VK_IMMEDIATE(1, "Motor 1: NANO Rust + Vulkan Immediate", "Rust Core + VK_PRESENT_MODE_IMMEDIATE_KHR"),
+    MOTOR_2_NANO_VK_VIDEO_ASIC(2, "Motor 2: NANO Vulkan Video ASIC", "VK_KHR_video_decode_queue (H265/AV1)"),
+    MOTOR_3_NANO_C2_VK_COMPUTE_FSR(3, "Motor 3: NANO Codec2 + Vulkan FSR", "AMediaCodec + AHardwareBuffer + AMD FSR 1.0"),
+    MOTOR_4_NANO_C2_HWC2_DIRECT(4, "Motor 4: NANO Codec2 + HWC2 Direct", "HWC2 Direct Overlay Bypass (0ms SurfaceFlinger)"),
+    MOTOR_5_NANO_C2_NPU_TENSOR(5, "Motor 5: NANO Codec2 + NPU Tensor", "Qualcomm Hexagon / Google Edge TPU / MediaTek APU"),
+    MOTOR_6_NANO_C2_EGL_OES_ZEROCOPY(6, "Motor 6: NANO Codec2 + EGL OES", "EGLImageKHR + Zero-Copy OES + High Priority Context"),
+    MOTOR_7_PROJECT_NANO_V3_RAW_UDP(7, "Motor 7: Project NANO V3 Raw UDP", "Native Binary Protocol V3 (Raw UDP Socket)"),
+    MOTOR_8_PROJECT_NANO_V4_CLOUD_DIRECT(8, "Motor 8: Project NANO V4 Cloud Direct", "Optimized NAL/OBU alignment for Azure Xbox Series X"),
+    MOTOR_9_SMARTGLASS_GAMESTREAM_CORE(9, "Motor 9: SmartGlass Gamestream Core", "Xbox SmartGlass Binary Transport + AES-128-GCM"),
+    MOTOR_10_AZURE_MOQ_QUIC_NATIVE(10, "Motor 10: Azure MoQ QUIC Native", "Media-over-QUIC (RFC 9000) + 0-RTT Reconnection"),
+    MOTOR_11_GSSV_NATIVE_SRTP_RINGBUFFER(11, "Motor 11: GSSV Native SRTP RingBuffer", "Direct SRTP Unpack + Vyukov Lock-Free C++20 RingBuffer"),
+    MOTOR_12_XHOME_NANO_CONSOLE_BRIDGE(12, "Motor 12: XHome NANO Console Bridge", "Unified Remote Play + Cloud Gaming Signature"),
+    MOTOR_13_DIRECT_GPU_DMA_STREAMER(13, "Motor 13: Direct GPU DMA Streamer", "DMA compressed payloads to VK_MEMORY_PROPERTY_DEVICE_LOCAL"),
+    MOTOR_14_AZURE_ANYCAST_MMSG_SOCKET(14, "Motor 14: Azure Anycast MMSG Socket", "Linux recvmmsg + SO_BUSY_POLL + DSCP EF tagging"),
+    MOTOR_15_FAST_NANO_PACKETIZER(15, "Motor 15: Fast NANO Packetizer", "Real-time SCHED_FIFO frame assembly (Ultra-Low Latency Core)"),
+    MOTOR_16_HIGH_BITRATE_TUNNEL(16, "Motor 16: Native High Bitrate Tunnel", "High Performance Profile (150 Mbps / 4K Support)"),
+    MOTOR_17_SECURE_NATIVE_HANDSHAKE(17, "Motor 17: Secure Native Handshake", "TLS 1.3 session negotiation (Native Cloud Stream)"),
+    MOTOR_18_LIBRENANO_4CHANNEL_MUX(18, "Motor 18: LibreNANO 4-Channel Mux", "Lock-free determinism for Video/Audio/Input/QoS"),
+    MOTOR_19_AMD_FSR_1_EASU_RCAS_VULKAN(19, "Motor 19: AMD FSR 1.0 (EASU + RCAS)", "Official FidelityFX Spatial Upscaling in Vulkan Compute"),
+    MOTOR_20_AMD_FSR_3_TEMPORAL_COMPUTE(20, "Motor 20: AMD FSR 3.0 (Temporal)", "Temporal compute reconstruction via Block Motion Vectors"),
+    MOTOR_21_QUALCOMM_SNAPDRAGON_GSR_V2(21, "Motor 21: Qualcomm Snapdragon GSR v2", "Single-pass 12-Tap Lanczos fp16 (Adreno Optimized)"),
+    MOTOR_22_ARM_ASR_IMMORTALIS_ENGINE(22, "Motor 22: ARM ASR Immortalis Engine", "Accuracy Super Resolution + asimdhp vector instructions"),
+    MOTOR_23_ANDROID_TV_TUNNELED_HDR10PLUS(23, "Motor 23: Android TV Tunneled HDR10+", "FEATURE_TunneledPlayback + HDR10+/DV Passthrough"),
+    MOTOR_24_AAUDIO_MMAP_CLOCK_LOCKED(24, "Motor 24: AAudio MMAP Clock-Locked", "Shared Memory Audio + Microsecond Video Sync");
 
     companion object {
-        fun fromId(id: Int): StreamEngineType = entries.find { it.id == id } ?: ENGINE_3_MEDIACODEC_AI_NPU
+        fun fromId(id: Int): StreamEngineType = entries.find { it.id == id } ?: MOTOR_3_NANO_C2_VK_COMPUTE_FSR
     }
 }
 
@@ -144,6 +162,17 @@ object NativeStreamBridge {
      * Synchronizes audio presentation clock with video PTS to maintain zero-click A/V sync.
      */
     external fun syncAudioClock(audioClockUs: Long, videoPtsUs: Long)
+
+    /**
+     * Starts the ultra-low latency AAudio engine (direct C++ JNI) or Oboe hybrid.
+     * @param framesPerBuffer Target buffer size (e.g. 128)
+     */
+    external fun startUltraLowLatencyAudio(framesPerBuffer: Int): Boolean
+
+    /**
+     * Injects PCM frames with precise timestamps for AV Sync.
+     */
+    external fun injectAudioWithTimestamp(data: ShortArray, numFrames: Int, presentationTimeNs: Long)
 
     /**
      * Records audio UDP packet transmission and arrival timestamps for RFC 3550 jitter calculation.

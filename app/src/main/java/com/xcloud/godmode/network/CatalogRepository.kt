@@ -310,7 +310,7 @@ class CatalogRepository(
 
             // Case 3: Dynamic Catalog Collections Integration
             try {
-                val dynamicRepo = com.xcloud.godmode.data.DynamicXboxCatalogRepository(client)
+                val dynamicRepo = DynamicXboxCatalogRepository(client)
                 val shelves = dynamicRepo.loadDynamicHomeShelves(market = "CL", language = "es-CL")
                 val dynamicTiles = shelves.values.flatten().distinctBy { it.productId }
                 for (tile in dynamicTiles) {

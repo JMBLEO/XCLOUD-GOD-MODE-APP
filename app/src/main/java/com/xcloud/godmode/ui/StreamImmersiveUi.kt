@@ -21,10 +21,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import com.xcloud.godmode.catalog.CatalogRecordId
-import com.xcloud.godmode.catalog.LaunchableCloudTitle
-import com.xcloud.godmode.launch.LaunchAttemptId
-import com.xcloud.godmode.session.SurfaceHostRegistry
+import com.xcloud.godmode.network.CatalogRecordId
+import com.xcloud.godmode.network.LaunchableCloudTitle
+import com.xcloud.godmode.engine.LaunchAttemptId
+import com.xcloud.godmode.engine.SurfaceHostRegistry
+import com.xcloud.godmode.streaming.ProvisioningPollResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,7 +46,7 @@ data class StreamUiState(
     val hudShowInput: Boolean = true,
     val hudShowFps: Boolean = true,
     val showGameBar: Boolean = false,
-    val queueProgress: com.xcloud.godmode.session.ProvisioningPollResult? = null,
+    val queueProgress: ProvisioningPollResult? = null,
     val error: StreamErrorUi? = null
 )
 
@@ -56,7 +57,7 @@ class StreamUiController(private val mutableState: MutableStateFlow<StreamUiStat
     fun enterPreparingControlPlane(attemptId: LaunchAttemptId, title: String = "Xbox Game", titleId: String = "9NKX70BBCDRN") {
         mutableState.value = StreamUiState(phase = StreamPhase.PREPARING, launchAttemptId = attemptId, gameTitle = title, xCloudTitleId = titleId)
     }
-    fun updateQueueProgress(result: com.xcloud.godmode.session.ProvisioningPollResult) {
+    fun updateQueueProgress(result: ProvisioningPollResult) {
         val current = mutableState.value
         mutableState.value = current.copy(queueProgress = result)
     }

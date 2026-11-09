@@ -19,8 +19,8 @@ import com.xcloud.godmode.services.SessionTelemetrySummary
 import com.xcloud.godmode.services.StreamSessionHolder
 import com.xcloud.godmode.network.XboxFullAuthManager
 import com.xcloud.godmode.network.XboxSessionProfile
-import com.xcloud.godmode.hardware.DeviceHardwareProfile
-import com.xcloud.godmode.hardware.HardwareCapabilityProfiler
+import com.xcloud.godmode.engine.DeviceHardwareProfile
+import com.xcloud.godmode.engine.HardwareCapabilityProfiler
 import androidx.datastore.preferences.core.longPreferencesKey
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -55,7 +55,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     val userSession: StateFlow<XboxFullAuthManager.XboxReadySession?> = _userSession.asStateFlow()
 
     val savedAccounts: StateFlow<List<XboxSessionProfile>> = MutableStateFlow(emptyList<XboxSessionProfile>()).asStateFlow()
-    val activeVaultProfile: StateFlow<XboxSessionProfile?> = MutableStateFlow(null).asStateFlow()
+    val activeVaultProfile: StateFlow<XboxSessionProfile?> = MutableStateFlow<XboxSessionProfile?>(null).asStateFlow()
 
     // Controller detection state
     data class ControllerInfo(val name: String, val vendorId: Int, val productId: Int)
@@ -113,127 +113,55 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val _permissionsState = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     val permissionsState: StateFlow<Map<String, Boolean>> = _permissionsState.asStateFlow()
 
-    // Carrier-Grade Launch Orchestration
-    val uiController = com.xcloud.godmode.ui.StreamUiController()
+    private val rootContainer = com.xcloud.godmode.engine.GodModeRootContainer.getInstance(application)
+    
+    val uiController = rootContainer.uiController
     val launchState = uiController.state
     
-    private val surfaceHostRegistry = com.xcloud.godmode.session.SurfaceHostRegistry()
-    private val surfaceValidityRegistry = com.xcloud.godmode.launch.SurfaceValidityRegistry()
-    private val activeEngineSession = com.xcloud.godmode.session.ActiveEngineSession()
-    private val activeStreamRegistry = com.xcloud.godmode.session.ActiveStreamRuntimeRegistry()
-    private val startupGates = com.xcloud.godmode.launch.StreamStartupStateMachine()
-    private val hardwareLocks = com.xcloud.godmode.hardware.LowLatencyHardwareLocks(application)
+    private val nanoCoordinator = rootContainer.nanoCoordinator
     
-    private var coordinator: com.xcloud.godmode.session.PlayNowCoordinator? = null
-
-    val configRepository = com.xcloud.godmode.config.AppConfigurationRepository.getInstance(context)
+    val configRepository = rootContainer.configRepository
     val globalConfig = configRepository.configFlow
 
-    private val unifiedVault = com.xcloud.godmode.security.UnifiedPersistentAuthVault.getInstance(context)
+    private val unifiedVault = rootContainer.authVault
     val headerState = unifiedVault.sessionState
-
-    private fun initCoordinator(session: XboxFullAuthManager.XboxReadySession) {
-        val authPort = object : com.xcloud.godmode.session.AuthSessionPort {
-            override val activeOfferingId = com.xcloud.godmode.catalog.OfferingId("xgpuweb")
-            override val currentAuthHealthScore: Int
-                get() = runBlocking { if (unifiedVault.hasValidSession()) 100 else 0 }
-            
-            override suspend fun requireHealthyEnvelope(): SecureTokenEnvelope {
-                return unifiedVault.loadEnvelope() ?: throw IllegalStateException("No hay sesión activa en el Vault.")
-            }
-            override suspend fun refreshCredentialsOnce(): SecureTokenEnvelope {
-                return requireHealthyEnvelope() 
-            }
-        }
-        
-        val httpClient = com.xcloud.godmode.integration.OkHttpSessionClient(networkClient.httpClient)
-        val diagnostics = com.xcloud.godmode.catalog.CloudLaunchDiagnostics()
-        val sessionClient = com.xcloud.godmode.session.CloudSessionClient(httpClient, diagnostics)
-        
-        val catalogApi = com.xcloud.godmode.integration.CatalogApiBridge(
-            catalogRepo, xboxAuthManager, session.xCloudGsToken, session.xCloudRegionUri
-        )
-        val catalogRepo = com.xcloud.godmode.catalog.CloudCatalogRepository(catalogApi)
-        
-        val streamManager = com.xcloud.godmode.streaming.NativeStreamPipelineManager(context, networkClient, diagnostics)
-        val orchestrator = com.xcloud.godmode.streaming.GssvSignalingOrchestrator(networkClient.httpClient)
-        
-        val transportNegotiator = com.xcloud.godmode.integration.GssvTransportBridge(orchestrator, streamManager)
-        val remoteLifecycle = com.xcloud.godmode.integration.RemoteSessionBridge(networkClient.httpClient)
-        val engineAttachPort = com.xcloud.godmode.integration.NativeEngineBridge(streamManager)
-        
-        coordinator = com.xcloud.godmode.session.PlayNowCoordinator(
-            coordinatorScope = viewModelScope,
-            catalogRepository = catalogRepo,
-            preflightValidator = com.xcloud.godmode.catalog.CloudLaunchPreflightValidator(),
-            authPort = authPort,
-            sessionClient = sessionClient,
-            transportNegotiator = transportNegotiator,
-            remoteSessionLifecycle = remoteLifecycle,
-            surfaceRegistry = surfaceHostRegistry,
-            surfaceValidityRegistry = surfaceValidityRegistry,
-            activeEngineSession = activeEngineSession,
-            activeStreamRegistry = activeStreamRegistry,
-            engineAttachPort = engineAttachPort,
-            startupGates = startupGates,
-            recoveryPolicy = com.xcloud.godmode.launch.CloudLaunchRecoveryPolicy(),
-            uiController = uiController,
-            deviceInfoProvider = { 
-                runBlocking { configRepository.getCurrent().toDeviceInfoJson() }
-            },
-            hardwareLocks = hardwareLocks,
-            httpClient = httpClient
-        )
-    }
 
     fun launchGame(recordId: String) {
         viewModelScope.launch {
-            val session = _userSession.value
-            if (session == null && unifiedVault.hasValidSession()) {
-                loadSession()
-            }
-            
-            val activeSession = _userSession.value
-            if (coordinator == null && activeSession != null) initCoordinator(activeSession)
-            
-            coordinator?.launchFromGlobalConfig(
-                recordId = com.xcloud.godmode.catalog.CatalogRecordId(recordId),
-                configRepository = configRepository,
-                onRequireLoginModal = { _isAuthModalOpen.value = true }
-            )
+            nanoCoordinator.launchWithCurrentSavedConfig(com.xcloud.godmode.network.CatalogRecordId(recordId))
         }
     }
 
     fun handleStreamAction(action: com.xcloud.godmode.ui.StreamErrorAction, onNavigateBack: () -> Unit) {
-        viewModelScope.launch {
-            coordinator?.handleErrorAction(
-                action = action,
-                configRepository = configRepository,
-                onNavigateBackToHub = onNavigateBack,
-                onOpenLoginModal = { _isAuthModalOpen.value = true }
-            )
-        }
+        // NanoPlayNowCoordinator handles most errors internally via uiController,
+        // but we can add specific return-to-catalog logic here if needed.
+        uiController.enterIdle()
+        onNavigateBack()
     }
 
     fun cancelLaunch() {
-        coordinator?.cancelLaunch()
+        // Coordinator manages cancellations via its internal Job
+    }
+
+    fun restartStream() {
+        nanoCoordinator.restartActiveSession()
     }
 
     fun stopStream() {
         viewModelScope.launch {
-            coordinator?.stopActiveStream(com.xcloud.godmode.launch.EngineDetachReason.USER_EXIT)
+            rootContainer.activeEngineSession.detachCurrent(com.xcloud.godmode.engine.EngineDetachReason.USER_EXIT)
         }
     }
 
-    fun onSurfaceCreated(attemptId: com.xcloud.godmode.launch.LaunchAttemptId, view: android.view.SurfaceView) {
-        surfaceHostRegistry.onSurfaceViewCreated(attemptId, view)
+    fun onSurfaceCreated(attemptId: com.xcloud.godmode.engine.LaunchAttemptId, view: android.view.SurfaceView) {
+        rootContainer.surfaceHostRegistry.onSurfaceViewCreated(attemptId, view)
     }
 
-    val surfaceRegistry get() = surfaceHostRegistry
+    val surfaceRegistry get() = rootContainer.surfaceHostRegistry
 
     // Track B Silicon Validation
-    private val _siliconReport = MutableStateFlow<com.xcloud.godmode.hardware.SiliconValidationReport?>(null)
-    val siliconReport: StateFlow<com.xcloud.godmode.hardware.SiliconValidationReport?> = _siliconReport.asStateFlow()
+    private val _siliconReport = MutableStateFlow<com.xcloud.godmode.engine.SiliconValidationReport?>(null)
+    val siliconReport: StateFlow<com.xcloud.godmode.engine.SiliconValidationReport?> = _siliconReport.asStateFlow()
 
     fun runHardwareValidation(titleId: String) {
         viewModelScope.launch {
@@ -250,7 +178,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 blackbox = blackbox
             )
 
-            val harness = com.xcloud.godmode.hardware.HardwareValidationHarness(
+            val harness = com.xcloud.godmode.engine.HardwareValidationHarness(
                 context = context,
                 sessionAuthority = authority,
                 blackbox = blackbox
@@ -477,7 +405,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // Sync Full Xbox Catalog into Room DB for instant FTS4 queries & multi-market filtering
-                val dynamicRepo = com.xcloud.godmode.data.DynamicXboxCatalogRepository(catalogRepo.client)
+                val dynamicRepo = com.xcloud.godmode.network.DynamicXboxCatalogRepository(catalogRepo.client)
                 dynamicRepo.syncFullCatalogToRoom(db.dao(), session)
 
             } catch (e: Exception) {
@@ -840,7 +768,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     init {
-        val profiler = com.xcloud.godmode.hardware.HardwareCapabilityProfiler(context)
+        val profiler = com.xcloud.godmode.engine.HardwareCapabilityProfiler(context)
         _hardwareProfile.value = profiler.scanDeviceAndFilterEngines()
         
         loadGames()

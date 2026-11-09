@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.xcloud.godmode.viewmodels.HomeViewModel
 import com.xcloud.godmode.ui.*
 import com.xcloud.godmode.ui.components.*
-import com.xcloud.godmode.consoletech.ConsoleGradeHardwareEnhancer
+import com.xcloud.godmode.engine.ConsoleGradeHardwareEnhancer
 import com.xcloud.godmode.streaming.NativeInputBridge
 import com.xcloud.godmode.streaming.NativeStreamBridge
 import kotlinx.coroutines.delay

@@ -45,7 +45,7 @@ data class NativeTransportEndpoint(
  */
 class GodModeSessionOrchestrator(
     private val context: Context,
-    private val unifiedVault: com.xcloud.godmode.security.UnifiedPersistentAuthVault
+    private val unifiedVault: com.xcloud.godmode.services.UnifiedPersistentAuthVault
 ) {
     companion object {
         private const val TAG = "GodModeSessionOrch"

@@ -14,7 +14,7 @@ class TokenRefreshWorker(appContext: Context, workerParams: WorkerParameters) :
     CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
-        val vault = com.xcloud.godmode.security.UnifiedPersistentAuthVault.getInstance(applicationContext)
+        val vault = com.xcloud.godmode.services.UnifiedPersistentAuthVault.getInstance(applicationContext)
         val envelope = vault.loadEnvelope() ?: return Result.success()
         val sessionState = vault.sessionState.first()
 

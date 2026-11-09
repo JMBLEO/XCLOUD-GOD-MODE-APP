@@ -22,6 +22,13 @@ object JoseCripto {
         PersistentJoseCriptoSigner.getKeyPair()
     }
 
+    fun sign(data: ByteArray): ByteArray {
+        val signature = Signature.getInstance(ALGORITHM)
+        signature.initSign(keyPair.private)
+        signature.update(data)
+        return derToP1363(signature.sign())
+    }
+
     fun getPublicJwk(): JSONObject {
         val publicKey = keyPair.public as ECPublicKey
         val point: ECPoint = publicKey.w

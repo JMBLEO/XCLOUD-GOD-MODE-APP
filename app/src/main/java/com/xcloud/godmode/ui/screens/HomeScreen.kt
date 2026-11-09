@@ -51,6 +51,13 @@ import com.xcloud.godmode.network.XboxFullAuthManager
 import com.xcloud.godmode.ui.components.*
 import com.xcloud.godmode.ui.GodModeSettingsScreen
 import com.xcloud.godmode.viewmodels.HomeViewModel
+import com.xcloud.godmode.engine.EngineCatalog
+import com.xcloud.godmode.engine.NativeEngineGate
+import com.xcloud.godmode.engine.ProductionEngineAvailability
+import com.xcloud.godmode.viewmodels.PlayNowViewModel
+import com.xcloud.godmode.viewmodels.PlayNowAction
+import com.xcloud.godmode.ui.FloatingEngineMenu
+import com.xcloud.godmode.models.EngineCatalogVisibility
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,6 +78,17 @@ fun HomeScreen(
     val isMicMuted by viewModel.isMicMuted.collectAsState()
     val activeController by viewModel.activeController.collectAsState()
     val bestServerSuggestion by viewModel.bestServerSuggestion.collectAsState()
+    val playNowViewModel = remember {
+        val availability = ProductionEngineAvailability()
+        PlayNowViewModel(
+            engineCatalog = EngineCatalog(availability),
+            nativeEngineGate = NativeEngineGate(availability),
+            rootConfigurationRepository = com.xcloud.godmode.services.DefaultRootConfigurationRepository(),
+            authenticationRepository = com.xcloud.godmode.services.DefaultAuthenticationRepository(),
+            streamMetricsProvider = com.xcloud.godmode.network.DefaultStreamMetricsProvider()
+        )
+    }
+    val playNowUiState by playNowViewModel.uiState.collectAsState()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     val strings = com.xcloud.godmode.ui.theme.AppStrings.get(settings.appLanguage)
@@ -247,7 +265,8 @@ fun HomeScreen(
                         viewModel = viewModel
                     )
                     2 -> GodModeSettingsScreen(
-                        configRepository = viewModel.configRepository
+                        configRepository = viewModel.configRepository,
+                        onConfigSavedAndInjected = { viewModel.restartStream() }
                     )
                 }
 
@@ -267,27 +286,49 @@ fun HomeScreen(
 
         // Modals
         if (selectedGameForDetails != null) {
-            val context = LocalContext.current
             GameDetailsModal(
                 game = selectedGameForDetails!!,
                 settings = settings,
                 onClose = { viewModel.hideDetails() },
                 onStartStream = {
-                    val missingPermissions = mutableListOf<String>()
-                    if (!viewModel.isAuthorized(android.Manifest.permission.RECORD_AUDIO)) missingPermissions.add("Micrófono")
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                        if (!viewModel.isAuthorized(android.Manifest.permission.BLUETOOTH_CONNECT)) missingPermissions.add("Bluetooth")
-                    }
-                    
-                    if (missingPermissions.isNotEmpty()) {
-                        android.widget.Toast.makeText(context, "Faltan permisos críticos: ${missingPermissions.joinToString(", ")}. Autorízalos en el Hub.", android.widget.Toast.LENGTH_LONG).show()
-                    } else {
+                    playNowViewModel.onPlayNowPressed(EngineCatalogVisibility.INCLUDE_UNAVAILABLE)
+                }
+            )
+        }
+
+        if (playNowUiState.engineMenuVisible) {
+            FloatingEngineMenu(
+                entries = playNowUiState.engineEntries,
+                configurationState = playNowUiState.configurationState,
+                connectionMetrics = playNowUiState.connectionMetrics,
+                verifiedQuality = playNowUiState.verifiedQuality,
+                restartDialogVisible = playNowUiState.restartDialogVisible,
+                message = playNowUiState.message,
+                onSelected = { entry ->
+                    val action = playNowViewModel.onEngineSelected(entry)
+                    if (action is PlayNowAction.EngineResolved) {
                         viewModel.hideDetails()
                         com.xcloud.godmode.audio.GodModeSoundEngine.play(com.xcloud.godmode.audio.SoundEventType.LAUNCH)
                         val targetRegion = userSession?.xCloudRegionUri?.ifBlank { "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user" } ?: "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user"
-                        onLaunchGame(selectedGameForDetails!!.id, targetRegion)
+                        onLaunchGame(selectedGameForDetails?.id ?: "9NKX70BBCDRN", targetRegion)
                     }
-                }
+                },
+                onEditBypassPressed = { playNowViewModel.openBypassEditor() },
+                onEditServerPressed = { playNowViewModel.openServerEditor() },
+                onEditCodecPressed = { playNowViewModel.openCodecEditor() },
+                onRestartAction = { action -> playNowViewModel.handleRestartAction(action) },
+                onDismiss = { playNowViewModel.dismissEngineMenu() }
+            )
+        }
+
+        if (playNowUiState.message != null && !playNowUiState.engineMenuVisible) {
+            AlertDialog(
+                onDismissRequest = { playNowViewModel.dismissEngineMenu() },
+                confirmButton = {
+                    TextButton(onClick = { playNowViewModel.dismissEngineMenu() }) { Text("Entendido") }
+                },
+                title = { Text("Motor de Streaming Nativo") },
+                text = { Text(playNowUiState.message ?: "") }
             )
         }
 

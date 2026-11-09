@@ -1,8 +1,8 @@
 package com.xcloud.godmode.streaming
 
 import android.util.Log
-import com.xcloud.godmode.catalog.CloudLaunchDiagnostics
-import com.xcloud.godmode.catalog.PerformanceSnapshot
+import com.xcloud.godmode.network.CloudLaunchDiagnostics
+import com.xcloud.godmode.network.PerformanceSnapshot
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 

@@ -30,6 +30,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <!-- Compatibilidad con Smartphones, Tablets, Consolas Portátiles (Odin/Razer/G Cloud) y Android TV -->
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
@@ -112,5 +113,11 @@
         <meta-data
             android:name="com.google.android.gms.vision.DEPENDENCIES"
             android:value="ocr" />
+        <service
+            android:name=".services.CloudStreamForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback|microphone" />
+
     </application>
 </manifest>

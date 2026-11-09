@@ -18,7 +18,7 @@ import com.xcloud.godmode.services.SessionTelemetrySummary
 @Composable
 fun PostStreamPerformanceModal(
     summary: SessionTelemetrySummary?,
-    siliconReport: com.xcloud.godmode.hardware.SiliconValidationReport? = null,
+    siliconReport: com.xcloud.godmode.engine.SiliconValidationReport? = null,
     onClose: () -> Unit,
     onQuickReconnect: () -> Unit
 ) {

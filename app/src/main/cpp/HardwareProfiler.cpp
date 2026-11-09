@@ -9,7 +9,7 @@
 #define LOG_TAG "HardwareProfiler"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 extern "C" JNIEXPORT jint JNICALL
-Java_com_xcloud_godmode_hardware_HardwareCapabilityProfiler_nativeProbeGpuAndNpuCapabilities(
+Java_com_xcloud_godmode_engine_HardwareCapabilityProfiler_nativeProbeGpuAndNpuCapabilities(
         JNIEnv* env, jobject thiz) {
     jint flags = 0;
 

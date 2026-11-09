@@ -62,7 +62,12 @@ android {
     buildConfig = true
     prefab = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      isReturnDefaultValues = true
+    }
+  }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
@@ -156,6 +161,7 @@ dependencies {
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
   testImplementation(libs.junit)
+  testImplementation("org.json:json:20240303")
   implementation(libs.google.gson)
   implementation(libs.zxing.core)
   implementation(libs.androidx.work.runtime.ktx)

@@ -59,7 +59,7 @@ data class SessionLatencyPercentiles(
 @Composable
 fun LatencyDashboard(
     modifier: Modifier = Modifier,
-    report: com.xcloud.godmode.hardware.SiliconValidationReport? = null,
+    report: com.xcloud.godmode.engine.SiliconValidationReport? = null,
     percentiles: SessionLatencyPercentiles = remember(report) {
         if (report != null) {
             SessionLatencyPercentiles(
