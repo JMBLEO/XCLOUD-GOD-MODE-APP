@@ -1,0 +1,1121 @@
+En la captura del modal **Conectar con Xbox** en la pestaña **Vincular QR / TV**, se observa un código QR de alta densidad sin el código alfanumérico de 8 caracteres debajo, el cual al escanearse redirige a `login.live.com` mostrando **`invalid_request`**.
+
+### I. Diagnóstico Técnico: ¿Por qué el QR arrojó `invalid_request` en `login.live.com`?
+
+Al auditar lo que ocurrió en la imagen frente a la implementación de los repositorios de referencia (**`XStreaming`**, **`greenlight`**, **`xbPlay`** y **`OpenXbox`**), el fallo se produjo por **tres causas exactas**:
+
+1. Inyección de una URL `oauth20_authorize.srf` cruda con `redirect_uri=ms-xal://` dentro del QR:
+
+
+* El servidor `[https://login.live.com/oauth20_authorize.srf](https://login.live.com/oauth20_authorize.srf)` **prohíbe** usar `redirect_uri=ms-xal-...://auth` de forma directa; si una URL con `ms-xal://` no fue generada y pre-registrada un segundo antes por `POST [https://sisu.xboxlive.com/authenticate](https://sisu.xboxlive.com/authenticate)` (que le adjunta un parámetro criptográfico de sesión), `login.live.com` rechaza la URL inmediatamente con **`invalid_request`**.
+
+
+2. **Rechazo de `[sisu.xboxlive.com/authenticate](https://sisu.xboxlive.com/authenticate)` por el parámetro `"prompt"` dentro del objeto `"Query"`:**
+* En el paso previo se incluyó `"prompt": "select_account"` dentro del JSON `"Query"` enviado a `[sisu.xboxlive.com/authenticate](https://sisu.xboxlive.com/authenticate)`. El validador estricto de SISU solo permite 4 llaves dentro de `"Query"` (`display`, `code_challenge`, `code_challenge_method` y `state`). Al recibir `"prompt"`, SISU devolvió HTTP 400, provocando que la app cayera en el fallback defectuoso y dibujara la URL larga dentro del QR.
+
+
+
+
+3. **Diferencias de protocolo en `[login.live.com/oauth20_device.srf](https://login.live.com/oauth20_device.srf)` (MSA QR Login Real):**
+* Para que la pestaña **Vincular QR / TV** funcione como en las apps de referencia (mostrando un QR limpio hacia `[https://login.live.com/oauth20_remoteconnect.srf](https://login.live.com/oauth20_remoteconnect.srf)` junto al código de 8 letras/números), el endpoint `[https://login.live.com/oauth20_device.srf](https://login.live.com/oauth20_device.srf)` y su sondeo en `[https://login.live.com/oauth20_token.srf](https://login.live.com/oauth20_token.srf)` exigen tres reglas específicas de Microsoft Live:
+* **Regla A (`client_id` habilitado para `device_code` en MSA):** No todos los App IDs de Xbox tienen activado el flujo `oauth20_device.srf`. Los Client IDs oficiales de Microsoft que tienen habilitado `response_type=device_code` con `scope=service::user.auth.xboxlive.com::MBI_SSL` en `login.live.com` son **`0000000048183522`** (Xbox Live Remote Connect / SmartTV / Switch), **`00000000441cc96b`** (Xbox Companion) y **`000000004c12ae6f`** / **`00000000402b5328`**.
+* **Regla B (`grant_type=device_code` en el Polling):** A diferencia de Azure AD (que exige el URN largo `urn:ietf:params:oauth:grant-type:device_code`), el servidor **`[https://login.live.com/oauth20_token.srf](https://login.live.com/oauth20_token.srf)` exige `grant_type=device_code**`. Enviar solo el URN largo a `login.live.com` devuelve `invalid_request`.
+* **Regla C (URL limpia en el QR):** El QR debe codificar la URL limpia `[https://login.live.com/oauth20_remoteconnect.srf](https://login.live.com/oauth20_remoteconnect.srf)` (sin añadir parámetros no soportados que disparen `invalid_request` en el servidor legado de Live) y mostrar en grande debajo del QR el **`user_code`** de 8 caracteres para que el usuario lo apruebe en segundos desde su móvil.
+
+
+
+
+
+---
+
+### II. Problemas Frecuentes en las Apps de Referencia y sus Soluciones
+
+| Problema Conocido en Repositorios (`XStreaming` / `greenlight` / `OpenXbox`) | Causa Raíz en Servidores de Microsoft / Xbox | Solución Definitiva Implementada |
+| --- | --- | --- |
+| **1. Al escanear el QR, `login.live.com` muestra `invalid_request**` | Se codificó en el QR una URL `oauth20_authorize.srf` con `redirect_uri=ms-xal://` no firmada por SISU, o se añadieron query params inválidos a `oauth20_remoteconnect.srf`. | Usar exclusivamente `POST [https://login.live.com/oauth20_device.srf](https://login.live.com/oauth20_device.srf)` (`response_type=device_code`, `scope=service::user.auth.xboxlive.com::MBI_SSL`) y codificar en el QR la `verification_uri` limpia mostrando el `user_code` debajo. |
+| **2. El polling de `oauth20_token.srf` falla con HTTP 400 `invalid_request**` | Se envió `grant_type=urn:ietf:params:oauth:grant-type:device_code` al servidor clásico `login.live.com`. | Enviar `grant_type=device_code` a `[login.live.com/oauth20_token.srf](https://login.live.com/oauth20_token.srf)` (con fallback automático al URN si el endpoint responde `unsupported_grant_type`). |
+| **3. `oauth20_device.srf` devuelve `unauthorized_client` con ciertos App IDs** | Algunos App IDs de Xbox móvil solo tienen habilitado el flujo XAL/SISU (`code`) y no el flujo TV/QR (`device_code`). | Usar una cascada dedicada para QR encabezada por **`0000000048183522`** (Xbox Live Official Remote Connect), seguida de **`00000000402b5328`**, **`000000004c12ae6f`** y **`00000000441cc96b`**. |
+| **4. `[sisu.xboxlive.com/authenticate](https://sisu.xboxlive.com/authenticate)` devuelve HTTP 400 en la pestaña "Inicio Rápido"** | El objeto JSON `Query` incluía campos extra como `"prompt": "select_account"`. | Mantener el objeto `Query` de SISU estrictamente con las 4 llaves oficiales (`display`, `code_challenge`, `code_challenge_method`, `state`). |
+| **5. Tras aprobar el QR en el móvil, `user.auth.xboxlive.com` rechaza el `access_token**` | El `access_token` devuelto por `MBI_SSL` se envió sin el prefijo `"d="` en el campo `RpsTicket`. | Formatear siempre `"RpsTicket": "d=$accessToken"` antes de autenticar contra `[user.auth.xboxlive.com/user/authenticate](https://user.auth.xboxlive.com/user/authenticate)`. |
+
+---
+
+### III. Código Inyectable en Todas las Capas de la App
+
+#### Capa 1: Red y Protocolo (`com/xcloud/godmode/network/MsaQrAndSisuAuthEngine.kt`)
+
+Este motor separa limpiamente el flujo **MSA QR Login (`oauth20_device.srf` $\rightarrow$ `oauth20_remoteconnect.srf`)** para la pestaña **Vincular QR / TV** y el flujo **SISU 1-Clic (`[sisu.xboxlive.com/authenticate](https://sisu.xboxlive.com/authenticate)`)** para la pestaña **Inicio Rápido**, conectando ambos con la tubería completa de 6 eslabones de tokens:
+
+```kotlin
+package com.xcloud.godmode.network
+
+import android.net.Uri
+import android.util.Base64
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
+import java.math.BigInteger
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.security.KeyPair
+import java.security.KeyPairGenerator
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.security.Signature
+import java.security.interfaces.ECPublicKey
+import java.security.spec.ECGenParameterSpec
+import java.time.Instant
+import java.util.UUID
+import kotlin.coroutines.coroutineContext
+
+data class MsaQrSessionTicket(
+    val clientIdUsed: String,
+    val userCode: String,
+    val deviceCode: String,
+    val verificationUri: String,
+    val expiresInSeconds: Int,
+    val intervalSeconds: Int
+)
+
+data class SisuBrowserRedirectTicket(
+    val appIdUsed: String,
+    val titleIdUsed: String,
+    val redirectUri: String,
+    val msaOauthRedirectUrl: String,
+    val codeVerifier: String,
+    val deviceToken: String,
+    val sisuSessionId: String
+)
+
+class MsaQrAndSisuAuthEngine(
+    private val vaultStorage: SessionVaultPersistence
+) {
+
+    companion object {
+        // Scope oficial preautorizado de Xbox Live en login.live.com (0% errores de primera parte)
+        const val MBI_SSL_SCOPE = "service::user.auth.xboxlive.com::MBI_SSL"
+        const val LPT_TRANSFER_SCOPE =
+            "service::http://Passport.NET/purpose::PURPOSE_XBOX_CLOUD_CONSOLE_TRANSFER_TOKEN"
+
+        // Cascada de Client IDs oficiales habilitados para MSA QR Device Code (oauth20_device.srf)
+        val MSA_QR_DEVICE_CLIENT_IDS = listOf(
+            "0000000048183522", // #1: Xbox Live Official Remote Connect / TV QR Client
+            "00000000402b5328", // #2: Xbox Cloud Companion
+            "000000004c12ae6f", // #3: Xbox Live MSA Client
+            "00000000441cc96b", // #4: Xbox Companion MSA Client
+            "000000004c20a908"  // #5: Xbox Game Pass MSA Client
+        )
+
+        // Cascada de clientes XAL para la pestaña "Inicio Rápido" (1 Clic vía SISU)
+        val SISU_ONE_CLICK_CLIENTS = listOf(
+            Triple("00000000402b5328", "328178078", "ms-xal-00000000402b5328://auth"),
+            Triple("000000004c20a908", "1016898439", "ms-xal-000000004c20a908://auth"),
+            Triple("000000004827c78e", "328178078", "ms-xal-000000004827c78e://auth")
+        )
+
+        private const val WINDOWS_EPOCH_OFFSET = 11644473600L
+    }
+
+    private val ecKeyPair: KeyPair by lazy {
+        KeyPairGenerator.getInstance("EC").apply {
+            initialize(ECGenParameterSpec("secp256r1"), SecureRandom())
+        }.generateKeyPair()
+    }
+
+    private val publicKeyJwk: JSONObject by lazy {
+        val pub = ecKeyPair.public as ECPublicKey
+        JSONObject().apply {
+            put("kty", "EC")
+            put("x", base64Url(to32Bytes(pub.w.affineX)))
+            put("y", base64Url(to32Bytes(pub.w.affineY)))
+            put("crv", "P-256")
+            put("alg", "ES256")
+            put("use", "sig")
+        }
+    }
+
+    /**
+     * =========================================================================
+     * PESTAÑA "VINCULAR QR / TV": FLUJO OFICIAL MSA QR (oauth20_device.srf)
+     * Genera un user_code corto (8 caracteres) y una verification_uri limpia
+     * (https://login.live.com/oauth20_remoteconnect.srf) que NUNCA da invalid_request.
+     * =========================================================================
+     */
+    suspend fun requestMsaQrCodeTicket(): MsaQrSessionTicket = withContext(Dispatchers.IO) {
+        var lastError: Throwable? = null
+
+        for (clientId in MSA_QR_DEVICE_CLIENT_IDS) {
+            try {
+                val json = postFormUrlEncoded(
+                    url = "https://login.live.com/oauth20_device.srf",
+                    params = mapOf(
+                        "client_id" to clientId,
+                        "scope" to MBI_SSL_SCOPE,
+                        "response_type" to "device_code"
+                    )
+                )
+
+                val userCode = json.optString("user_code")
+                val deviceCode = json.optString("device_code")
+                val verificationUri = json.optString(
+                    "verification_uri",
+                    "https://login.live.com/oauth20_remoteconnect.srf"
+                )
+
+                if (userCode.isNotBlank() && deviceCode.isNotBlank()) {
+                    return@withContext MsaQrSessionTicket(
+                        clientIdUsed = clientId,
+                        userCode = userCode,
+                        deviceCode = deviceCode,
+                        // URL limpia sin parámetros extra que rompan oauth20_remoteconnect.srf
+                        verificationUri = verificationUri,
+                        expiresInSeconds = json.optInt("expires_in", 900),
+                        intervalSeconds = json.optInt("interval", 5).coerceAtLeast(5)
+                    )
+                }
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+
+        throw IllegalStateException(
+            "No se pudo inicializar MSA QR Login en login.live.com: ${lastError?.message}"
+        )
+    }
+
+    /**
+     * Sondea automáticamente login.live.com/oauth20_token.srf hasta que el usuario ingresa
+     * el código de 8 dígitos tras escanear el QR.
+     */
+    suspend fun pollMsaQrTicketUntilApproved(
+        ticket: MsaQrSessionTicket,
+        spoofedForwardedForIp: String? = null,
+        onTickRemainingSeconds: (Int) -> Unit
+    ): CompleteXboxSession = withContext(Dispatchers.IO) {
+        val deadlineMs = System.currentTimeMillis() + (ticket.expiresInSeconds * 1000L)
+        var intervalMs = ticket.intervalSeconds * 1000L
+
+        while (coroutineContext.isActive && System.currentTimeMillis() < deadlineMs) {
+            val remainingSec = ((deadlineMs - System.currentTimeMillis()) / 1000L).toInt()
+            onTickRemainingSeconds(remainingSec)
+
+            delay(intervalMs)
+
+            val pollResponse = pollMsaDeviceTokenOnce(
+                clientId = ticket.clientIdUsed,
+                deviceCode = ticket.deviceCode
+            )
+
+            when (pollResponse) {
+                is MsaPollOutcome.Approved -> {
+                    val fullSession = buildCompleteTokenPipeline(
+                        msaAccessToken = pollResponse.accessToken,
+                        msaRefreshToken = pollResponse.refreshToken,
+                        clientIdUsed = ticket.clientIdUsed,
+                        spoofedIp = spoofedForwardedForIp
+                    )
+                    vaultStorage.saveSession(fullSession)
+                    return@withContext fullSession
+                }
+                is MsaPollOutcome.Pending -> Unit
+                is MsaPollOutcome.SlowDown -> intervalMs += 5_000L
+                is MsaPollOutcome.ExpiredOrDenied -> {
+                    throw IllegalStateException(pollResponse.reason)
+                }
+            }
+        }
+        throw IllegalStateException("El código QR expiró. Genera uno nuevo con un toque.")
+    }
+
+    private sealed interface MsaPollOutcome {
+        data class Approved(val accessToken: String, val refreshToken: String) : MsaPollOutcome
+        data object Pending : MsaPollOutcome
+        data object SlowDown : MsaPollOutcome
+        data class ExpiredOrDenied(val reason: String) : MsaPollOutcome
+    }
+
+    private fun pollMsaDeviceTokenOnce(clientId: String, deviceCode: String): MsaPollOutcome {
+        // IMPORTANTE: En login.live.com/oauth20_token.srf el grant_type nativo es "device_code".
+        // Si el nodo exige el URN RFC 8628, probamos ambos automáticamente.
+        val grantTypes = listOf(
+            "device_code",
+            "urn:ietf:params:oauth:grant-type:device_code"
+        )
+
+        for (grantType in grantTypes) {
+            val conn = (URL("https://login.live.com/oauth20_token.srf").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 12_000
+                readTimeout = 12_000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+                setRequestProperty("Accept", "application/json")
+            }
+
+            val body = mapOf(
+                "client_id" to clientId,
+                "grant_type" to grantType,
+                "device_code" to deviceCode
+            ).entries.joinToString("&") { (k, v) ->
+                "${URLEncoder.encode(k, "UTF-8")}=${URLEncoder.encode(v, "UTF-8")}"
+            }
+
+            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()?.readText().orEmpty()
+
+            if (code in 200..299) {
+                val json = JSONObject(text)
+                return MsaPollOutcome.Approved(
+                    accessToken = json.getString("access_token"),
+                    refreshToken = json.getString("refresh_token")
+                )
+            }
+
+            val errJson = runCatching { JSONObject(text) }.getOrNull()
+            val errorCode = errJson?.optString("error").orEmpty()
+
+            when (errorCode) {
+                "authorization_pending" -> return MsaPollOutcome.Pending
+                "slow_down" -> return MsaPollOutcome.SlowDown
+                "invalid_request", "unsupported_grant_type" -> {
+                    // Continúa al siguiente formato de grant_type
+                    continue
+                }
+                "expired_token", "code_expired" -> {
+                    return MsaPollOutcome.ExpiredOrDenied("El código QR ha expirado.")
+                }
+                "access_denied" -> {
+                    return MsaPollOutcome.ExpiredOrDenied("El usuario canceló la autorización.")
+                }
+            }
+        }
+        return MsaPollOutcome.Pending
+    }
+
+    /**
+     * =========================================================================
+     * PESTAÑA "INICIO RÁPIDO": FLUJO OFICIAL SISU 1-CLIC (sisu.xboxlive.com)
+     * Sin campos inválidos en "Query" para que SISU siempre entregue MsaOauthRedirect.
+     * =========================================================================
+     */
+    suspend fun prepareSisuOneClickTicket(): SisuBrowserRedirectTicket = withContext(Dispatchers.IO) {
+        val deviceToken = obtainSignedDeviceToken()
+        var lastError: Throwable? = null
+
+        for ((appId, titleId, redirectUri) in SISU_ONE_CLICK_CLIENTS) {
+            try {
+                val verifier = generatePkceVerifier()
+                val challenge = generatePkceChallenge(verifier)
+                val state = base64Url(UUID.randomUUID().toString().toByteArray())
+
+                // CRÍTICO: "Query" en SISU solo debe contener display, code_challenge, code_challenge_method y state
+                val sisuPayload = JSONObject().apply {
+                    put("AppId", appId)
+                    put("TitleId", titleId)
+                    put("RedirectUri", redirectUri)
+                    put("DeviceToken", deviceToken)
+                    put("Sandbox", "RETAIL")
+                    put("TokenType", "code")
+                    put("Offers", JSONArray().put(MBI_SSL_SCOPE))
+                    put("Query", JSONObject().apply {
+                        put("display", "android_phone")
+                        put("code_challenge", challenge)
+                        put("code_challenge_method", "S256")
+                        put("state", state)
+                    })
+                }.toString()
+
+                val url = "https://sisu.xboxlive.com/authenticate"
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 12_000
+                    readTimeout = 12_000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    setRequestProperty("x-xbl-contract-version", "1")
+                    setRequestProperty("Signature", signRequest(url, "", sisuPayload))
+                }
+                conn.outputStream.use { it.write(sisuPayload.toByteArray(Charsets.UTF_8)) }
+
+                val code = conn.responseCode
+                val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                    ?.bufferedReader()?.readText().orEmpty()
+
+                if (code in 200..299) {
+                    val sessionId = conn.getHeaderField("X-SessionId").orEmpty()
+                    val msaUrl = JSONObject(text).getString("MsaOauthRedirect")
+                    return@withContext SisuBrowserRedirectTicket(
+                        appIdUsed = appId,
+                        titleIdUsed = titleId,
+                        redirectUri = redirectUri,
+                        msaOauthRedirectUrl = msaUrl,
+                        codeVerifier = verifier,
+                        deviceToken = deviceToken,
+                        sisuSessionId = sessionId
+                    )
+                }
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        throw IllegalStateException("No se pudo iniciar sesión SISU: ${lastError?.message}")
+    }
+
+    /**
+     * Canjea automáticamente el código recibido en MainActivity.onNewIntent (ms-xal-...://auth/?code=...)
+     */
+    suspend fun completeSisuOneClickExchange(
+        authorizationCode: String,
+        ticket: SisuBrowserRedirectTicket,
+        spoofedForwardedForIp: String? = null
+    ): CompleteXboxSession = withContext(Dispatchers.IO) {
+        val tokenForm = postFormUrlEncoded(
+            url = "https://login.live.com/oauth20_token.srf",
+            params = mapOf(
+                "client_id" to ticket.appIdUsed,
+                "grant_type" to "authorization_code",
+                "code" to authorizationCode,
+                "redirect_uri" to ticket.redirectUri,
+                "code_verifier" to ticket.codeVerifier,
+                "scope" to MBI_SSL_SCOPE
+            )
+        )
+
+        val msaAccess = tokenForm.getString("access_token")
+        val msaRefresh = tokenForm.getString("refresh_token")
+
+        val session = buildCompleteTokenPipeline(
+            msaAccessToken = msaAccess,
+            msaRefreshToken = msaRefresh,
+            clientIdUsed = ticket.appIdUsed,
+            spoofedIp = spoofedForwardedForIp
+        )
+        vaultStorage.saveSession(session)
+        session
+    }
+
+    /**
+     * Ejecuta los 6 eslabones completos (DeviceToken -> RPS con "d=" -> XSTS Web & GSSV -> xgpuweb & xgpuwebf2p)
+     */
+    fun buildCompleteTokenPipeline(
+        msaAccessToken: String,
+        msaRefreshToken: String,
+        clientIdUsed: String,
+        spoofedIp: String?
+    ): CompleteXboxSession {
+        val deviceToken = runCatching { obtainSignedDeviceToken() }.getOrDefault("")
+
+        val rpsTicket = if (msaAccessToken.startsWith("d=") || msaAccessToken.startsWith("t=")) {
+            msaAccessToken
+        } else {
+            "d=$msaAccessToken"
+        }
+
+        val rpsPayload = JSONObject().apply {
+            put("Properties", JSONObject().apply {
+                put("AuthMethod", "RPS")
+                put("SiteName", "user.auth.xboxlive.com")
+                put("RpsTicket", rpsTicket)
+            })
+            put("RelyingParty", "http://auth.xboxlive.com")
+            put("TokenType", "JWT")
+        }.toString()
+
+        val rpsResp = postJsonSigned("https://user.auth.xboxlive.com/user/authenticate", rpsPayload)
+        val userToken = rpsResp.getString("Token")
+        val uhs = rpsResp.getJSONObject("DisplayClaims")
+            .getJSONArray("xui")
+            .getJSONObject(0)
+            .getString("uhs")
+
+        val webXsts = obtainXstsToken(userToken, deviceToken, "http://xboxlive.com")
+        val webToken = webXsts.getString("Token")
+        val xui = webXsts.getJSONObject("DisplayClaims").getJSONArray("xui").getJSONObject(0)
+        val gamertag = xui.optString("gtg", "Xbox Player")
+        val xuid = xui.optString("xid", "")
+
+        val gssvXsts = obtainXstsToken(userToken, deviceToken, "http://gssv.xboxlive.com/")
+        val gssvToken = gssvXsts.getString("Token")
+
+        val extraHeaders = mutableMapOf("x-gssv-client" to "XboxComBrowser")
+        if (!spoofedIp.isNullOrBlank()) {
+            extraHeaders["X-Forwarded-For"] = spoofedIp
+        }
+
+        val xgpuResp = postJsonSigned(
+            url = "https://xgpuweb.gssv-play-prod.xboxlive.com/v2/login/user",
+            body = JSONObject().put("token", gssvToken).put("offeringId", "xgpuweb").toString(),
+            extraHeaders = extraHeaders
+        )
+        val xgpuGsToken = xgpuResp.getString("gsToken")
+        val durationSec = xgpuResp.optLong("durationInSeconds", 14_400L)
+        val regions = xgpuResp.getJSONObject("offeringSettings").getJSONArray("regions")
+
+        var baseUri = ""
+        for (i in 0 until regions.length()) {
+            val r = regions.getJSONObject(i)
+            if (r.optBoolean("isDefault", false) || baseUri.isEmpty()) {
+                baseUri = r.getString("baseUri")
+            }
+        }
+
+        val f2pGsToken = runCatching {
+            postJsonSigned(
+                url = "https://xgpuwebf2p.gssv-play-prod.xboxlive.com/v2/login/user",
+                body = JSONObject().put("token", gssvToken).put("offeringId", "xgpuwebf2p").toString(),
+                extraHeaders = extraHeaders
+            ).optString("gsToken").takeIf { it.isNotBlank() }
+        }.getOrNull()
+
+        return CompleteXboxSession(
+            gamertag = gamertag,
+            xuid = xuid,
+            uhs = uhs,
+            clientIdUsed = clientIdUsed,
+            msaAccessToken = msaAccessToken,
+            msaRefreshToken = msaRefreshToken,
+            deviceToken = deviceToken,
+            webXstsToken = webToken,
+            gssvXstsToken = gssvToken,
+            xgpuGsToken = xgpuGsToken,
+            f2pGsToken = f2pGsToken,
+            preferredBaseUri = baseUri,
+            regionsJson = regions.toString(),
+            gsTokenExpiresAtEpochMs = System.currentTimeMillis() + (durationSec * 1000L)
+        )
+    }
+
+    private fun obtainSignedDeviceToken(): String {
+        val payload = JSONObject().apply {
+            put("RelyingParty", "http://auth.xboxlive.com")
+            put("TokenType", "JWT")
+            put("Properties", JSONObject().apply {
+                put("AuthMethod", "ProofOfPossession")
+                put("Id", "{${UUID.randomUUID()}}")
+                put("DeviceType", "Android")
+                put("SerialNumber", "{${UUID.randomUUID()}}")
+                put("Version", "10.0")
+                put("ProofKey", publicKeyJwk)
+            })
+        }.toString()
+        return postJsonSigned("https://device.auth.xboxlive.com/device/authenticate", payload)
+            .getString("Token")
+    }
+
+    private fun obtainXstsToken(userToken: String, deviceToken: String, relyingParty: String): JSONObject {
+        val props = JSONObject().apply {
+            put("SandboxId", "RETAIL")
+            put("UserTokens", JSONArray().put(userToken))
+            if (deviceToken.isNotBlank()) put("DeviceToken", deviceToken)
+        }
+        val payload = JSONObject().apply {
+            put("Properties", props)
+            put("RelyingParty", relyingParty)
+            put("TokenType", "JWT")
+        }.toString()
+        return postJsonSigned("https://xsts.auth.xboxlive.com/xsts/authorize", payload)
+    }
+
+    private fun postFormUrlEncoded(url: String, params: Map<String, String>): JSONObject {
+        val encoded = params.entries.joinToString("&") { (k, v) ->
+            "${URLEncoder.encode(k, "UTF-8")}=${URLEncoder.encode(v, "UTF-8")}"
+        }
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 15_000
+            readTimeout = 15_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+            setRequestProperty("Accept", "application/json")
+        }
+        conn.outputStream.use { it.write(encoded.toByteArray(Charsets.UTF_8)) }
+        val code = conn.responseCode
+        val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+            ?.bufferedReader()?.readText().orEmpty()
+        if (code !in 200..299) throw IllegalStateException("HTTP $code: $text")
+        return JSONObject(text)
+    }
+
+    private fun postJsonSigned(
+        url: String,
+        body: String,
+        extraHeaders: Map<String, String> = emptyMap()
+    ): JSONObject {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 15_000
+            readTimeout = 15_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("x-xbl-contract-version", "1")
+            setRequestProperty("Signature", signRequest(url, "", body))
+            extraHeaders.forEach { (k, v) -> setRequestProperty(k, v) }
+        }
+        conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+        val code = conn.responseCode
+        val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+            ?.bufferedReader()?.readText().orEmpty()
+        if (code !in 200..299) throw IllegalStateException("HTTP $code: $text")
+        return JSONObject(text)
+    }
+
+    private fun signRequest(url: String, authHeader: String, body: String): String {
+        val windowsTime = (Instant.now().epochSecond + WINDOWS_EPOCH_OFFSET) * 10_000_000L
+        val pathAndQuery = URL(url).let { u ->
+            if (u.query.isNullOrEmpty()) u.path else "${u.path}?${u.query}"
+        }
+        val buf = ByteArrayOutputStream()
+        DataOutputStream(buf).use { dos ->
+            dos.writeInt(1)
+            dos.writeByte(0)
+            dos.writeLong(windowsTime)
+            dos.writeByte(0)
+            dos.write("POST".toByteArray(Charsets.UTF_8))
+            dos.writeByte(0)
+            dos.write(pathAndQuery.toByteArray(Charsets.UTF_8))
+            dos.writeByte(0)
+            dos.write(authHeader.toByteArray(Charsets.UTF_8))
+            dos.writeByte(0)
+            dos.write(body.toByteArray(Charsets.UTF_8))
+            dos.writeByte(0)
+        }
+        val sig = Signature.getInstance("SHA256withECDSA").apply {
+            initSign(ecKeyPair.private)
+            update(buf.toByteArray())
+        }.sign()
+        val p1363 = derToP1363(sig)
+
+        val out = ByteArrayOutputStream()
+        DataOutputStream(out).use { dos ->
+            dos.writeInt(1)
+            dos.writeLong(windowsTime)
+            dos.write(p1363)
+        }
+        return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    }
+
+    private fun derToP1363(der: ByteArray): ByteArray {
+        var idx = 2
+        if (der[1].toInt() and 0x80 != 0) idx += (der[1].toInt() and 0x7F)
+        idx++
+        val rLen = der[idx++].toInt()
+        val r = der.copyOfRange(idx, idx + rLen)
+        idx += rLen + 1
+        val sLen = der[idx++].toInt()
+        val s = der.copyOfRange(idx, idx + sLen)
+        val res = ByteArray(64)
+        copy32(r, res, 0)
+        copy32(s, res, 32)
+        return res
+    }
+
+    private fun copy32(src: ByteArray, dst: ByteArray, offset: Int) {
+        val clean = if (src.size > 32 && src[0] == 0.toByte()) src.copyOfRange(1, src.size) else src
+        val start = offset + (32 - clean.size).coerceAtLeast(0)
+        System.arraycopy(clean, 0, dst, start, clean.size.coerceAtMost(32))
+    }
+
+    private fun to32Bytes(v: BigInteger): ByteArray {
+        val out = ByteArray(32)
+        copy32(v.toByteArray(), out, 0)
+        return out
+    }
+
+    private fun generatePkceVerifier(): String {
+        val b = ByteArray(32)
+        SecureRandom().nextBytes(b)
+        return base64Url(b)
+    }
+
+    private fun generatePkceChallenge(verifier: String): String {
+        val hash = MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII))
+        return base64Url(hash)
+    }
+
+    private fun base64Url(bytes: ByteArray): String =
+        Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+}
+
+```
+
+---
+
+#### Capa 2: ViewModel del Modal de Autenticación (`com/xcloud/godmode/viewmodels/XboxAuthModalViewModel.kt`)
+
+```kotlin
+package com.xcloud.godmode.viewmodels
+
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.browser.customtabs.CustomTabsIntent
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.xcloud.godmode.network.CompleteXboxSession
+import com.xcloud.godmode.network.MsaQrAndSisuAuthEngine
+import com.xcloud.godmode.network.SisuBrowserRedirectTicket
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+sealed interface QrAndOneClickUiState {
+    data object Idle : QrAndOneClickUiState
+    data object LoadingTicket : QrAndOneClickUiState
+    data object WaitingBrowserCallback : QrAndOneClickUiState
+    data class MsaQrActive(
+        val userCode: String,
+        val verificationUri: String,
+        val remainingSeconds: Int
+    ) : QrAndOneClickUiState
+    data object ExchangingSessionTokens : QrAndOneClickUiState
+    data class Authenticated(val session: CompleteXboxSession) : QrAndOneClickUiState
+    data class Error(val message: String) : QrAndOneClickUiState
+}
+
+class XboxAuthModalViewModel(
+    private val authEngine: MsaQrAndSisuAuthEngine
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow<QrAndOneClickUiState>(QrAndOneClickUiState.Idle)
+    val uiState: StateFlow<QrAndOneClickUiState> = _uiState.asStateFlow()
+
+    private var qrPollingJob: Job? = null
+
+    @Volatile
+    private var pendingSisuTicket: SisuBrowserRedirectTicket? = null
+
+    /**
+     * Inicia el flujo MSA QR Login al abrir la pestaña "Vincular QR / TV".
+     */
+    fun startMsaQrLoginFlow(spoofedIp: String? = null) {
+        qrPollingJob?.cancel()
+        qrPollingJob = viewModelScope.launch {
+            _uiState.value = QrAndOneClickUiState.LoadingTicket
+            try {
+                val ticket = authEngine.requestMsaQrCodeTicket()
+                _uiState.value = QrAndOneClickUiState.MsaQrActive(
+                    userCode = ticket.userCode,
+                    verificationUri = ticket.verificationUri,
+                    remainingSeconds = ticket.expiresInSeconds
+                )
+
+                val session = authEngine.pollMsaQrTicketUntilApproved(
+                    ticket = ticket,
+                    spoofedForwardedForIp = spoofedIp,
+                    onTickRemainingSeconds = { remaining ->
+                        _uiState.value = QrAndOneClickUiState.MsaQrActive(
+                            userCode = ticket.userCode,
+                            verificationUri = ticket.verificationUri,
+                            remainingSeconds = remaining
+                        )
+                    }
+                )
+                _uiState.value = QrAndOneClickUiState.Authenticated(session)
+            } catch (e: Exception) {
+                _uiState.value = QrAndOneClickUiState.Error(
+                    e.message ?: "No se pudo generar el código QR de Microsoft."
+                )
+            }
+        }
+    }
+
+    /**
+     * Inicia el flujo SISU de 1 clic en la pestaña "Inicio Rápido".
+     */
+    fun startOneClickSisuLogin(activityContext: Context) {
+        qrPollingJob?.cancel()
+        viewModelScope.launch {
+            _uiState.value = QrAndOneClickUiState.LoadingTicket
+            try {
+                val ticket = authEngine.prepareSisuOneClickTicket()
+                pendingSisuTicket = ticket
+                _uiState.value = QrAndOneClickUiState.WaitingBrowserCallback
+
+                val uri = Uri.parse(ticket.msaOauthRedirectUrl)
+                try {
+                    val customTabs = CustomTabsIntent.Builder()
+                        .setShowTitle(true)
+                        .build()
+                    customTabs.intent.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY)
+                    customTabs.launchUrl(activityContext, uri)
+                } catch (e: Exception) {
+                    val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_HISTORY)
+                    }
+                    activityContext.startActivity(intent)
+                }
+            } catch (e: Exception) {
+                _uiState.value = QrAndOneClickUiState.Error(
+                    e.message ?: "Error al abrir el inicio de sesión rápido."
+                )
+            }
+        }
+    }
+
+    /**
+     * Invocado automáticamente desde MainActivity.onNewIntent() al regresar de ms-xal://
+     */
+    fun onDeepLinkCodeCaptured(code: String, spoofedIp: String? = null) {
+        val ticket = pendingSisuTicket ?: return
+        viewModelScope.launch {
+            _uiState.value = QrAndOneClickUiState.ExchangingSessionTokens
+            try {
+                val session = authEngine.completeSisuOneClickExchange(
+                    authorizationCode = code,
+                    ticket = ticket,
+                    spoofedForwardedForIp = spoofedIp
+                )
+                _uiState.value = QrAndOneClickUiState.Authenticated(session)
+            } catch (e: Exception) {
+                _uiState.value = QrAndOneClickUiState.Error(
+                    "Error al verificar tu cuenta de Xbox: ${e.message}"
+                )
+            }
+        }
+    }
+}
+
+```
+
+---
+
+#### Capa 3: Interfaz de Usuario (`com/xcloud/godmode/ui/ConectarConXboxModal.kt`)
+
+Corrige la vista de la captura para que debajo del QR aparezca siempre el **código de 8 caracteres (`userCode`)** en grande, el enlace oficial `[login.live.com/oauth20_remoteconnect.srf](https://login.live.com/oauth20_remoteconnect.srf)` y un botón para copiar el código y abrir la página con un toque si el usuario está en el mismo dispositivo:
+
+```kotlin
+package com.xcloud.godmode.ui
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import com.xcloud.godmode.viewmodels.QrAndOneClickUiState
+
+@Composable
+fun ConectarConXboxModal(
+    state: QrAndOneClickUiState,
+    onSelectOneClickTab: () -> Unit,
+    onSelectQrTab: () -> Unit,
+    onLaunchOneClickBrowser: (Context) -> Unit,
+    onDismiss: () -> Unit,
+    qrCodeBox: @Composable (qrUrl: String) -> Unit
+) {
+    val context = LocalContext.current
+    var selectedTab by remember { mutableIntStateOf(1) } // 0 = Inicio Rápido, 1 = Vincular QR / TV
+
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == 1) {
+            onSelectQrTab()
+        } else {
+            onSelectOneClickTab()
+        }
+    }
+
+    LaunchedEffect(state) {
+        if (state is QrAndOneClickUiState.Authenticated) {
+            onDismiss()
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            shape = RoundedCornerShape(18.dp),
+            color = Color(0xFF0A0D10)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Conectar con Xbox",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Text("✕", color = Color.Gray, fontSize = 18.sp)
+                    }
+                }
+
+                TabRow(
+                    selectedTabIndex = selectedTab,
+                    containerColor = Color.Transparent,
+                    contentColor = Color(0xFF107C10),
+                    indicator = { tabPositions ->
+                        TabRowDefaults.SecondaryIndicator(
+                            Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                            color = Color(0xFF107C10)
+                        )
+                    }
+                ) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = {
+                            Text(
+                                "Inicio Rápido",
+                                color = if (selectedTab == 0) Color(0xFF2ECC71) else Color.Gray
+                            )
+                        }
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        text = {
+                            Text(
+                                "Vincular QR / TV",
+                                color = if (selectedTab == 1) Color(0xFF2ECC71) else Color.Gray
+                            )
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                if (selectedTab == 1) {
+                    when (state) {
+                        is QrAndOneClickUiState.MsaQrActive -> {
+                            Text(
+                                text = "1. Escanea el QR con tu móvil o abre:\n${state.verificationUri}",
+                                color = Color(0xFFD0D7DE),
+                                fontSize = 13.sp,
+                                textAlign = TextAlign.Center
+                            )
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // QR limpio de baja densidad apuntando a verificationUri (oauth20_remoteconnect.srf)
+                            Box(
+                                modifier = Modifier
+                                    .size(190.dp)
+                                    .background(Color.White, RoundedCornerShape(16.dp))
+                                    .padding(12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                qrCodeBox(state.verificationUri)
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            Text(
+                                text = "2. Ingresa este código de activación:",
+                                color = Color(0xFF8B949E),
+                                fontSize = 12.sp
+                            )
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            // Tarjeta con el código de 8 caracteres (user_code) que faltaba en la captura
+                            Box(
+                                modifier = Modifier
+                                    .background(Color(0xFF161B22), RoundedCornerShape(10.dp))
+                                    .border(1.dp, Color(0xFF2ECC71), RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Xbox Code", state.userCode))
+                                    }
+                                    .padding(horizontal = 24.dp, vertical = 10.dp)
+                            ) {
+                                Text(
+                                    text = state.userCode,
+                                    color = Color(0xFF2ECC71),
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 26.sp,
+                                    letterSpacing = 4.sp
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Button(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Xbox Code", state.userCode))
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(state.verificationUri))
+                                    context.startActivity(intent)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1F6FEB)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Copiar código y abrir en este dispositivo", color = Color.White, fontSize = 13.sp)
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "Esperando confirmación automática... (${state.remainingSeconds}s)",
+                                color = Color.Gray,
+                                fontSize = 12.sp
+                            )
+                        }
+
+                        is QrAndOneClickUiState.LoadingTicket,
+                        is QrAndOneClickUiState.ExchangingSessionTokens -> {
+                            Spacer(modifier = Modifier.height(32.dp))
+                            CircularProgressIndicator(color = Color(0xFF2ECC71))
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text("Sincronizando código oficial con Xbox Live...", color = Color.White)
+                            Spacer(modifier = Modifier.height(32.dp))
+                        }
+
+                        is QrAndOneClickUiState.Error -> {
+                            Text(
+                                text = state.message,
+                                color = Color(0xFFFF6B6B),
+                                textAlign = TextAlign.Center,
+                                fontSize = 13.sp
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = onSelectQrTab,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10))
+                            ) {
+                                Text("Reintentar QR", color = Color.White)
+                            }
+                        }
+
+                        else -> Unit
+                    }
+                } else {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Conecta tu cuenta de Xbox con un solo toque usando la autenticación nativa preautorizada (SISU).",
+                        color = Color(0xFFD0D7DE),
+                        textAlign = TextAlign.Center,
+                        fontSize = 14.sp
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Button(
+                        onClick = { onLaunchOneClickBrowser(context) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(
+                            text = "Iniciar Sesión con Xbox (1 Clic)",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+            }
+        }
+    }
+}
+
+```
+
+---
+
+### IV. Prompt Maestro Ultra-Extendido para el Agente de Creación de la App
+
+Copia y pega este prompt en el agente creador de la app para reparar la función **MSA QR Login** de principio a fin:
+
+```markdown
+Corrige de forma definitiva el error donde el código QR de la pestaña "Vincular QR / TV" redirige a `login.live.com` con el mensaje `"invalid_request"` y no muestra el código de activación de 8 dígitos debajo del QR:
+
+### 1. DIAGNÓSTICO DE LO QUE DEBEMOS ELIMINAR INMEDIATAMENTE
+- **PROHIBIDO codificar una URL `oauth20_authorize.srf` con `redirect_uri=ms-xal-...` dentro del código QR**: `login.live.com` rechaza con `invalid_request` cualquier URL `oauth20_authorize.srf` que use `redirect_uri=ms-xal://` si no fue emitida por `sisu.xboxlive.com/authenticate`, y además un enlace `ms-xal://` escaneado en un segundo teléfono jamás devuelve el token al dispositivo que muestra el QR.
+- **PROHIBIDO incluir `"prompt": "select_account"` dentro del objeto JSON `"Query"` en `POST https://sisu.xboxlive.com/authenticate`**: El esquema de `sisu.xboxlive.com` solo acepta 4 llaves dentro de `"Query"` (`display`, `code_challenge`, `code_challenge_method` y `state`). Incluir `"prompt"` provoca que SISU falle con HTTP 400.
+
+### 2. IMPLEMENTACIÓN REAL DEL FLUJO OFICIAL "MSA QR LOGIN" EN LA PESTAÑA "VINCULAR QR / TV"
+Implementa en `MsaQrAndSisuAuthEngine.kt` el flujo oficial de emparejamiento por código y QR de Microsoft Account (`oauth20_device.srf` + `oauth20_remoteconnect.srf`):
+
+1. **Solicitud del Ticket QR (`requestMsaQrCodeTicket`)**:
+   - Realiza `POST https://login.live.com/oauth20_device.srf` (`Content-Type: application/x-www-form-urlencoded`).
+   - Parámetros exactos:
+     - `client_id`: Recorre en cascada los Client IDs oficiales de Microsoft con `device_code` habilitado en MSA:
+       1) `"0000000048183522"` (Xbox Live Official Remote Connect / SmartTV QR)
+       2) `"00000000402b5328"` (Xbox Cloud Companion)
+       3) `"000000004c12ae6f"` (Xbox Live MSA Client)
+       4) `"00000000441cc96b"` (Xbox Companion MSA)
+       5) `"000000004c20a908"` (Xbox Game Pass MSA)
+     - `scope`: `"service::user.auth.xboxlive.com::MBI_SSL"`
+     - `response_type`: `"device_code"`
+   - Extrae del JSON: `user_code` (código corto de 8 caracteres), `device_code`, `verification_uri` (`https://login.live.com/oauth20_remoteconnect.srf`), `expires_in` e `interval`.
+
+2. **Renderizado del QR y del Código de 8 Caracteres en la UI (`ConectarConXboxModal.kt`)**:
+   - El código QR debe codificar únicamente la `verification_uri` limpia (`https://login.live.com/oauth20_remoteconnect.srf`) sin agregar parámetros inválidos que provoquen `invalid_request`.
+   - Debajo del código QR, muestra obligatoriamente en una tarjeta destacada el **`user_code`** de 8 caracteres en tipografía monoespaciada grande (`26.sp`, color verde Xbox `#2ECC71`).
+   - Añade debajo un botón `"Copiar código y abrir en este dispositivo"` que copie automáticamente el `user_code` al portapapeles y abra `verification_uri` por si el usuario está iniciando sesión en el mismo teléfono/tablet.
+
+3. **Sondeo Automático en Segundo Plano (`pollMsaQrTicketUntilApproved`)**:
+   - Cada `interval` segundos (5s), envía `POST https://login.live.com/oauth20_token.srf` con:
+     - `client_id`: el mismo `clientIdUsed` que generó el `device_code`.
+     - `grant_type`: `"device_code"` (con fallback automático a `"urn:ietf:params:oauth:grant-type:device_code"` si el nodo devuelve `invalid_request` o `unsupported_grant_type`).
+     - `device_code`: el `device_code` recibido.
+   - Mientras responda `"authorization_pending"`, continúa el bucle actualizando el contador regresivo en pantalla.
+   - En cuanto responda `200 OK` con `access_token` y `refresh_token`, ejecuta automáticamente los 6 eslabones de tokens (`DeviceToken PoP -> RPS UserToken con prefijo "d=" -> XSTS Web & GSSV -> GSSV Dual xgpuweb + xgpuwebf2p`), guarda la sesión en `EncryptedVaultService` y cierra el modal automáticamente.
+
+### 3. CORRECCIÓN DE LA PESTAÑA "INICIO RÁPIDO" (1 CLIC VÍA SISU)
+- En `prepareSisuOneClickTicket()`, envía `POST https://sisu.xboxlive.com/authenticate` firmando con EC P-256 (`Signature`) y pasando en `"Query"` únicamente `display = "android_phone"`, `code_challenge`, `code_challenge_method = "S256"` y `state`.
+- Abre la URL `MsaOauthRedirect` devuelta por SISU en `CustomTabsIntent`. Al regresar el usuario por el esquema `ms-xal-...://auth/?code=...` en `MainActivity.onNewIntent()`, canjea el código en `POST https://login.live.com/oauth20_token.srf` y completa la cadena de 6 eslabones.
+
+```

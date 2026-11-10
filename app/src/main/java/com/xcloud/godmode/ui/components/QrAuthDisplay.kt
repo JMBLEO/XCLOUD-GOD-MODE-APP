@@ -94,7 +94,7 @@ fun QrAuthDisplay(
         )
         
         Text(
-            "O visita microsoft.com/link", 
+            "O visita login.live.com/oauth20_remoteconnect.srf", 
             style = MaterialTheme.typography.labelMedium,
             color = androidx.compose.ui.graphics.Color.Gray
         )

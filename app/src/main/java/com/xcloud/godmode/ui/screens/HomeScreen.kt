@@ -56,8 +56,13 @@ import com.xcloud.godmode.engine.NativeEngineGate
 import com.xcloud.godmode.engine.ProductionEngineAvailability
 import com.xcloud.godmode.viewmodels.PlayNowViewModel
 import com.xcloud.godmode.viewmodels.PlayNowAction
-import com.xcloud.godmode.ui.FloatingEngineMenu
 import com.xcloud.godmode.models.EngineCatalogVisibility
+import com.xcloud.godmode.network.StreamingCredentialOrchestrator
+import com.xcloud.godmode.services.EncryptedVaultService
+import com.xcloud.godmode.ui.ConectarConXboxModal
+import com.xcloud.godmode.ui.NativeEngineStatusDialog
+import com.xcloud.godmode.ui.UserProfileTopBarChip
+import com.xcloud.godmode.viewmodels.StreamLaunchViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,7 +70,8 @@ fun HomeScreen(
     authManager: XboxFullAuthManager,
     onLaunchGame: (String, String) -> Unit,
     onLaunchConsole: (String) -> Unit,
-    viewModel: HomeViewModel = viewModel()
+    viewModel: HomeViewModel = viewModel(),
+    authModalViewModel: com.xcloud.godmode.viewmodels.XboxAuthModalViewModel
 ) {
     val userSession by viewModel.userSession.collectAsState()
     val isAuthModalOpen by viewModel.isAuthModalOpen.collectAsState()
@@ -89,6 +95,13 @@ fun HomeScreen(
         )
     }
     val playNowUiState by playNowViewModel.uiState.collectAsState()
+    val context = LocalContext.current
+    val streamLaunchViewModel = remember {
+        val vault = EncryptedVaultService.getInstance(context)
+        val orchestrator = StreamingCredentialOrchestrator(vault)
+        StreamLaunchViewModel(orchestrator, vault)
+    }
+    val launchUiState by streamLaunchViewModel.uiState.collectAsState()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     val strings = com.xcloud.godmode.ui.theme.AppStrings.get(settings.appLanguage)
@@ -166,9 +179,19 @@ fun HomeScreen(
                     onOpenBlade = { isBladeOpen = true },
                     userSession = userSession,
                     savedAccounts = savedAccounts,
-                    onLoginClick = { viewModel.showAuth(true) },
-                    onLogoutClick = { viewModel.logout() },
-                    onSwitchAccount = { viewModel.switchAccount(it, authManager) }
+                    onLoginClick = { streamLaunchViewModel.onUserChipClicked() },
+                    onLogoutClick = {
+                        streamLaunchViewModel.onLogoutRequested()
+                        viewModel.logout()
+                    },
+                    onSwitchAccount = { viewModel.switchAccount(it, authManager) },
+                    isLoggedIn = launchUiState.isLoggedIn,
+                    gamertag = launchUiState.gamertag ?: userSession?.gamertag,
+                    showProfileMenu = launchUiState.showProfileMenu,
+                    onChipClick = { streamLaunchViewModel.onUserChipClicked() },
+                    onDismissProfileMenu = { streamLaunchViewModel.dismissProfileMenu() },
+                    onRefreshCredentials = { streamLaunchViewModel.refreshSessionOnStartup() },
+                    onForceReLogin = { streamLaunchViewModel.onForceReLoginRequested() }
                 )
             },
             bottomBar = {
@@ -254,7 +277,22 @@ fun HomeScreen(
                         viewModel = viewModel,
                         columnsCount = columnsCount,
                         onGameSelected = { game -> viewModel.showDetails(game) },
-                        onLaunchGame = onLaunchGame,
+                        onLaunchGame = { titleId, region ->
+                            val fragmentActivity = context as? androidx.fragment.app.FragmentActivity
+                            val frictionManager = com.xcloud.godmode.network.ZeroFrictionXboxAuthManager.getInstance(context)
+                            
+                            if (fragmentActivity != null) {
+                                frictionManager.loadSessionWithBiometrics(
+                                    activity = fragmentActivity,
+                                    onSuccess = { onLaunchGame(titleId, region) },
+                                    onError = { error ->
+                                        android.widget.Toast.makeText(context, "Acceso denegado: $error", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+                            } else {
+                                onLaunchGame(titleId, region)
+                            }
+                        },
                         settings = settings,
                         chameleonColor = chameleonColor
                     )
@@ -264,10 +302,27 @@ fun HomeScreen(
                         authManager = authManager,
                         viewModel = viewModel
                     )
-                    2 -> GodModeSettingsScreen(
-                        configRepository = viewModel.configRepository,
-                        onConfigSavedAndInjected = { viewModel.restartStream() }
-                    )
+                    2 -> {
+                        val sessionStore = remember { com.xcloud.godmode.services.SecureSessionStore(context) }
+                        val frictionManager = remember { com.xcloud.godmode.network.ZeroFrictionXboxAuthManager.getInstance(context) }
+                        val isExpired = sessionStore.isSessionExpired()
+                        val status = when {
+                            launchUiState.gamertag == null && userSession == null -> "Disconnected"
+                            isExpired -> "Expired"
+                            else -> "Authenticated"
+                        }
+                        GodModeSettingsScreen(
+                            configRepository = viewModel.configRepository,
+                            onConfigSavedAndInjected = { viewModel.restartStream() },
+                            gamertag = launchUiState.gamertag ?: userSession?.gamertag,
+                            sessionStatus = status,
+                            onInvalidateSession = {
+                                frictionManager.invalidateSession()
+                                streamLaunchViewModel.onLogoutRequested()
+                                viewModel.logout()
+                            }
+                        )
+                    }
                 }
 
                 // Global Back to Top Button
@@ -286,59 +341,87 @@ fun HomeScreen(
 
         // Modals
         if (selectedGameForDetails != null) {
+            val game = selectedGameForDetails!!
             GameDetailsModal(
-                game = selectedGameForDetails!!,
+                game = game,
                 settings = settings,
                 onClose = { viewModel.hideDetails() },
-                onStartStream = {
-                    playNowViewModel.onPlayNowPressed(EngineCatalogVisibility.INCLUDE_UNAVAILABLE)
+                onStartStream = { gameId ->
+                    val fragmentActivity = context as? androidx.fragment.app.FragmentActivity
+                    val frictionManager = com.xcloud.godmode.network.ZeroFrictionXboxAuthManager.getInstance(context)
+                    
+                    if (fragmentActivity != null) {
+                        frictionManager.loadSessionWithBiometrics(
+                            activity = fragmentActivity,
+                            onSuccess = {
+                                val isF2P = game.id.equals("9NKX70BBCDRN", ignoreCase = true) || game.title.contains("Fortnite", ignoreCase = true)
+                                streamLaunchViewModel.onPlayNowClicked(game.id, isFreeToPlay = isF2P) { credentials ->
+                                    viewModel.hideDetails()
+                                    com.xcloud.godmode.audio.GodModeSoundEngine.play(com.xcloud.godmode.audio.SoundEventType.LAUNCH)
+                                    val targetRegion = credentials.xCloudBaseUri.ifBlank { "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user" }
+                                    onLaunchGame(game.id, targetRegion)
+                                }
+                            },
+                            onError = { error ->
+                                android.widget.Toast.makeText(context, "Error de acceso: $error", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    } else {
+                        // Fallback if no activity context
+                        val isF2P = game.id.equals("9NKX70BBCDRN", ignoreCase = true) || game.title.contains("Fortnite", ignoreCase = true)
+                        streamLaunchViewModel.onPlayNowClicked(game.id, isFreeToPlay = isF2P) { credentials ->
+                            viewModel.hideDetails()
+                            com.xcloud.godmode.audio.GodModeSoundEngine.play(com.xcloud.godmode.audio.SoundEventType.LAUNCH)
+                            val targetRegion = credentials.xCloudBaseUri.ifBlank { "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user" }
+                            onLaunchGame(game.id, targetRegion)
+                        }
+                    }
                 }
             )
         }
 
-        if (playNowUiState.engineMenuVisible) {
-            FloatingEngineMenu(
-                entries = playNowUiState.engineEntries,
-                configurationState = playNowUiState.configurationState,
-                connectionMetrics = playNowUiState.connectionMetrics,
-                verifiedQuality = playNowUiState.verifiedQuality,
-                restartDialogVisible = playNowUiState.restartDialogVisible,
-                message = playNowUiState.message,
-                onSelected = { entry ->
-                    val action = playNowViewModel.onEngineSelected(entry)
-                    if (action is PlayNowAction.EngineResolved) {
-                        viewModel.hideDetails()
-                        com.xcloud.godmode.audio.GodModeSoundEngine.play(com.xcloud.godmode.audio.SoundEventType.LAUNCH)
-                        val targetRegion = userSession?.xCloudRegionUri?.ifBlank { "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user" } ?: "https://uks.core.gssv-play-prod.xboxlive.com/v2/login/user"
-                        onLaunchGame(selectedGameForDetails?.id ?: "9NKX70BBCDRN", targetRegion)
-                    }
-                },
-                onEditBypassPressed = { playNowViewModel.openBypassEditor() },
-                onEditServerPressed = { playNowViewModel.openServerEditor() },
-                onEditCodecPressed = { playNowViewModel.openCodecEditor() },
-                onRestartAction = { action -> playNowViewModel.handleRestartAction(action) },
-                onDismiss = { playNowViewModel.dismissEngineMenu() }
-            )
-        }
+        NativeEngineStatusDialog(
+            dialogState = launchUiState.engineDialog,
+            onDismiss = { streamLaunchViewModel.dismissEngineDialog(openLoginIfAuthRequired = false) },
+            onLoginNow = { streamLaunchViewModel.dismissEngineDialog(openLoginIfAuthRequired = true) }
+        )
 
-        if (playNowUiState.message != null && !playNowUiState.engineMenuVisible) {
-            AlertDialog(
-                onDismissRequest = { playNowViewModel.dismissEngineMenu() },
-                confirmButton = {
-                    TextButton(onClick = { playNowViewModel.dismissEngineMenu() }) { Text("Entendido") }
-                },
-                title = { Text("Motor de Streaming Nativo") },
-                text = { Text(playNowUiState.message ?: "") }
-            )
-        }
+        if (isAuthModalOpen || launchUiState.showDeviceAuthModal) {
+            val authUiState by authModalViewModel.uiState.collectAsState()
+            
+            // Reaccionar al éxito de autenticación para sincronizar el estado global
+            LaunchedEffect(authUiState) {
+                if (authUiState is com.xcloud.godmode.viewmodels.QrAndOneClickUiState.Authenticated) {
+                    val session = (authUiState as com.xcloud.godmode.viewmodels.QrAndOneClickUiState.Authenticated).session
+                    viewModel.setSession(
+                        XboxFullAuthManager.XboxReadySession(
+                            gamertag = session.gamertag,
+                            uhs = session.uhs,
+                            msaRefreshToken = session.msaRefreshToken,
+                            webXstsToken = session.webXstsToken,
+                            xHomeGsToken = session.xgpuGsToken,
+                            xHomeRegionUri = session.preferredBaseUri,
+                            xCloudGsToken = session.xgpuGsToken,
+                            xCloudRegionUri = session.preferredBaseUri
+                        ),
+                        authManager
+                    )
+                    streamLaunchViewModel.refreshSessionOnStartup()
+                    viewModel.showAuth(false)
+                    streamLaunchViewModel.dismissDeviceAuthModal()
+                }
+            }
 
-        if (isAuthModalOpen) {
-            DualAuthModal(
-                authManager = authManager,
-                homeViewModel = viewModel,
-                settings = settings,
-                onDismiss = { viewModel.showAuth(false) },
-                onSuccess = { session -> viewModel.setSession(session, authManager) }
+            ConectarConXboxModal(
+                state = authUiState,
+                onSelectOneClickTab = { /* Logic handled in VM */ },
+                onSelectQrTab = { authModalViewModel.startMsaQrLoginFlow() },
+                onLaunchOneClickBrowser = { ctx -> authModalViewModel.startOneClickSisuLogin(ctx) },
+                onDismiss = {
+                    viewModel.showAuth(false)
+                    streamLaunchViewModel.dismissDeviceAuthModal()
+                    authModalViewModel.resetState()
+                }
             )
         }
 
@@ -389,7 +472,14 @@ fun GodModeCollapsibleTopBar(
     savedAccounts: List<com.xcloud.godmode.network.XboxSessionProfile>,
     onLoginClick: () -> Unit,
     onLogoutClick: () -> Unit,
-    onSwitchAccount: (String) -> Unit
+    onSwitchAccount: (String) -> Unit,
+    isLoggedIn: Boolean = false,
+    gamertag: String? = null,
+    showProfileMenu: Boolean = false,
+    onChipClick: () -> Unit = onLoginClick,
+    onDismissProfileMenu: () -> Unit = {},
+    onRefreshCredentials: () -> Unit = {},
+    onForceReLogin: () -> Unit = onLoginClick
 ) {
     TopAppBar(
         title = {
@@ -420,12 +510,15 @@ fun GodModeCollapsibleTopBar(
             IconButton(onClick = onOpenBlade) {
                 Icon(Icons.Default.Bolt, "Optimizer", tint = chameleonColor)
             }
-            UserAccountHeaderButton(
-                userSession = userSession,
-                savedAccounts = savedAccounts,
-                onLoginClick = onLoginClick,
-                onLogoutClick = onLogoutClick,
-                onSwitchAccount = onSwitchAccount,
+            UserProfileTopBarChip(
+                isLoggedIn = isLoggedIn,
+                gamertag = gamertag ?: userSession?.gamertag,
+                showMenu = showProfileMenu,
+                onChipClick = onChipClick,
+                onDismissMenu = onDismissProfileMenu,
+                onRefreshCredentials = onRefreshCredentials,
+                onForceReLogin = onForceReLogin,
+                onLogout = onLogoutClick,
                 modifier = Modifier.padding(end = 8.dp)
             )
         },

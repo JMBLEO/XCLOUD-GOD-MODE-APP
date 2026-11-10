@@ -564,13 +564,15 @@ class AuthenticationAuthority(
     private val routingPolicy: NetworkRoutingPolicyPlugin = DefaultCleanNetworkPolicy()
 ) {
     companion object {
-        private const val DEVICE_CODE_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
-        private const val OAUTH_TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+        private const val DEVICE_CODE_URL = "https://login.live.com/oauth20_device.srf"
+        private const val OAUTH_TOKEN_URL = "https://login.live.com/oauth20_token.srf"
         private const val LIVE_TOKEN_URL = "https://login.live.com/oauth20_token.srf"
         private const val XBL_USER_AUTH_URL = "https://user.auth.xboxlive.com/user/authenticate"
         private const val XSTS_AUTHORIZE_URL = "https://xsts.auth.xboxlive.com/xsts/authorize"
-        private const val CLIENT_ID_DEVICE = "1f907974-e22b-4810-a9de-d9647380c97e"
-        private const val CLIENT_ID_XAL = "000000004c20a908"
+        private val CLIENT_ID_DEVICE: String
+            get() = PrimaryAppIdAuthEngine.PRIMARY_APP_ID
+        private val CLIENT_ID_XAL: String
+            get() = PrimaryAppIdAuthEngine.PRIMARY_APP_ID
     }
 
     private val authMutex = Mutex()
@@ -589,18 +591,35 @@ class AuthenticationAuthority(
     )
 
     suspend fun initiateDeviceCodeFlow(epoch: Long): DeviceCodePrompt = withContext(Dispatchers.IO) {
-        val form = "client_id=$CLIENT_ID_DEVICE&scope=xboxlive.signin%20offline_access%20openid%20profile"
-        val res = executeFormPost(DEVICE_CODE_URL, form)
-        val userCode = res.getString("user_code")
-        val verificationUri = res.optString("verification_uri", "https://www.microsoft.com/link")
-        blackbox.record(epoch, ControlPlaneStage.LOGIN_ROOT, 200, "DeviceCodeIssued=$userCode")
-        DeviceCodePrompt(
-            deviceCode = res.getString("device_code"),
-            userCode = userCode,
-            verificationUriWithOtc = "$verificationUri?otc=$userCode",
-            expiresInSeconds = res.optInt("expires_in", 900),
-            intervalSeconds = res.optInt("interval", 5)
+        val cascadeIds = listOf(
+            PrimaryAppIdAuthEngine.PRIMARY_APP_ID,
+            PrimaryAppIdAuthEngine.FALLBACK_1_APP_ID,
+            PrimaryAppIdAuthEngine.FALLBACK_2_APP_ID
         )
+
+        var lastEx: Exception? = null
+        for (appId in cascadeIds) {
+            try {
+                val form = "client_id=$appId&scope=${PrimaryAppIdAuthEngine.MBI_SSL_SCOPE}&response_type=device_code"
+                val res = executeFormPost(DEVICE_CODE_URL, form)
+                val userCode = res.getString("user_code")
+                val verificationUri = res.optString("verification_uri", PrimaryAppIdAuthEngine.CONSUMER_REMOTE_CONNECT_URL)
+                    .let { if (it.contains("microsoft.com/link")) PrimaryAppIdAuthEngine.CONSUMER_REMOTE_CONNECT_URL else it }
+                
+                blackbox.record(epoch, ControlPlaneStage.LOGIN_ROOT, 200, "DeviceCodeIssued=$userCode (ID=$appId)")
+                return@withContext DeviceCodePrompt(
+                    deviceCode = res.getString("device_code"),
+                    userCode = userCode,
+                    verificationUriWithOtc = PrimaryAppIdAuthEngine.getRemoteConnectCompleteUrl(userCode),
+                    expiresInSeconds = res.optInt("expires_in", 900),
+                    intervalSeconds = res.optInt("interval", 5)
+                )
+            } catch (e: Exception) {
+                lastEx = e
+                continue
+            }
+        }
+        throw lastEx ?: IllegalStateException("Fallo al iniciar flujo de código de dispositivo.")
     }
 
     suspend fun pollDeviceCodeUntilAuthenticated(prompt: DeviceCodePrompt, epoch: Long): StoredTokenEnvelope = withContext(Dispatchers.IO) {
@@ -637,7 +656,7 @@ class AuthenticationAuthority(
         epoch: Long
     ): StoredTokenEnvelope = withContext(Dispatchers.IO) {
         val form = "client_id=$CLIENT_ID_XAL&code=$authorizationCode&code_verifier=$codeVerifier" +
-                "&grant_type=authorization_code&redirect_uri=ms-xal-$CLIENT_ID_XAL://auth&scope=service::user.auth.xboxlive.com::MBI_SSL"
+                "&grant_type=authorization_code&redirect_uri=ms-xal-$CLIENT_ID_XAL://auth&scope=${PrimaryAppIdAuthEngine.MBI_SSL_SCOPE}"
         val res = executeFormPost(LIVE_TOKEN_URL, form)
         val accessToken = res.getString("access_token")
         val refreshToken = res.getString("refresh_token")
@@ -812,7 +831,7 @@ class AuthenticationAuthority(
     }
 
     suspend fun refreshAllCredentialsSilently(current: StoredTokenEnvelope, epoch: Long): StoredTokenEnvelope {
-        val form = "grant_type=refresh_token&client_id=$CLIENT_ID_DEVICE&refresh_token=${current.msaRefreshToken}&scope=xboxlive.signin%20offline_access"
+        val form = "grant_type=refresh_token&client_id=$CLIENT_ID_DEVICE&refresh_token=${current.msaRefreshToken}&scope=${PrimaryAppIdAuthEngine.MBI_SSL_SCOPE}"
         val res = executeFormPost(OAUTH_TOKEN_URL, form)
         val newAccess = res.getString("access_token")
         val newRefresh = res.optString("refresh_token", current.msaRefreshToken)

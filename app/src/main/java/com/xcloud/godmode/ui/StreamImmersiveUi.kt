@@ -142,7 +142,9 @@ fun StreamRoute(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    val backgroundColor = if (uiState.phase == StreamPhase.STREAMING) Color.Transparent else Color.Black
+
+    Box(modifier = Modifier.fillMaxSize().background(backgroundColor)) {
         if (uiState.surfaceRequired && uiState.launchAttemptId != null) {
             key(uiState.launchAttemptId.value) {
                 AndroidView(

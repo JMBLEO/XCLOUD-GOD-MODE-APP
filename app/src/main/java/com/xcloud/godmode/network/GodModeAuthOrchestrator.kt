@@ -74,14 +74,14 @@ sealed class AuthUiState {
 // ============================================================================
 
 object GodModeAuthOrchestrator {
-    // Client ID oficial para OAuth2 v2.0 Device Code
-    private const val DEVICE_CODE_CLIENT_ID = "1f907974-e22b-4810-a9de-d9647380c97e"
-    private const val DEVICE_CODE_SCOPES = "xboxlive.signin openid profile offline_access"
+    // Client ID oficial para Xbox Consumer OAuth (login.live.com)
+    private const val DEVICE_CODE_CLIENT_ID = PrimaryAppIdAuthEngine.PRIMARY_APP_ID
+    private const val DEVICE_CODE_SCOPES = PrimaryAppIdAuthEngine.MBI_SSL_SCOPE
 
     // Client ID oficial para XAL / PKCE Navegador
-    private const val XAL_CLIENT_ID = "000000004c20a908"
-    private const val XAL_REDIRECT_URI = "ms-xal-000000004c20a908://auth"
-    private const val XAL_SCOPES = "service::user.auth.xboxlive.com::MBI_SSL offline_access"
+    private const val XAL_CLIENT_ID = PrimaryAppIdAuthEngine.PRIMARY_APP_ID
+    private const val XAL_REDIRECT_URI = "ms-xal-${PrimaryAppIdAuthEngine.PRIMARY_APP_ID}://auth"
+    private const val XAL_SCOPES = PrimaryAppIdAuthEngine.MBI_SSL_SCOPE
 
     // Diccionario de IPs regionales para el Bypass Reactivo 403
     val BYPASS_REGION_IPS = mapOf(
@@ -158,52 +158,78 @@ object GodModeAuthOrchestrator {
     // ------------------------------------------------------------------------
     fun startQrDeviceCodeFlow() {
         cancelActiveJobs()
-        activeClientIdUsed = DEVICE_CODE_CLIENT_ID
         _authState.value = AuthUiState.Loading("Generando código QR oficial de Xbox...")
 
         pollingJob = scope.launch {
             try {
-                val formBody = FormBody.Builder()
-                    .add("client_id", DEVICE_CODE_CLIENT_ID)
-                    .add("scope", DEVICE_CODE_SCOPES)
-                    .build()
+                // Intento Nivel 1: Cascada de IDs en endpoint de consumo MSA
+                var ticket: QrDeviceCodeTicket? = null
+                val cascadeIds = listOf(
+                    PrimaryAppIdAuthEngine.PRIMARY_APP_ID,
+                    PrimaryAppIdAuthEngine.FALLBACK_1_APP_ID,
+                    PrimaryAppIdAuthEngine.FALLBACK_2_APP_ID
+                )
 
-                val req = Request.Builder()
-                    .url("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
-                    .post(formBody)
-                    .header("Accept", "application/json")
-                    .build()
+                for (appId in cascadeIds) {
+                    try {
+                        val formBody = FormBody.Builder()
+                            .add("client_id", appId)
+                            .add("scope", PrimaryAppIdAuthEngine.MBI_SSL_SCOPE)
+                            .build()
 
-                val resStr = httpClient.newCall(req).execute().use { res ->
-                    if (!res.isSuccessful) throw IllegalStateException("HTTP ${res.code} en devicecode")
-                    res.body?.string() ?: "{}"
+                        val req = Request.Builder()
+                            .url("https://login.live.com/oauth20_device.srf")
+                            .post(formBody)
+                            .header("Accept", "application/json")
+                            .build()
+
+                        val resStr = httpClient.newCall(req).execute().use { res ->
+                            if (!res.isSuccessful) null else res.body?.string()
+                        } ?: continue
+
+                        val json = JSONObject(resStr)
+                        val userCode = json.optString("user_code")
+                        val deviceCode = json.optString("device_code")
+                        if (userCode.isBlank() || deviceCode.isBlank()) continue
+
+                        val verificationUri = json.optString("verification_uri", PrimaryAppIdAuthEngine.CONSUMER_REMOTE_CONNECT_URL)
+                            .let { if (it.contains("microsoft.com/link")) PrimaryAppIdAuthEngine.CONSUMER_REMOTE_CONNECT_URL else it }
+                        val expiresIn = json.optInt("expires_in", 900)
+                        val intervalSec = json.optInt("interval", 5).coerceAtLeast(5)
+
+                        activeClientIdUsed = appId
+                        ticket = QrDeviceCodeTicket(
+                            userCode = userCode,
+                            deviceCode = deviceCode,
+                            verificationUri = verificationUri,
+                            qrTargetUrl = PrimaryAppIdAuthEngine.getRemoteConnectCompleteUrl(userCode),
+                            expiresInSeconds = expiresIn,
+                            pollIntervalSeconds = intervalSec
+                        )
+                        break
+                    } catch (_: Exception) {
+                        continue
+                    }
                 }
 
-                val json = JSONObject(resStr)
-                val userCode = json.getString("user_code")
-                val deviceCode = json.getString("device_code")
-                val verificationUri = json.optString("verification_uri", "https://www.microsoft.com/link")
-                val expiresIn = json.optInt("expires_in", 900)
-                val intervalSec = json.optInt("interval", 5).coerceAtLeast(5)
-
-                // URL con OTC pre-rellenado
-                val completeUri = json.optString(
-                    "verification_uri_complete",
-                    "https://www.microsoft.com/link?otc=$userCode"
-                )
-
-                val ticket = QrDeviceCodeTicket(
-                    userCode = userCode,
-                    deviceCode = deviceCode,
-                    verificationUri = verificationUri,
-                    qrTargetUrl = completeUri,
-                    expiresInSeconds = expiresIn,
-                    pollIntervalSeconds = intervalSec
-                )
-
-                _authState.value = AuthUiState.QrReady(ticket, expiresIn)
-                startVisualCountdown(ticket)
-                pollDeviceCodeUntilAuthorized(ticket)
+                if (ticket != null) {
+                    _authState.value = AuthUiState.QrReady(ticket, ticket.expiresInSeconds)
+                    startVisualCountdown(ticket)
+                    pollDeviceCodeUntilAuthorized(ticket)
+                } else {
+                    // Nivel 2: Fallback Instantáneo (URL preautorizada directa)
+                    val directUrl = prepareBrowserPkceUrl()
+                    val fallbackTicket = QrDeviceCodeTicket(
+                        userCode = "ACCESO DIRECTO",
+                        deviceCode = "",
+                        verificationUri = "login.live.com",
+                        qrTargetUrl = directUrl,
+                        expiresInSeconds = 900,
+                        pollIntervalSeconds = 999
+                    )
+                    _authState.value = AuthUiState.QrReady(fallbackTicket, 900)
+                    startVisualCountdown(fallbackTicket)
+                }
 
             } catch (e: CancellationException) {
                 throw e
@@ -246,7 +272,7 @@ object GodModeAuthOrchestrator {
                     .build()
 
                 val req = Request.Builder()
-                    .url("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+                    .url("https://login.live.com/oauth20_token.srf")
                     .post(form)
                     .header("Accept", "application/json")
                     .build()
@@ -621,7 +647,7 @@ object GodModeAuthOrchestrator {
             .add("grant_type", "refresh_token")
             .add("refresh_token", refreshToken)
             .add("client_id", activeClientIdUsed)
-            .add("scope", "service::http://Passport.NET/purpose::PURPOSE_XBOX_CLOUD_CONSOLE_TRANSFER_TOKEN")
+            .add("scope", PrimaryAppIdAuthEngine.MBI_SSL_SCOPE)
             .build()
 
         val req = Request.Builder()

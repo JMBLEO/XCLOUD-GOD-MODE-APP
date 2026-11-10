@@ -262,6 +262,11 @@ object NativeStreamBridge {
      * Triggers a keyframe request via the native transport layer.
      */
     external fun requestKeyframe()
+
+    /**
+     * Pins the current thread to high-performance cores and elevates priority to SCHED_FIFO.
+     */
+    external fun pinCurrentThreadToPerformanceTier(coreMask: Int)
 }
 
 

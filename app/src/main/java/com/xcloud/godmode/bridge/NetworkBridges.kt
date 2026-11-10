@@ -91,7 +91,8 @@ class OkHttpSessionClient(private val okHttpClient: OkHttpClient) : SessionHttpC
  * Strictly Zero-WebRTC: No SDP, No ICE candidates exchange, No DTLS.
  */
 class NanoGssvTransportNegotiator(
-    private val httpClient: SessionHttpClient
+    private val httpClient: SessionHttpClient,
+    private val authVault: com.xcloud.godmode.services.UnifiedPersistentAuthVault? = null
 ) : NanoBinaryTransportNegotiator {
     private val TAG = "NanoTransport"
 
@@ -133,10 +134,20 @@ class NanoGssvTransportNegotiator(
                     }
                 }
                 "ReadyToConnect" -> {
+                    val lpt = try {
+                        authVault?.loadEnvelope()?.lptTransferToken?.let { String(it).trim() }.orEmpty()
+                    } catch (_: Exception) {
+                        ""
+                    }
+                    val body = if (lpt.isNotEmpty()) {
+                        JSONObject().put("userToken", lpt).toString()
+                    } else {
+                        "{}"
+                    }
                     httpClient.postJson(
                         url = "$baseUrl/$sessionPath/connect",
                         bearerToken = gsToken,
-                        body = "{}",
+                        body = body,
                         headers = emptyMap()
                     )
                     delay(1000)

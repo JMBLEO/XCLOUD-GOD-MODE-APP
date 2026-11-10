@@ -27,11 +27,12 @@ private val Context.authDataStore by preferencesDataStore(name = "godmode_unifie
  * UnifiedPersistentAuthVault: Single source of truth for Xbox Cloud session tokens.
  * Uses DataStore for persistence and Android KeyStore (AES-GCM) for hardware encryption.
  */
-class UnifiedPersistentAuthVault private constructor(private val context: Context) {
+class UnifiedPersistentAuthVault private constructor(private val context: Context) : com.xcloud.godmode.network.SessionVaultPersistence {
     private val TAG = "UnifiedVault"
     private val KEY_ENCRYPTED_ENVELOPE = stringPreferencesKey("secure_envelope_v3")
     private val KEY_GAMERTAG = stringPreferencesKey("gamertag")
     private val KEY_SUB_TIER = stringPreferencesKey("sub_tier")
+    private val KEY_COMPLETE_SESSION = stringPreferencesKey("complete_session_v1")
     
     private val gson = Gson()
     private val mutex = Mutex()
@@ -64,11 +65,38 @@ class UnifiedPersistentAuthVault private constructor(private val context: Contex
         return sessionState.map { it.isLoggedIn }.firstOrNull() ?: false
     }
 
+    override suspend fun saveSession(session: com.xcloud.godmode.network.CompleteXboxSession): Unit = mutex.withLock {
+        val json = gson.toJson(session)
+        val encrypted = encrypt(json)
+        context.authDataStore.edit { prefs ->
+            prefs[KEY_COMPLETE_SESSION] = encrypted
+            prefs[KEY_GAMERTAG] = session.gamertag
+            prefs[KEY_SUB_TIER] = if (session.xgpuGsToken.isNotBlank()) "GPU" else "F2P"
+        }
+        Log.d(TAG, "Complete session persisted atomically to UnifiedVault.")
+    }
+
+    override suspend fun loadSession(): com.xcloud.godmode.network.CompleteXboxSession? = mutex.withLock {
+        val prefs = context.authDataStore.data.firstOrNull() ?: return null
+        val encrypted = prefs[KEY_COMPLETE_SESSION] ?: return null
+        return try {
+            val json = decrypt(encrypted)
+            gson.fromJson(json, com.xcloud.godmode.network.CompleteXboxSession::class.java)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to rehydrate session from UnifiedVault", e)
+            null
+        }
+    }
+
+    override suspend fun clearSession(): Unit = mutex.withLock {
+        context.authDataStore.edit { it.clear() }
+    }
+
     suspend fun saveSession(
         gamertag: String,
         tier: String,
         envelope: SecureTokenEnvelope
-    ) = mutex.withLock {
+    ): Unit = mutex.withLock {
         val stored = StoredEnvelope(
             msaAccess = encrypt(String(envelope.msaAccessToken)),
             msaRefresh = encrypt(String(envelope.msaRefreshToken)),
@@ -122,10 +150,6 @@ class UnifiedPersistentAuthVault private constructor(private val context: Contex
             Log.e(TAG, "Failed to rehydrate envelope from UnifiedVault", e)
             null
         }
-    }
-
-    suspend fun clearSession() = mutex.withLock {
-        context.authDataStore.edit { it.clear() }
     }
 
     // --- Hardware Encryption Logic ---
@@ -198,3 +222,4 @@ class UnifiedPersistentAuthVault private constructor(private val context: Contex
             }
     }
 }
+

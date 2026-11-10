@@ -9,6 +9,8 @@ import android.net.Uri
 import androidx.compose.animation.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -16,7 +18,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.OpenInBrowser
+import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -35,48 +40,44 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
-import com.xcloud.godmode.network.DeviceAuthFlowState
-import com.xcloud.godmode.network.DeviceAuthorizationManager
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import com.xcloud.godmode.network.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Native MSAL Device Code Flow (RFC 8628) Modal.
- * Completely zero-webview, rendering pure Compose UI with in-memory QR generation.
+ * Native Xbox Live Authentication Modal.
+ * Redesigned for "Zero Friction" experience and eradicated from login.microsoftonline.com errors.
  */
 @Composable
 fun DeviceAuthModal(
-    authManager: DeviceAuthorizationManager,
     onDismissRequest: () -> Unit,
     onAuthSuccess: (gamertag: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val flowState by authManager.flowState.collectAsState()
+    val authManager = remember { ZeroFrictionXboxAuthManager.getInstance(context) }
+    val uiState by authManager.loginState.collectAsState()
 
-    var copiedToClipboard by remember { mutableStateOf(false) }
+    var selectedTab by remember { mutableIntStateOf(0) }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    // Start auth on mount if idle
     LaunchedEffect(Unit) {
-        if (flowState is DeviceAuthFlowState.Idle) {
-            authManager.startAuthorization(coroutineScope)
+        authManager.authEvents.collect { bundle ->
+            onAuthSuccess(bundle.gamertag)
         }
     }
 
-    // Generate QR in background whenever a user code arrives
-    LaunchedEffect(flowState) {
-        val prompt = when (val s = flowState) {
-            is DeviceAuthFlowState.PromptReady -> s.prompt
-            is DeviceAuthFlowState.Polling -> s.prompt
-            else -> null
-        }
-        if (prompt != null && qrBitmap == null) {
+    // Generate QR Code when state is QrCodeReady
+    LaunchedEffect(uiState) {
+        if (uiState is LoginModalUiState.QrCodeReady) {
+            val qrUrl = (uiState as LoginModalUiState.QrCodeReady).qrContentUrl
             withContext(Dispatchers.Default) {
                 try {
                     val writer = QRCodeWriter()
-                    val bitMatrix = writer.encode(prompt.verificationUriComplete, BarcodeFormat.QR_CODE, 384, 384)
+                    val bitMatrix = writer.encode(qrUrl, BarcodeFormat.QR_CODE, 512, 512)
                     val width = bitMatrix.width
                     val height = bitMatrix.height
                     val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -95,19 +96,20 @@ fun DeviceAuthModal(
 
     Dialog(
         onDismissRequest = {
-            authManager.cancel()
+            authManager.resetModalState()
             onDismissRequest()
         },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
             modifier = modifier
-                .fillMaxWidth(0.92f)
-                .widthIn(max = 520.dp)
-                .clip(RoundedCornerShape(24.dp))
+                .fillMaxWidth(0.94f)
+                .widthIn(max = 500.dp)
+                .clip(RoundedCornerShape(28.dp))
                 .testTag("device_auth_dialog"),
-            color = Color(0xFF14181E),
-            tonalElevation = 8.dp
+            color = Color(0xFF0C0E10),
+            tonalElevation = 12.dp,
+            border = BorderStroke(1.dp, Color(0xFF1C2024))
         ) {
             Column(
                 modifier = Modifier
@@ -115,248 +117,255 @@ fun DeviceAuthModal(
                     .fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Top Bar with Title and Close
+                // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Inicio de Sesión Xbox",
-                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                        color = Color.White
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Shield,
+                            contentDescription = null,
+                            tint = Color(0xFF107C10),
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "Conectar con Xbox",
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                            color = Color.White
+                        )
+                    }
                     IconButton(
                         onClick = {
-                            authManager.cancel()
+                            authManager.resetModalState()
                             onDismissRequest()
-                        },
-                        modifier = Modifier.testTag("close_auth_modal_button")
+                        }
                     ) {
                         Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = Color.Gray)
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(24.dp))
 
-                when (val state = flowState) {
-                    is DeviceAuthFlowState.Idle -> {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(220.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(color = Color(0xFF107C10))
-                        }
-                    }
-
-                    is DeviceAuthFlowState.PromptReady, is DeviceAuthFlowState.Polling -> {
-                        val prompt = if (state is DeviceAuthFlowState.PromptReady) state.prompt else (state as DeviceAuthFlowState.Polling).prompt
-                        val secondsRemaining = if (state is DeviceAuthFlowState.PromptReady) state.secondsRemaining else (state as DeviceAuthFlowState.Polling).secondsRemaining
-                        val minutes = secondsRemaining / 60
-                        val seconds = secondsRemaining % 60
-                        val timerString = String.format("%02d:%02d", minutes, seconds)
-
-                        Text(
-                            text = "Escanea el código QR o ingresa el código en microsoft.com/link",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFFB0B8C1),
-                            textAlign = TextAlign.Center
+                // Tabs
+                TabRow(
+                    selectedTabIndex = selectedTab,
+                    containerColor = Color.Transparent,
+                    contentColor = Color(0xFF107C10),
+                    divider = {},
+                    indicator = { tabPositions ->
+                        TabRowDefaults.SecondaryIndicator(
+                            Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                            color = Color(0xFF107C10),
+                            height = 3.dp
                         )
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // QR Code Surface
-                        Surface(
-                            color = Color.White,
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier
-                                .size(180.dp)
-                                .padding(4.dp)
-                        ) {
-                            qrBitmap?.let { bmp ->
-                                Image(
-                                    bitmap = bmp.asImageBitmap(),
-                                    contentDescription = "Código QR de inicio de sesión",
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(8.dp)
-                                )
-                            } ?: Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(color = Color(0xFF107C10), strokeWidth = 3.dp)
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // User Code Container
-                        Surface(
-                            color = Color(0xFF1E2630),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text(
-                                        text = "CÓDIGO DE ACCESO",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color.Gray,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = prompt.formattedUserCode,
-                                        style = MaterialTheme.typography.headlineMedium.copy(
-                                            fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            letterSpacing = 3.sp
-                                        ),
-                                        color = Color(0xFF4ADE80),
-                                        modifier = Modifier.testTag("auth_user_code_text")
-                                    )
-                                }
-
-                                Button(
-                                    onClick = {
-                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                        val clip = ClipData.newPlainText("Xbox Code", prompt.userCode)
-                                        clipboard.setPrimaryClip(clip)
-                                        copiedToClipboard = true
-                                    },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = if (copiedToClipboard) Color(0xFF2E7D32) else Color(0xFF2D3748)
-                                    ),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.testTag("copy_auth_code_button")
-                                ) {
-                                    Icon(
-                                        if (copiedToClipboard) Icons.Default.Check else Icons.Default.ContentCopy,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = if (copiedToClipboard) "¡Copiado!" else "Copiar",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Open in external browser button
-                        OutlinedButton(
-                            onClick = {
-                                val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(prompt.verificationUriComplete))
-                                browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                context.startActivity(browserIntent)
-                            },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                            border = ButtonDefaults.outlinedButtonBorder.copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFF3B4858))),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp)
-                                .testTag("open_browser_auth_button")
-                        ) {
-                            Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Abrir microsoft.com/link en navegador", fontSize = 13.sp)
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Polling indicator with countdown
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            CircularProgressIndicator(
-                                color = Color(0xFF107C10),
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Esperando confirmación... ($timerString)",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF94A3B8)
-                            )
-                        }
                     }
+                ) {
+                    Tab(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        text = { Text("Inicio Rápido", fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal) }
+                    )
+                    Tab(
+                        selected = selectedTab == 1,
+                        onClick = { 
+                            selectedTab = 1
+                            authManager.startCloudQrPairing()
+                        },
+                        text = { Text("Vincular QR / TV", fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal) }
+                    )
+                }
 
-                    is DeviceAuthFlowState.Success -> {
-                        LaunchedEffect(Unit) {
-                            onAuthSuccess(state.gamertag)
-                        }
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(vertical = 24.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Check,
-                                contentDescription = null,
-                                tint = Color(0xFF107C10),
-                                modifier = Modifier.size(56.dp)
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = "¡Sesión iniciada con éxito!",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Bienvenido, ${state.gamertag}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFF4ADE80)
-                            )
-                        }
-                    }
+                Spacer(modifier = Modifier.height(32.dp))
 
-                    is DeviceAuthFlowState.Error -> {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.padding(vertical = 16.dp)
-                        ) {
-                            Text(
-                                text = state.message,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.error,
-                                textAlign = TextAlign.Center
-                            )
-                            if (state.isRetryable) {
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Button(
-                                    onClick = {
-                                        qrBitmap = null
-                                        authManager.startAuthorization(coroutineScope)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10)),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.testTag("retry_auth_button")
-                                ) {
-                                    Icon(Icons.Default.Refresh, contentDescription = null)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Reintentar")
-                                }
-                            }
-                        }
+                // Content based on state and tab
+                Box(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 280.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when (selectedTab) {
+                        0 -> OneClickFlowContent(uiState) { authManager.launchOneClickBrowserLogin(context) }
+                        1 -> CloudQrFlowContent(uiState, qrBitmap) { authManager.launchOneClickBrowserLogin(context) }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                // Privacy Note
+                Text(
+                    text = "Tus credenciales se procesan de forma nativa con Microsoft Consumer. God Mode no almacena ni ve tus contraseñas.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.Gray,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun OneClickFlowContent(
+    state: LoginModalUiState,
+    onStart: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        when (state) {
+            is LoginModalUiState.PreparingVerifiedUrl -> {
+                CircularProgressIndicator(color = Color(0xFF107C10))
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Validando servidor seguro...", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+            }
+            is LoginModalUiState.ExchangingTokens -> {
+                CircularProgressIndicator(color = Color(0xFF107C10))
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Finalizando autenticación...", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+            }
+            is LoginModalUiState.WaitingForBrowserReturn -> {
+                Icon(Icons.Default.OpenInBrowser, contentDescription = null, tint = Color(0xFF107C10), modifier = Modifier.size(64.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Iniciando sesión segura...", color = Color.White, fontWeight = FontWeight.Bold)
+                Text("Aprobación abierta en el navegador.", color = Color.Gray, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+            }
+            is LoginModalUiState.Error -> {
+                Text("Algo salió mal", color = Color.Red, style = MaterialTheme.typography.titleMedium)
+                Text(state.message, color = Color.Gray, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(onClick = onStart, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10))) {
+                    Text("Reintentar")
+                }
+            }
+            is LoginModalUiState.Success -> {
+                Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF107C10), modifier = Modifier.size(64.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("¡Bienvenido, ${state.gamertag}!", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            }
+            else -> {
+                Text(
+                    "Recomendado para móviles y tablets. Inicia sesión con un solo toque usando el navegador del sistema.",
+                    color = Color.LightGray,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(32.dp))
+                Button(
+                    onClick = onStart,
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10))
+                ) {
+                    Icon(Icons.Default.VpnKey, contentDescription = null)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text("Iniciar Sesión ahora", fontWeight = FontWeight.Black, fontSize = 16.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CloudQrFlowContent(
+    state: LoginModalUiState,
+    qrBitmap: Bitmap?,
+    onFallbackClick: () -> Unit
+) {
+    val context = LocalContext.current
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        when (state) {
+            is LoginModalUiState.PreparingVerifiedUrl -> {
+                CircularProgressIndicator(color = Color(0xFF107C10))
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Pre-validando conexión QR...", color = Color.White)
+            }
+            is LoginModalUiState.QrCodeReady -> {
+                Surface(
+                    color = Color.White,
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.size(200.dp).padding(4.dp)
+                ) {
+                    qrBitmap?.let {
+                        Image(
+                            bitmap = it.asImageBitmap(),
+                            contentDescription = "QR Code",
+                            modifier = Modifier.fillMaxSize().padding(12.dp)
+                        )
+                    } ?: Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Color(0xFF107C10))
+                    }
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+                
+                if (state.userCode != null) {
+                    Text(
+                        text = state.userCode,
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontWeight = FontWeight.Black,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 4.sp
+                        ),
+                        color = Color(0xFF107C10)
+                    )
+                    Text(
+                        "Introduce este código en microsoft.com/link",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                } else {
+                    Text(
+                        "Escanea el QR para vincular",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        "Acceso directo preautorizado",
+                        color = Color.Gray,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    "Válido por ${state.remainingSeconds / 60}m ${state.remainingSeconds % 60}s",
+                    color = Color.DarkGray,
+                    style = MaterialTheme.typography.labelSmall
+                )
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                OutlinedButton(
+                    onClick = onFallbackClick,
+                    border = BorderStroke(1.dp, Color(0xFF107C10).copy(alpha = 0.5f))
+                ) {
+                    Text("¿Problemas? Usar inicio rápido", color = Color(0xFF107C10), fontSize = 12.sp)
+                }
+            }
+            is LoginModalUiState.ExchangingTokens -> {
+                CircularProgressIndicator(color = Color(0xFF107C10))
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Sincronizando perfil de Xbox...", color = Color.White)
+            }
+            is LoginModalUiState.Error -> {
+                Text("Error", color = Color.Red, style = MaterialTheme.typography.titleMedium)
+                Text(state.message, color = Color.Gray, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall)
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(onClick = { /* Could retry pairing */ }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF107C10))) {
+                    Text("Reintentar")
+                }
+            }
+            is LoginModalUiState.Success -> {
+                Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF107C10), modifier = Modifier.size(64.dp))
+                Text("¡Conectado!", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            }
+            else -> {
+                CircularProgressIndicator(color = Color(0xFF107C10))
             }
         }
     }

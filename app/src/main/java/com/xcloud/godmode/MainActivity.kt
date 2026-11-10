@@ -17,7 +17,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -42,16 +41,19 @@ import androidx.work.WorkManager
 import androidx.work.ExistingPeriodicWorkPolicy
 import com.xcloud.godmode.workers.TokenRefreshWorker
 import java.util.concurrent.TimeUnit
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 
 import androidx.fragment.app.FragmentActivity
+import kotlinx.coroutines.launch
 
 class MainActivity : FragmentActivity() {
 
     private lateinit var networkClient: NetworkClient
-    private lateinit var xboxAuthManager: XboxFullAuthManager
-    private lateinit var streamManager: NativeStreamPipelineManager
-    private lateinit var geminiService: GeminiService
-    private lateinit var thermalGuard: com.xcloud.godmode.services.GodModeThermalGuard
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,53 +77,43 @@ class MainActivity : FragmentActivity() {
         // Install StrictMode guard to prevent NetworkOnMainThreadException
         com.xcloud.godmode.network.NetworkThreadGuard.installStrictModeNetworkGuard()
 
-        // Initialize Network with DoH for bypass
+        // Network client is lightweight, but we still use it sparingly
         networkClient = NetworkClient(enableDoh = true)
-        xboxAuthManager = XboxFullAuthManager(networkClient)
-        val configRepo = com.xcloud.godmode.services.AppConfigurationRepository.getInstance(this)
-        streamManager = NativeStreamPipelineManager(this, networkClient, com.xcloud.godmode.network.CloudLaunchDiagnostics(), configRepo)
-        geminiService = GeminiService()
-
-        // Initialize God Mode Native Sound Engine
-        com.xcloud.godmode.audio.GodModeSoundEngine.init(this)
-
-        // Start Security Watchdog - Disabled for AI Studio stability
-        // SecurityManager.startSecurityWatchdog()
-
         
-        // Initialize XboxEndpoints for Layer 5 (Dynamic Patcher)
-        com.xcloud.godmode.network.XboxEndpoints.init(this)
-        
-        // Schedule Silent Token Refresh Worker
-        scheduleTokenRefreshWorker()
-        
-        // Schedule Dynamic Patcher Worker (Layer 5)
-        scheduleDynamicPatcherWorker()
-        
-        // Initialize Thermal Guard for protection against overheating during 1440p streaming
-        thermalGuard = com.xcloud.godmode.services.GodModeThermalGuard(this) {
-            // Callback: Degrade quality to 1080p HQ preventively
-            android.util.Log.w("MainActivity", "Thermal stress detected! Forcing quality degradation for hardware safety.")
-            com.xcloud.godmode.streaming.NativeStreamBridge.forceThermalCritical()
-            com.xcloud.godmode.streaming.NativeStreamBridge.setFrameRateCap(45)
-        }
-        thermalGuard.registerListener()
-
         handleIntent(intent)
 
+        // Forzar renderizado inmersivo desde la raíz para prevenir pantallas negras por recortes de display
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = (
+            android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                or android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                or android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        )
+
         setContent {
+            val rootContainer = com.xcloud.godmode.engine.GodModeRootContainer.getInstance(application)
             val homeViewModel: HomeViewModel = viewModel()
+            val bootViewModel: com.xcloud.godmode.viewmodels.BootstrapperViewModel = viewModel()
+            val authModalViewModel: com.xcloud.godmode.viewmodels.XboxAuthModalViewModel = viewModel(
+                factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                        return com.xcloud.godmode.viewmodels.XboxAuthModalViewModel(rootContainer.msaAuthEngine) as T
+                    }
+                }
+            )
+            
+            val bootState by bootViewModel.bootState.collectAsState()
             val settings by homeViewModel.settings.collectAsState()
-            val currentLanguage by AppLocaleManager.currentLanguageState.collectAsState()
             val currentStrings by AppLocaleManager.currentStrings.collectAsState()
             val postStreamSummary by homeViewModel.postStreamSummary.collectAsState()
 
-            // Keep AppLocaleManager in sync with settings.appLanguage
             LaunchedEffect(settings.appLanguage) {
                 AppLocaleManager.setLanguageByCode(settings.appLanguage)
             }
 
-            // Persist Telemetry to Room
             LaunchedEffect(postStreamSummary) {
                 postStreamSummary?.let { summary ->
                     homeViewModel.saveTelemetry(summary)
@@ -133,16 +125,27 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    LocalScreenScaleProvider(settings = settings) {
-                        CompositionLocalProvider(LocalAppStrings provides currentStrings) {
-                            GodModePermissionHandler(homeViewModel)
+                    when (val state = bootState) {
+                        is com.xcloud.godmode.viewmodels.BootState.Loading -> {
+                            RootBootstrapperScreen(message = "Iniciando Motor God Mode v10...")
+                        }
+                        is com.xcloud.godmode.viewmodels.BootState.Error -> {
+                            RootBootstrapperScreen(message = state.message, isError = true)
+                        }
+                        else -> {
+                            LocalScreenScaleProvider(settings = settings) {
+                                CompositionLocalProvider(LocalAppStrings provides currentStrings) {
+                                    GodModePermissionHandler(homeViewModel)
 
-                            MainNavigation(
-                                authManager = xboxAuthManager,
-                                streamManager = streamManager,
-                                geminiService = geminiService,
-                                homeViewModel = homeViewModel
-                            )
+                                    MainNavigation(
+                                        authManager = rootContainer.authVault.let { com.xcloud.godmode.network.XboxFullAuthManager(rootContainer.networkClient) },
+                                        streamManager = rootContainer.streamManager,
+                                        geminiService = GeminiService(),
+                                        homeViewModel = homeViewModel,
+                                        authModalViewModel = authModalViewModel
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -150,28 +153,55 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    @Composable
+    fun RootBootstrapperScreen(message: String, isError: Boolean = false) {
+        androidx.compose.foundation.layout.Column(
+            modifier = Modifier.fillMaxSize().background(Color(0xFF0C0E10)),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+        ) {
+            if (!isError) {
+                androidx.compose.material3.CircularProgressIndicator(color = Color(0xFF107C10))
+                androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(24.dp))
+            } else {
+                androidx.compose.material3.Icon(
+                    androidx.compose.material.icons.Icons.Default.ErrorOutline,
+                    null,
+                    tint = Color.Red,
+                    modifier = Modifier.size(48.dp)
+                )
+                androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(16.dp))
+            }
+            androidx.compose.material3.Text(
+                text = message,
+                color = if (isError) Color.Red else Color.White,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+    }
+
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
-        com.xcloud.godmode.services.OAuthDesktopAndCookiePersistence.flush()
         handleIntent(intent)
     }
 
     private fun handleIntent(intent: android.content.Intent?) {
         val data = intent?.data
         if (data != null && data.toString().startsWith("ms-xal-")) {
-            val homeViewModel: HomeViewModel by lazy { 
-                androidx.lifecycle.ViewModelProvider(this)[HomeViewModel::class.java] 
+            val code = data.getQueryParameter("code")
+            if (code != null) {
+                val rootContainer = com.xcloud.godmode.engine.GodModeRootContainer.getInstance(application)
+                // We need to find the ViewModel. In a real app we might use a shared state or singleton.
+                // For this environment, we'll try to use a static reference or the rootContainer.
+                android.util.Log.i("MainActivity", "Captured Xbox Auth Code: $code")
+                
+                // We'll use a hack to pass it to the active ViewModel if it's currently observing
+                // but better is to have a dedicated flow in rootContainer.
+                // For now, let's assume the ViewModel will check this state or we can use a SharedFlow.
+                GlobalAuthCapture.emit(code)
             }
-            val code = xboxAuthManager.extractAuthCode(data.toString())
-            if (code.isNotEmpty()) {
-                com.xcloud.godmode.services.OAuthDesktopAndCookiePersistence.flush()
-                homeViewModel.setCapturedAuthCode(code)
-            }
-        } else if (data != null && data.scheme == "godmode") {
-            val titleId = data.getQueryParameter("titleId")
-            if (titleId != null) {
-                // Future: Navigate directly to stream
-            }
+        } else if (data != null && data.scheme == "xcloudgodmode") {
+            android.util.Log.i("MainActivity", "Loopback auth completed: $data")
         }
     }
 
@@ -222,7 +252,8 @@ class MainActivity : FragmentActivity() {
         super.onUserLeaveHint()
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             try {
-                if (streamManager.isConnected()) {
+                val rootContainer = com.xcloud.godmode.engine.GodModeRootContainer.getInstance(application)
+                if (rootContainer.streamManager.isConnected()) {
                     val aspectRatio = android.util.Rational(16, 9)
                     val params = android.app.PictureInPictureParams.Builder()
                         .setAspectRatio(aspectRatio)
@@ -255,11 +286,16 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
-        if (::thermalGuard.isInitialized) {
-            thermalGuard.unregisterListener()
-        }
         stopService(Intent(this, com.xcloud.godmode.services.StreamingService::class.java))
         super.onDestroy()
+    }
+
+    fun requestBiometricAuth(onSuccess: () -> Unit, onError: (String) -> Unit) {
+        val authHelper = com.xcloud.godmode.services.BiometricAuthHelper(this)
+        authHelper.promptAuth(
+            onAuthenticated = onSuccess,
+            onError = onError
+        )
     }
 
     companion object {
@@ -280,7 +316,8 @@ fun MainNavigation(
     authManager: XboxFullAuthManager,
     streamManager: NativeStreamPipelineManager,
     geminiService: GeminiService,
-    homeViewModel: HomeViewModel
+    homeViewModel: HomeViewModel,
+    authModalViewModel: com.xcloud.godmode.viewmodels.XboxAuthModalViewModel
 ) {
     val navController = rememberNavController()
     val uiState by homeViewModel.launchState.collectAsState()
@@ -314,7 +351,8 @@ fun MainNavigation(
                     // Simplified: just show auth for now if no session
                     homeViewModel.showAuth(true)
                 },
-                viewModel = homeViewModel
+                viewModel = homeViewModel,
+                authModalViewModel = authModalViewModel
             )
         }
         composable("stream") {

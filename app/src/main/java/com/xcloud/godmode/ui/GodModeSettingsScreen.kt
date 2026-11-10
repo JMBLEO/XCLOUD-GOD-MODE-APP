@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import com.xcloud.godmode.ui.components.SessionManagerCard
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -35,7 +36,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun GodModeSettingsScreen(
     configRepository: AppConfigurationRepository,
-    onConfigSavedAndInjected: (GodModeGlobalConfig) -> Unit = {}
+    onConfigSavedAndInjected: (GodModeGlobalConfig) -> Unit = {},
+    gamertag: String? = null,
+    sessionStatus: String = "None",
+    onInvalidateSession: () -> Unit = {}
 ) {
     val persistedConfig by configRepository.configFlow.collectAsState(initial = GodModeGlobalConfig())
 
@@ -54,6 +58,7 @@ fun GodModeSettingsScreen(
         "Giroscopio",
         "Háptica",
         "Consola",
+        "Sesión",
         "Avanzado"
     )
 
@@ -155,7 +160,8 @@ fun GodModeSettingsScreen(
                 4 -> GyroscopeTab(draft = draftConfig, onDraftChange = { draftConfig = it })
                 5 -> HapticsTab(draft = draftConfig, onDraftChange = { draftConfig = it })
                 6 -> ConsoleTab(draft = draftConfig, onDraftChange = { draftConfig = it })
-                7 -> AdvancedTab(draft = draftConfig, onDraftChange = { draftConfig = it })
+                7 -> SessionTab(gamertag = gamertag, status = sessionStatus, onInvalidate = onInvalidateSession)
+                8 -> AdvancedTab(draft = draftConfig, onDraftChange = { draftConfig = it })
             }
         }
 
@@ -709,6 +715,52 @@ private fun AdvancedTab(
                 Icon(Icons.Default.BugReport, null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Exportar Logs de Diagnóstico (SLA)", fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+/* ==========================================================================================
+   TAB 7: SESIÓN & BIOMETRÍA
+   ========================================================================================== */
+@Composable
+private fun SessionTab(
+    gamertag: String?,
+    status: String,
+    onInvalidate: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(
+            text = "Gestión de Sesión Xbox",
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp
+        )
+        
+        SessionManagerCard(
+            gamertag = gamertag,
+            connectionStatus = status,
+            onInvalidateSession = onInvalidate
+        )
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF12161B).copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    "Seguridad Biométrica",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Cada vez que intentes iniciar un stream, God Mode solicitará tu huella digital o PIN para asegurar que solo tú puedas usar tus créditos y tiempo de juego.",
+                    color = Color.Gray,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp
+                )
             }
         }
     }

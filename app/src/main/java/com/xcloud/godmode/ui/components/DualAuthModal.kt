@@ -736,7 +736,7 @@ fun DualAuthModal(
                                                 modifier = Modifier.size(210.dp)
                                             )
                                             Spacer(modifier = Modifier.height(12.dp))
-                                            Text("Escanea con tu teléfono o visita microsoft.com/link", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                            Text("Escanea con tu teléfono o visita login.live.com/oauth20_remoteconnect.srf", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                                         }
                                     }
                                 }
@@ -775,8 +775,8 @@ fun DualAuthModal(
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "microsoft.com/link",
-                                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Black),
+                                        text = "login.live.com/oauth20_remoteconnect.srf",
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
                                         color = Color(0xFF38BDF8)
                                     )
                                     Spacer(modifier = Modifier.height(16.dp))

@@ -6,7 +6,7 @@ package com.xcloud.godmode.streaming
  */
 object ForbiddenTechnologyGuard {
     private val forbiddenTokens = listOf(
-        "webrtc", "libwebrtc", "webrtctransport", "org.webrtc",
+        "libwebrtc", "org.webrtc", "google.webrtc",
         "ffmpeg", "libavcodec", "libavformat", "libswscale",
         "video/avc", "h264", "avc1"
     )

@@ -44,6 +44,8 @@ class GodModeRootContainer(
     val authVault = UnifiedPersistentAuthVault.getInstance(context)
     val decoderLoader = DynamicHardwareDecoderLoader(context)
 
+    val msaAuthEngine = MsaQrAndSisuAuthEngine(authVault)
+
     val streamManager = NativeStreamPipelineManager(
         context = context,
         networkClient = networkClient,
@@ -51,7 +53,7 @@ class GodModeRootContainer(
         configRepository = configRepository
     )
 
-    val nanoNegotiator = NanoGssvTransportNegotiator(sessionHttpClient)
+    val nanoNegotiator = NanoGssvTransportNegotiator(sessionHttpClient, authVault)
     val nativeEngineRouter = NanoHardwareEngineRouter(streamManager)
 
     val nanoCoordinator = NanoPlayNowCoordinator(

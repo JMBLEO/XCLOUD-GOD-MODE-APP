@@ -3,67 +3,41 @@ package com.xcloud.godmode.workers
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import kotlinx.coroutines.flow.first
 import android.util.Log
+import com.xcloud.godmode.network.CredentialResolutionResult
+import com.xcloud.godmode.network.StreamingCredentialOrchestrator
+import com.xcloud.godmode.services.EncryptedVaultService
 
 /**
- * TokenRefreshWorker: Background demon that monitors gsToken expiration.
- * Executes OAuth2 refresh when less than 20 minutes are remaining.
+ * TokenRefreshWorker: Background daemon that monitors gsToken expiration.
+ * Executes silent 4-step token chain using StreamingCredentialOrchestrator and EncryptedVaultService.
  */
 class TokenRefreshWorker(appContext: Context, workerParams: WorkerParameters) : 
     CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
-        val vault = com.xcloud.godmode.services.UnifiedPersistentAuthVault.getInstance(applicationContext)
-        val envelope = vault.loadEnvelope() ?: return Result.success()
-        val sessionState = vault.sessionState.first()
+        val vault = EncryptedVaultService.getInstance(applicationContext)
+        val orchestrator = StreamingCredentialOrchestrator(vault)
 
-        val currentTime = android.os.SystemClock.elapsedRealtime()
-        val timeRemainingMs = envelope.gsExpiresAtElapsedMs - currentTime
-
-        // If less than 20 minutes (1,200,000 ms) remain
-        if (timeRemainingMs < 1200000) {
-            Log.d("TokenRefreshWorker", "Token expiring soon. Initiating silent refresh...")
-            
-            val networkClient = com.xcloud.godmode.network.NetworkClient()
-            val authManager = com.xcloud.godmode.network.XboxFullAuthManager(networkClient)
-
-            return try {
-                val (newAccessToken, newRefreshToken) = authManager.refreshMsaAccessToken(String(envelope.msaRefreshToken))
-                
-                val simulatedMsaJson = org.json.JSONObject().apply {
-                    put("access_token", newAccessToken)
-                    put("refresh_token", newRefreshToken)
+        Log.d("TokenRefreshWorker", "Checking streaming credential health in background...")
+        return try {
+            when (val result = orchestrator.ensureValidStreamingToken()) {
+                is CredentialResolutionResult.Ready -> {
+                    Log.d("TokenRefreshWorker", "Streaming credentials valid/refreshed for ${result.credentials.gamertag}")
+                    Result.success()
                 }
-                
-                val newSession = authManager.completeAuth(simulatedMsaJson)
-
-                val newEnvelope = com.xcloud.godmode.network.SecureTokenEnvelope(
-                    msaAccessToken = newAccessToken.toCharArray(),
-                    msaRefreshToken = newRefreshToken.toCharArray(),
-                    msaExpiresAtElapsedMs = android.os.SystemClock.elapsedRealtime() + 14_400_000L,
-                    lptTransferToken = CharArray(0),
-                    xblUserToken = newSession.webXstsToken.toCharArray(),
-                    userHashUhs = newSession.uhs.toCharArray(),
-                    xstsWebToken = CharArray(0),
-                    xstsGssvToken = newSession.webXstsToken.toCharArray(),
-                    xstsExpiresAtElapsedMs = android.os.SystemClock.elapsedRealtime() + 14_400_000L,
-                    gsStreamToken = newSession.xCloudGsToken.toCharArray(),
-                    gsExpiresAtElapsedMs = android.os.SystemClock.elapsedRealtime() + 14_400_000L,
-                    discoveredBaseRegionUri = newSession.xCloudRegionUri,
-                    market = "CL"
-                )
-                
-                vault.saveSession(sessionState.gamertag, sessionState.subscriptionTier, newEnvelope)
-                
-                Log.d("TokenRefreshWorker", "Silent refresh successful for ${sessionState.gamertag}")
-                Result.success()
-            } catch (e: Exception) {
-                Log.e("TokenRefreshWorker", "Silent refresh failed: ${e.message}")
-                Result.retry()
+                is CredentialResolutionResult.RequiresInteractiveLogin -> {
+                    Log.w("TokenRefreshWorker", "Session expired or revoked: ${result.reason}")
+                    Result.success()
+                }
+                is CredentialResolutionResult.NetworkFailure -> {
+                    Log.e("TokenRefreshWorker", "Network failure during token refresh: ${result.reason}")
+                    Result.retry()
+                }
             }
+        } catch (e: Exception) {
+            Log.e("TokenRefreshWorker", "Background token refresh error: ${e.message}")
+            Result.retry()
         }
-
-        return Result.success()
     }
 }

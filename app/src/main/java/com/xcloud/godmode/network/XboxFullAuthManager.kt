@@ -24,9 +24,9 @@ import java.util.concurrent.TimeUnit
 class XboxFullAuthManager(private val networkClient: NetworkClient) {
 
     private val TAG = "XboxFullAuthManager"
-    private val CLIENT_ID = "000000004c20a908"
-    private val REDIRECT_URI = "ms-xal-000000004c20a908://auth"
-    private val SCOPES = "service::user.auth.xboxlive.com::MBI_SSL"
+    private val CLIENT_ID = PrimaryAppIdAuthEngine.PRIMARY_APP_ID
+    private val REDIRECT_URI = "ms-xal-$CLIENT_ID://auth"
+    private val SCOPES = PrimaryAppIdAuthEngine.MBI_SSL_SCOPE
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -240,12 +240,12 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
      */
     suspend fun initDeviceLogin(): PendingAuthContext = withContext(Dispatchers.IO) {
         val formBody = FormBody.Builder()
-            .add("client_id", "1f907974-e22b-4810-a9de-d9647380c97e")
-            .add("scope", "XboxLive.signin offline_access")
+            .add("client_id", PrimaryAppIdAuthEngine.PRIMARY_APP_ID)
+            .add("scope", PrimaryAppIdAuthEngine.MBI_SSL_SCOPE)
             .build()
 
         val request = Request.Builder()
-            .url("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
+            .url("https://login.live.com/oauth20_device.srf")
             .header("Accept", "application/json")
             .post(formBody)
             .build()
@@ -259,7 +259,7 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             val deviceCode = json.getString("device_code")
             val interval = json.optInt("interval", 5)
             val expiresIn = json.optInt("expires_in", 900)
-            val verificationUri = "https://www.microsoft.com/link?otc=$userCode"
+            val verificationUri = PrimaryAppIdAuthEngine.getRemoteConnectCompleteUrl(userCode)
             
             return@withContext PendingAuthContext(
                 userCode = userCode,
@@ -284,13 +284,13 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
     suspend fun checkLoginStatus(deviceCode: String): JSONObject? = withContext(Dispatchers.IO) {
         pollingMutex.withLock {
             val formBody = FormBody.Builder()
-                .add("client_id", "1f907974-e22b-4810-a9de-d9647380c97e")
+                .add("client_id", PrimaryAppIdAuthEngine.PRIMARY_APP_ID)
                 .add("device_code", deviceCode)
                 .add("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
                 .build()
 
             val request = Request.Builder()
-                .url("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+                .url("https://login.live.com/oauth20_token.srf")
                 .header("Accept", "application/json")
                 .post(formBody)
                 .build()
@@ -639,7 +639,7 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             .add("code", code)
             .add("grant_type", "authorization_code")
             .add("redirect_uri", REDIRECT_URI)
-            .add("scope", "service::user.auth.xboxlive.com::MBI_SSL offline_access")
+            .add("scope", SCOPES)
             
         if (verifier.isNotBlank()) {
             builder.add("code_verifier", verifier)

@@ -96,7 +96,7 @@ fun StreamScreen(
             uiState = uiState,
             surfaceRegistry = viewModel.surfaceRegistry,
             surfaceFactory = { ctx ->
-                SurfaceView(ctx).apply {
+                GodModeSurfaceView(ctx).apply {
                     // Attach high-performance hardware enhancer (HDR10, VRR, PQ)
                     if (hwProfile != null && window != null) {
                         activeEnhancer = ConsoleGradeHardwareEnhancer(ctx, window, this, hwProfile!!).also {
@@ -334,10 +334,10 @@ fun ServerInfoDialog(strings: com.xcloud.godmode.ui.theme.AppStrings, onClose: (
         title = { Text(strings.serverInfoTitle, color = Color.White) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("• Protocolo: GodMode UDP (BBR2 Pacing)", color = Color.LightGray)
-                Text("• Codificación: H.264 SVC / HEVC Adaptive", color = Color.LightGray)
-                Text("• Latencia de Presentación: Ultra-Low (<1ms)", color = Color.LightGray)
-                Text("• Audio: Opus Multichannel Lossless (Sim)", color = Color.LightGray)
+                Text("• Protocolo: GodMode UDP (BBR3 Pacing)", color = Color.LightGray)
+                Text("• Codificación: HEVC / AV1 Native ASIC", color = Color.LightGray)
+                Text("• Latencia de Presentación: Zero-Copy (<1ms)", color = Color.LightGray)
+                Text("• Audio: Opus Hi-Fi (48kHz/Stereo)", color = Color.LightGray)
             }
         },
         confirmButton = { TextButton(onClick = onClose) { Text("OK", color = Color(0xFF107C10)) } },

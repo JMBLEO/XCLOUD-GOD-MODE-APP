@@ -40,6 +40,7 @@
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
     <application
+        android:name=".GodModeApp"
         android:allowBackup="true"
         android:appCategory="game"
         android:hardwareAccelerated="true"
@@ -66,6 +67,27 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <!-- Modern Xbox App Unified (Primary) -->
+                <data android:scheme="ms-xal-00000000402b5328" android:host="auth" />
+                <!-- Standard Xbox App Android -->
+                <data android:scheme="ms-xal-000000004c20a908" android:host="auth" />
+                <!-- Xbox App Unified -->
+                <data android:scheme="ms-xal-000000004827c78e" android:host="auth" />
+                <data android:scheme="xcloudgodmode" android:host="auth-complete" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ms-xal-00000000402b5328" />
+                <data android:scheme="ms-xal-000000004c20a908" />
+                <data android:scheme="ms-xal-000000004827c78e" />
+                <data android:scheme="xcloudgodmode" />
             </intent-filter>
         </activity>
 

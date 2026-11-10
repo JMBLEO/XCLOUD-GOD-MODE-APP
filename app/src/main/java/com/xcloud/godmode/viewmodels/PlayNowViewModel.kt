@@ -221,6 +221,9 @@ class PlayNowViewModel(
     }
 
     fun dismissEngineMenu() {
-        _uiState.value = _uiState.value.copy(engineMenuVisible = false)
+        _uiState.value = _uiState.value.copy(
+            engineMenuVisible = false,
+            message = null
+        )
     }
 }
