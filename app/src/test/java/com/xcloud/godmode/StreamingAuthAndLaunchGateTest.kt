@@ -30,17 +30,20 @@ class StreamingAuthAndLaunchGateTest {
     private val testDispatcher = StandardTestDispatcher()
 
     private class MockContext(val folder: File) : android.content.ContextWrapper(null) {
+        override fun getApplicationContext(): android.content.Context = this
         override fun getNoBackupFilesDir(): File = folder
+        override fun getFilesDir(): File = folder
+        override fun getPackageName(): String = "com.xcloud.godmode"
     }
 
     private class MemoryVaultStorage(
         var credentials: StreamingSessionCredentials? = null
     ) : SessionVaultStorage {
-        override fun loadCredentials(): StreamingSessionCredentials? = credentials
-        override fun saveCredentials(credentials: StreamingSessionCredentials) {
+        override suspend fun loadCredentials(): StreamingSessionCredentials? = credentials
+        override suspend fun saveCredentials(credentials: StreamingSessionCredentials) {
             this.credentials = credentials
         }
-        override fun clearCredentials() {
+        override suspend fun clearCredentials() {
             credentials = null
         }
     }
@@ -51,12 +54,14 @@ class StreamingAuthAndLaunchGateTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
+        EncryptedVaultService.resetInstanceForTesting()
         mockContext = MockContext(tempFolder.newFolder("nobackup"))
-        vaultService = EncryptedVaultService(mockContext)
+        vaultService = EncryptedVaultService.createForTesting(mockContext)
     }
 
     @After
     fun tearDown() {
+        EncryptedVaultService.resetInstanceForTesting()
         Dispatchers.resetMain()
     }
 
@@ -88,7 +93,7 @@ class StreamingAuthAndLaunchGateTest {
     }
 
     @Test
-    fun testEncryptedVaultCredentialsSerialization() {
+    fun testEncryptedVaultCredentialsSerialization() = runTest {
         val creds = StreamingSessionCredentials(
             gamertag = "JMB Nel",
             xuid = "2533274819283",
@@ -113,7 +118,7 @@ class StreamingAuthAndLaunchGateTest {
     }
 
     @Test
-    fun testEncryptedVaultTokenBundleSerialization() {
+    fun testEncryptedVaultTokenBundleSerialization() = runTest {
         val bundle = com.xcloud.godmode.network.XCloudTokenBundle(
             gamertag = "JMB Nel",
             xuid = "2533274819283",

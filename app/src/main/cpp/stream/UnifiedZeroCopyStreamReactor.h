@@ -15,6 +15,7 @@
 #include "IStreamEngine.h"
 #include "XcloudNativeTransport.h"
 #include "ZeroTrustNetworkSecurityGatekeeper.h"
+#include "GodModeVideoIngress.h"
 
 namespace GodMode::Stream {
 
@@ -71,6 +72,10 @@ private:
     GodMode::Network::HotKeySrtpRotator srtpRotator;
     GodMode::Security::ZeroTrustNetworkSecurityGatekeeper securityGatekeeper;
     CompleteAccessUnitAssembler auAssembler;
+    RtpSequenceReorderBuffer reorderBuffer;
+    CompleteH264AccessUnitAssembler h264IngressAssembler;
+    CompleteHevcAccessUnitAssembler hevcIngressAssembler;
+    CompleteAv1AccessUnitAssembler av1IngressAssembler;
     XcloudClockDriftCompensator clockCompensator;
     BbrNanoCongestionController networkGovernor;
 

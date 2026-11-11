@@ -28,6 +28,7 @@ add_library(godmode_native SHARED
         stream/AdaptiveGeoJitterBuffer.cpp
         stream/StunHolePunch.cpp
         stream/RtpH264Depacketizer.cpp
+        stream/GodModeVideoIngress.cpp
         stream/RtpH265Depacketizer.cpp
         stream/RtpAV1Depacketizer.cpp
         stream/RtpVVCDepacketizer.cpp
@@ -43,6 +44,10 @@ add_library(godmode_native SHARED
         ConsoleHardwareBridge.cpp
         stream/UnifiedZeroCopyStreamReactor.cpp
         stream/NativeIceDtlsSrtpBridge.cpp
+        stream/IceAgent.cpp
+        stream/DtlsTransport.cpp
+        stream/SrtpContext.cpp
+        stream/SctpTransport.cpp
         godmode_six_engines.cpp
         godmode_jni_bridge.cpp
         godmode_carrier_runtime.cpp

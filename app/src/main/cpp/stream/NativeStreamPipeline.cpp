@@ -80,21 +80,39 @@ std::string NativeZeroCopyPipeline::rewriteSdpForUltraQuality(const std::string&
 
         if (line.find("m=video") == 0) {
             inVideoMediaSection = true;
-            out << line << "\r\n";
-            // Inyectar directivas de ancho de banda máximo (Spoofing Azure Anaconda y Ultra-Calidad)
+            // Negociación SDP Sintética NextGen: Exclusión total de H.264, anuncio exclusivo de AV1 y HEVC
+            out << "m=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99\r\n";
+            out << "c=IN IP4 0.0.0.0\r\n";
             out << "b=AS:" << maxBitrateKbps << "\r\n";
             out << "b=TIAS:" << (maxBitrateKbps * 1000) << "\r\n";
-            // Extensión 3: DiffServ QoS - Video marcado como AF41 (DSCP 34)
             out << "a=dscp:34\r\n";
-            // Directivas agresivas de RTCP Feedback para recuperación instantánea sin freeze
             out << "a=rtcp-fb:* nack\r\n";
             out << "a=rtcp-fb:* nack pli\r\n";
             out << "a=rtcp-fb:* goog-remb\r\n";
             out << "a=rtcp-fb:* transport-cc\r\n";
+            out << "a=rtpmap:96 AV1/90000\r\n";
+            out << "a=fmtp:96 profile=0;level-idx=13;tier=0;x-google-max-bitrate=" << maxBitrateKbps
+                << ";x-google-min-bitrate=" << (maxBitrateKbps / 2)
+                << ";x-google-start-bitrate=" << (maxBitrateKbps * 3 / 4) << "\r\n";
+            out << "a=rtcp-fb:96 nack\r\n";
+            out << "a=rtcp-fb:96 nack pli\r\n";
+            out << "a=rtcp-fb:96 goog-remb\r\n";
+            out << "a=rtcp-fb:96 transport-cc\r\n";
+            out << "a=rtpmap:97 rtx/90000\r\n";
+            out << "a=fmtp:97 apt=96\r\n";
+            out << "a=rtpmap:98 H265/90000\r\n";
+            out << "a=fmtp:98 profile-id=2;tier-flag=0;level-id=153;tx-mode=SRST;x-google-max-bitrate=" << maxBitrateKbps
+                << ";x-google-min-bitrate=" << (maxBitrateKbps / 2)
+                << ";x-google-start-bitrate=" << (maxBitrateKbps * 3 / 4) << "\r\n";
+            out << "a=rtcp-fb:98 nack\r\n";
+            out << "a=rtcp-fb:98 nack pli\r\n";
+            out << "a=rtcp-fb:98 goog-remb\r\n";
+            out << "a=rtcp-fb:98 transport-cc\r\n";
+            out << "a=rtpmap:99 rtx/90000\r\n";
+            out << "a=fmtp:99 apt=98\r\n";
             hasRtcpNackPli = true;
             continue;
         } else if (line.find("m=audio") == 0 || line.find("m=application") == 0) {
-            // Si salimos de video sin FlexFEC-03 inyectado, añadirlo antes de la siguiente sección
             if (inVideoMediaSection && !hasFlexFec) {
                 out << "a=rtpmap:110 flexfec-03/90000\r\n";
                 out << "a=fmtp:110 repair-window=100000\r\n";
@@ -102,29 +120,20 @@ std::string NativeZeroCopyPipeline::rewriteSdpForUltraQuality(const std::string&
             }
             inVideoMediaSection = false;
             out << line << "\r\n";
-            // Extensión 3: DiffServ QoS - Audio y canales de control marcados como EF (DSCP 46)
             out << "a=dscp:46\r\n";
             continue;
         }
 
         if (inVideoMediaSection) {
+            // Descartar cualquier línea de codec H.264 o parámetros duplicados ya inyectados en la cabecera sintética
+            if (line.find("H264") != std::string::npos || line.find("h264") != std::string::npos ||
+                line.find("rtpmap:") != std::string::npos || line.find("fmtp:") != std::string::npos ||
+                line.find("rtcp-fb:") != std::string::npos || line.find("b=AS:") == 0 ||
+                line.find("b=TIAS:") == 0 || line.find("a=dscp:") == 0 || line.find("c=IN") == 0) {
+                continue;
+            }
             if (line.find("flexfec-03") != std::string::npos) {
                 hasFlexFec = true;
-            }
-            // Enriquecer parámetros de formato (fmtp) en video para baja latencia, HDR y alto bitrate
-            if (line.find("a=fmtp:") == 0) {
-                std::string upgraded = line;
-                // Elevar perfil a High Profile Level 5.0 (640032) para 1440p/120fps
-                size_t pos = upgraded.find("profile-level-id=");
-                if (pos != std::string::npos) {
-                    upgraded.replace(pos + 17, 6, "640032");
-                }
-                
-                out << upgraded << ";max-br=" << maxBitrateKbps
-                    << ";max-fr=120;max-fs=14400;x-google-max-bitrate=" << maxBitrateKbps
-                    << ";x-google-min-bitrate=" << (maxBitrateKbps / 2)
-                    << ";x-google-start-bitrate=" << (maxBitrateKbps * 3 / 4) << "\r\n";
-                continue;
             }
         }
 
@@ -342,9 +351,9 @@ bool NativeZeroCopyPipeline::initializeHardwareDecoder(ANativeWindow* window, St
     currentWidth = width;
     currentHeight = height;
 
-    const char* mimeType = "video/avc";
-    if (profile == StreamCodecProfile::HEVC_MAIN10) mimeType = "video/hevc";
-    else if (profile == StreamCodecProfile::AV1_MAIN) mimeType = "video/av01";
+    const char* mimeType = "video/hevc";
+    if (profile == StreamCodecProfile::AV1_MAIN) mimeType = "video/av01";
+    else if (profile == StreamCodecProfile::HEVC_MAIN10) mimeType = "video/hevc";
     else if (profile == StreamCodecProfile::VVC_MAIN) mimeType = "video/vvc";
     else if (profile == StreamCodecProfile::AV2_EXPERIMENTAL) mimeType = "video/av02";
     else if (profile == StreamCodecProfile::AVS3) mimeType = "video/avs3";
@@ -365,6 +374,17 @@ bool NativeZeroCopyPipeline::initializeHardwareDecoder(ANativeWindow* window, St
     
     // Aplicar parámetros de ultra-calidad y 1440p si las dimensiones lo indican
     applyUltraQualityDecoderParameters(format, width > 1920 || height > 1080);
+
+    // Configuración de espacio de color de silicona y renderizado Zero-Copy
+    if (profile == StreamCodecProfile::HEVC_MAIN10) {
+        AMediaFormat_setInt32(format, "color-format", 0x7F420888); // COLOR_FormatYUVP010 (10-bit)
+        AMediaFormat_setInt32(format, "color-standard", 6);         // COLOR_STANDARD_BT2020
+        AMediaFormat_setInt32(format, "color-transfer", 6);         // COLOR_TRANSFER_ST2084 (PQ HDR)
+    } else {
+        AMediaFormat_setInt32(format, "color-format", 0x7F000100); // COLOR_FormatSurface (Zero-Copy)
+        AMediaFormat_setInt32(format, "color-standard", 1);         // COLOR_STANDARD_BT709
+        AMediaFormat_setInt32(format, "color-transfer", 3);         // COLOR_TRANSFER_SDR_VIDEO
+    }
 
     // Vinculación directa del decodificador HW a la superficie nativa (Zero-Copy)
     media_status_t status = AMediaCodec_configure(mediaCodec, format, outputWindow, nullptr, 0);

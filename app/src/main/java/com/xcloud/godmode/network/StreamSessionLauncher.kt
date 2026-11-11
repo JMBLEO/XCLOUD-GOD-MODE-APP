@@ -120,6 +120,20 @@ class StreamSessionLauncher(
                 }
                 val targetBaseUri = (overrideDatacenterBaseUri ?: session.preferredBaseUri).trimEnd('/')
 
+                // Fase 1 Pre-Stream: Actualizar snapshot atómico de doble buffer
+                AtomicAuthSnapshotManager.updateSnapshot(
+                    gamertag = session.gamertag,
+                    xuid = session.xuid,
+                    uhs = session.uhs,
+                    msaToken = session.msaAccessToken,
+                    msaRefreshToken = session.msaRefreshToken,
+                    xstsCoreToken = session.webXstsToken,
+                    xstsStreamingToken = session.gssvXstsToken,
+                    gsToken = activeGsToken,
+                    preferredBaseUri = targetBaseUri,
+                    expiresAtEpochMs = session.gsTokenExpiresAtEpochMs
+                )
+
                 // Limpiar sesión previa colgada si existía
                 terminateActiveSessionSilently()
 
@@ -273,6 +287,11 @@ class StreamSessionLauncher(
                 _progress.value = StreamLaunchProgress.HandshakingChannels(sessionId)
                 startKeepAliveLoop(scope, targetBaseUri, sessionPath, activeGsToken, cv)
 
+                // Fase 2 Durante el Stream: Demonio silencioso de renovación atómica al 75% TTL
+                AtomicAuthSnapshotManager.startSilentRenewalDaemon(scope) {
+                    authEngine.forceRefreshTokenChain(spoofedForwardedForIp)
+                }
+
                 _progress.value = StreamLaunchProgress.StreamingActive(
                     sessionId = sessionId,
                     baseUri = targetBaseUri,
@@ -303,9 +322,11 @@ class StreamSessionLauncher(
 
     /**
      * SUBPROCESO 12: Cierre limpio de la sesión en Azure al salir del juego o cancelar la cola.
+     * Fase 3 Post-Stream: DELETE explícito en /v5/sessions/cloud/{sessionId} con Bearer gsToken.
      */
     suspend fun terminateActiveSessionSilently() = withContext(Dispatchers.IO) {
         keepAliveJob?.cancel()
+        AtomicAuthSnapshotManager.stopSilentRenewalDaemon()
         val path = currentSessionPath ?: return@withContext
         val base = currentBaseUri ?: return@withContext
         val token = currentGsToken ?: return@withContext
@@ -318,6 +339,7 @@ class StreamSessionLauncher(
                 readTimeout = 5_000
                 setRequestProperty("Authorization", "Bearer $token")
             }
+            CloudTimeSynchronizer.captureHttpDate(conn)
             conn.responseCode
         }
     }
@@ -471,6 +493,7 @@ class StreamSessionLauncher(
             setRequestProperty("MS-CV", cv)
         }
         val code = conn.responseCode
+        CloudTimeSynchronizer.captureHttpDate(conn)
         val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
             ?.bufferedReader()?.readText().orEmpty()
         if (code !in 200..299) throw IllegalStateException("GET $url devolvió HTTP $code: $text")
@@ -498,6 +521,7 @@ class StreamSessionLauncher(
         val payloadBytes = body.toString().toByteArray(Charsets.UTF_8)
         conn.outputStream.use { it.write(payloadBytes) }
         val code = conn.responseCode
+        CloudTimeSynchronizer.captureHttpDate(conn)
         val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
             ?.bufferedReader()?.readText().orEmpty()
         if (code !in 200..299) throw IllegalStateException("POST $url devolvió HTTP $code: $text")

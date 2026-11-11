@@ -45,6 +45,7 @@ class GodModeRootContainer(
     val decoderLoader = DynamicHardwareDecoderLoader(context)
 
     val msaAuthEngine = MsaQrAndSisuAuthEngine(authVault)
+    val msaDeviceCodeEngine = MsaDeviceCodeAuthEngine(okHttpClient)
 
     val streamManager = NativeStreamPipelineManager(
         context = context,

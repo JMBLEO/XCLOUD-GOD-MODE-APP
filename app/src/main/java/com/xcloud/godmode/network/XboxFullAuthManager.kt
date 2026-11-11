@@ -479,10 +479,15 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
                     f2pUri = f2pLogin?.second.orEmpty()
                 )
                 
+                val refreshToken = msaTokens.optString("refresh_token", "")
+                val lptToken = try {
+                    requestTransferLptToken(refreshToken)
+                } catch (_: Exception) { "" }
+                
                 return@withContext XboxReadySession(
                     gamertag = gamertag,
                     uhs = uhs,
-                    msaRefreshToken = msaTokens.optString("refresh_token", ""),
+                    msaRefreshToken = refreshToken,
                     webXstsToken = authHeaderToken,
                     xHomeGsToken = xCloudLogin.first,
                     xHomeRegionUri = xCloudLogin.second,
@@ -493,12 +498,44 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
                     webXstsTokenFull = sisuResult,
                     gssvXstsToken = gssvToken,
                     f2pGsToken = f2pLogin?.first.orEmpty(),
-                    f2pRegionUri = f2pLogin?.second.orEmpty()
+                    f2pRegionUri = f2pLogin?.second.orEmpty(),
+                    lptToken = lptToken
                 )
             }
         } catch (e: Exception) {
             Log.e("XboxAuth", "God Mode Sisu recovery: ${e.message}. Forcing RPS.")
             return@withContext completeAuth(msaTokens)
+        }
+    }
+
+    /**
+     * Adquiere el Passport console-transfer token (LPT) oficial para autorizar /connect
+     * mediante login.live.com usando el scope PURPOSE_XBOX_CLOUD_CONSOLE_TRANSFER_TOKEN.
+     */
+    fun requestTransferLptToken(refreshToken: String): String {
+        if (refreshToken.isBlank()) return ""
+        return try {
+            val formBody = FormBody.Builder()
+                .add("grant_type", "refresh_token")
+                .add("client_id", CLIENT_ID)
+                .add("refresh_token", refreshToken)
+                .add("scope", "service::http://Passport.NET/purpose::PURPOSE_XBOX_CLOUD_CONSOLE_TRANSFER_TOKEN")
+                .build()
+            val request = Request.Builder()
+                .url("https://login.live.com/oauth20_token.srf")
+                .post(formBody)
+                .build()
+            okHttpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val json = JSONObject(response.body?.string() ?: "{}")
+                    json.optString("access_token", "")
+                } else {
+                    ""
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("XboxAuth", "No se pudo obtener LPT token: ${e.message}")
+            ""
         }
     }
 
@@ -575,6 +612,10 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             f2pUri = f2pLogin?.second.orEmpty()
         )
 
+        val lptToken = try {
+            requestTransferLptToken(msaRefreshToken)
+        } catch (_: Exception) { "" }
+
         return@withContext XboxReadySession(
             gamertag = gamertag,
             uhs = uhs,
@@ -589,7 +630,8 @@ class XboxFullAuthManager(private val networkClient: NetworkClient) {
             webXstsTokenFull = webXstsData,
             gssvXstsToken = gssvToken,
             f2pGsToken = f2pLogin?.first.orEmpty(),
-            f2pRegionUri = f2pLogin?.second.orEmpty()
+            f2pRegionUri = f2pLogin?.second.orEmpty(),
+            lptToken = lptToken
         )
     }
 

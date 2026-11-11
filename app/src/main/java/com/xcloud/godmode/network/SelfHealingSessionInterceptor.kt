@@ -40,27 +40,15 @@ object SelfHealingSessionInterceptor {
      * CASO 6: Sincroniza automáticamente el reloj interno leyendo la cabecera HTTP "Date" de Microsoft.
      */
     fun captureServerClockOffset(connection: HttpURLConnection) {
-        val dateHeader = connection.getHeaderField("Date") ?: return
-        runCatching {
-            val format = SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("GMT")
-            }
-            val serverEpochMs = format.parse(dateHeader)?.time ?: return
-            val localEpochMs = System.currentTimeMillis()
-            val diffSeconds = (serverEpochMs - localEpochMs) / 1000L
-            if (kotlin.math.abs(diffSeconds) > 30L) {
-                serverClockOffsetSeconds.set(diffSeconds)
-                Log.i(TAG, "Reloj desfasado detectado. Offset aplicado: ${diffSeconds}s")
-            }
-        }
+        CloudTimeSynchronizer.captureHttpDate(connection)
     }
 
     fun getCorrectedEpochSeconds(): Long {
-        return (System.currentTimeMillis() / 1000L) + serverClockOffsetSeconds.get()
+        return CloudTimeSynchronizer.getCloudEpochSeconds()
     }
 
     fun getCorrectedWindowsFileTime(): Long {
-        return (getCorrectedEpochSeconds() + WINDOWS_EPOCH_OFFSET) * 10_000_000L
+        return CloudTimeSynchronizer.getWindowsFileTime()
     }
 
     /**

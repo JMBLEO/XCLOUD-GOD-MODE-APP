@@ -469,6 +469,7 @@ class ZeroFrictionXboxAuthManager private constructor(private val context: Conte
             webXstsToken = session.webXstsToken,
             gssvXstsToken = session.gssvXstsToken,
             xgpuGsToken = session.xgpuGsToken,
+            xhomeGsToken = session.xhomeGsToken,
             f2pGsToken = session.f2pGsToken,
             defaultRegionBaseUri = session.preferredBaseUri,
             regionsJson = session.regionsJson,

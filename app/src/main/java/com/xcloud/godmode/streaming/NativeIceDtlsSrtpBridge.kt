@@ -79,6 +79,20 @@ object NativeIceDtlsSrtpBridge {
     }
 
     /**
+     * Entry point to start the native transport pipeline (gathering local candidates).
+     */
+    fun initializePipeline(localUfrag: String, localPwd: String) {
+        NativeStreamBridge.startTransportPipeline(localUfrag, localPwd)
+    }
+
+    /**
+     * Updates remote credentials and candidates from SDP Answer.
+     */
+    fun updateRemoteParameters(ufrag: String, pwd: String, candidates: List<String>) {
+        NativeStreamBridge.setRemoteTransportParameters(ufrag, pwd, candidates.toTypedArray())
+    }
+
+    /**
      * Resets or triggers an immediate STUN measurement probe.
      */
     fun triggerProbe() {

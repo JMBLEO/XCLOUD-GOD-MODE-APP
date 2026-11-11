@@ -14,12 +14,12 @@ private:
 
 public:
     RtpH264Depacketizer();
-    void processRtpPayload(const uint8_t* rtpPayload, size_t payloadLen, bool markerBit, AMediaCodec* codec) override;
+    void processRtpPayload(const uint8_t* rtpPayload, size_t payloadLen, bool markerBit, IStreamEngine* engine) override;
 
 private:
     void appendAnnexBNal(const uint8_t* data, size_t len);
-    void submitCodecConfigToMediaCodec(AMediaCodec* codec);
-    void submitAccessUnitToMediaCodec(AMediaCodec* codec, const uint8_t* data, size_t size);
+    void submitCodecConfigToEngine(IStreamEngine* engine);
+    void submitAccessUnitToEngine(IStreamEngine* engine, const uint8_t* data, size_t size);
 };
 
 }

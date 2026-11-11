@@ -17,6 +17,8 @@
 
 
 
+#include "stream/GodModeVideoIngress.h"
+
 #define LOG_TAG "NativeStreamBridge"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -37,6 +39,10 @@ static std::unique_ptr<IStreamEngine> gActiveEngine;
 static ANativeWindow* gActiveNativeWindow = nullptr;
 static std::mutex gEngineMutex;
 static CompleteAccessUnitAssembler gAuAssembler;
+static RtpSequenceReorderBuffer gVideoReorderBuffer;
+static CompleteH264AccessUnitAssembler gH264IngressAssembler;
+static CompleteHevcAccessUnitAssembler gHevcIngressAssembler;
+static CompleteAv1AccessUnitAssembler gAv1IngressAssembler;
 static XcloudClockDriftCompensator gClockCompensator;
 static BbrNanoCongestionController gNetworkGovernor;
 static std::atomic<int32_t> gGlobalThermalStatus{0};
@@ -387,6 +393,7 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_initStreamPipeline(
         }
 
         gCurrentActiveEngineId = resolvedEngineId;
+        NativeIceDtlsSrtpBridge::getInstance().setStreamEngine(gActiveEngine.get());
 
         if (gTelemetryBufferPtr && gTelemetryBufferSize >= 48) {
             *reinterpret_cast<int32_t*>(gTelemetryBufferPtr + 16) = gCurrentActiveEngineId;
@@ -439,6 +446,8 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_shutdownStreamPipeline(
             gActiveNativeWindow = nullptr;
         }
         gAuAssembler.reset();
+        gVideoReorderBuffer.reset();
+        gH264IngressAssembler.reset();
     } catch (...) {}
 }
 
@@ -467,23 +476,25 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_dispatchRtpPacket(
             *reinterpret_cast<uint32_t*>(gTelemetryBufferPtr + 20) = static_cast<uint32_t>(stunReport.totalSuccessReceived);
             *reinterpret_cast<uint32_t*>(gTelemetryBufferPtr + 24) = gGlobalHwcFencesClosedCount.load(std::memory_order_relaxed);
             *reinterpret_cast<int32_t*>(gTelemetryBufferPtr + 32) = gGlobalThermalStatus.load(std::memory_order_relaxed);
-            // Clock drift populated later in this function
         }
 
-        // Si el paquete contiene cabecera RTP (versión 2), omitir extensiones RFC 8285 (0xBEDE / 0x1000)
+        RtpVideoPacket rtpPacket;
+        bool hasRtp = VideoIngressRtpParser::parseRtp(ubytes, totalLen, rtpPacket);
         ParsedRtpHeader parsed = stripRtpHeadersAndExtensions(ubytes, totalLen);
-        
+
+        uint16_t seqNumber = hasRtp ? rtpPacket.seqNum : parsed.sequenceNumber;
+
         // 1. Zero-Trust Security Inspection
         auto securityVerdict = gSecurityGatekeeper.inspectAndSanitizeIncomingFrame(
-            ubytes, totalLen, parsed.sequenceNumber
+            ubytes, totalLen, seqNumber
         );
-        
+
         if (securityVerdict != ZeroTrustNetworkSecurityGatekeeper::SecurityVerdict::ALLOW_PACKET) {
             env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
             return JNI_TRUE; // Packet dropped due to security violation or replay
         }
 
-        uint32_t rtpTs = (timestamp > 0) ? static_cast<uint32_t>(timestamp) : parsed.timestamp;
+        uint32_t rtpTs = (timestamp > 0) ? static_cast<uint32_t>(timestamp) : (hasRtp ? rtpPacket.timestamp : parsed.timestamp);
         uint64_t nowUs = getMonotonicMicros();
         gClockCompensator.updateSync(rtpTs, nowUs);
         uint64_t adjustedPts = gClockCompensator.getAdjustedPresentationTimeUs(rtpTs);
@@ -494,14 +505,70 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_dispatchRtpPacket(
         }
 
         if (gTelemetryBufferPtr && gTelemetryBufferSize >= 48) {
-
-             *reinterpret_cast<int64_t*>(gTelemetryBufferPtr + 36) = gClockCompensator.getEstimatedOffsetUs();
+            *reinterpret_cast<int64_t*>(gTelemetryBufferPtr + 36) = gClockCompensator.getEstimatedOffsetUs();
         }
 
         // Track the packet in the BBR governor
         gNetworkGovernor.process_packet_sent(totalLen);
 
-        if (parsed.valid && parsed.payloadPtr && parsed.payloadSize > 0) {
+        if (hasRtp) {
+            uint32_t clientSsrc = 0x12345678;
+            uint8_t pt = rtpPacket.payloadType;
+            gVideoReorderBuffer.pushPacket(
+                rtpPacket,
+                clientSsrc,
+                [adjustedPts, pt](const uint8_t* payload, size_t payloadLen, uint32_t ts, bool m, bool discontinuous) {
+                    uint32_t effectiveTs = (ts > 0) ? ts : static_cast<uint32_t>((adjustedPts * 90000ULL) / 1000000ULL);
+
+                    if (pt == 96 || pt == 97) { // AV1 / RTX
+                        gAv1IngressAssembler.feedRtpPayload(
+                            payload, payloadLen, effectiveTs, m, discontinuous,
+                            0x12345678, 0,
+                            [](const uint8_t* auData, size_t auSize, uint64_t ptsUs, bool isKeyframe) {
+                                if (gActiveEngine) {
+                                    gActiveEngine->pushAnnexBNalUnit(auData, auSize, ptsUs, isKeyframe);
+                                }
+                            },
+                            [](const uint8_t* pliData, size_t pliLen) {
+                                LOGD("Recovery: RTCP PLI disparado para AV1");
+                            }
+                        );
+                    } else if (pt == 98 || pt == 99) { // HEVC / RTX
+                        gHevcIngressAssembler.feedRtpPayload(
+                            payload, payloadLen, effectiveTs, m, discontinuous,
+                            0x12345678, 0,
+                            [](const uint8_t* auData, size_t auSize, uint64_t ptsUs, bool isKeyframe) {
+                                if (gActiveEngine) {
+                                    gActiveEngine->pushAnnexBNalUnit(auData, auSize, ptsUs, isKeyframe);
+                                }
+                            },
+                            [](const uint8_t* pliData, size_t pliLen) {
+                                LOGD("Recovery: RTCP PLI disparado para HEVC");
+                            }
+                        );
+                    } else { // Fallback H.264
+                        gH264IngressAssembler.feedRtpPayload(
+                            payload, payloadLen, effectiveTs, m, discontinuous,
+                            0x12345678, 0,
+                            [](const uint8_t* auData, size_t auSize, uint64_t ptsUs, bool isIdr, const H264SpsInfo& spsInfo) {
+                                if (gActiveEngine) {
+                                    if (spsInfo.valid) {
+                                        gActiveEngine->onResize(spsInfo.width, spsInfo.height);
+                                    }
+                                    gActiveEngine->pushAnnexBNalUnit(auData, auSize, ptsUs, isIdr);
+                                }
+                            },
+                            [](const uint8_t* pliData, size_t pliLen) {
+                                LOGD("Recovery: RTCP PLI disparado tras referencia rota o desincronización");
+                            }
+                        );
+                    }
+                },
+                [](const uint8_t* nackData, size_t nackLen) {
+                    LOGD("Recovery: RTCP NACK RFC 4585 disparado tras expiración de Grace Inbox");
+                }
+            );
+        } else if (parsed.valid && parsed.payloadPtr && parsed.payloadSize > 0) {
             gAuAssembler.feedRtpPayload(
                 parsed.payloadPtr,
                 parsed.payloadSize,
@@ -680,6 +747,57 @@ Java_com_xcloud_godmode_streaming_NativeStreamBridge_injectDirectSrtpKeys(
     env->ReleaseStringUTFChars(key_str, keyCStr);
     env->ReleaseStringUTFChars(salt_str, saltCStr);
     return JNI_TRUE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_startTransportPipeline(JNIEnv *env, jobject thiz, jstring local_ufrag, jstring local_pwd) {
+    const char* ufrag = env->GetStringUTFChars(local_ufrag, nullptr);
+    const char* pwd = env->GetStringUTFChars(local_pwd, nullptr);
+    
+    NativeIceDtlsSrtpBridge::getInstance().start(ufrag, pwd);
+    
+    env->ReleaseStringUTFChars(local_ufrag, ufrag);
+    env->ReleaseStringUTFChars(local_pwd, pwd);
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_setRemoteTransportParameters(JNIEnv *env, jobject thiz, jstring ufrag, jstring pwd, jobjectArray candidates) {
+    const char* r_ufrag = env->GetStringUTFChars(ufrag, nullptr);
+    const char* r_pwd = env->GetStringUTFChars(pwd, nullptr);
+    
+    std::vector<IceCandidate> iceCandidates;
+    jsize len = env->GetArrayLength(candidates);
+    for (jsize i = 0; i < len; ++i) {
+        jstring candStr = (jstring)env->GetObjectArrayElement(candidates, i);
+        const char* c_str = env->GetStringUTFChars(candStr, nullptr);
+        
+        // Simplified parser for ICE candidate strings
+        IceCandidate c;
+        char address[128]{};
+        int port = 0;
+        if (sscanf(c_str, "candidate:%*s %*d %*s %*d %127s %d", address, &port) == 2) {
+            c.address = address;
+            c.port = static_cast<uint16_t>(port);
+            iceCandidates.push_back(c);
+        }
+        
+        env->ReleaseStringUTFChars(candStr, c_str);
+    }
+    
+    NativeIceDtlsSrtpBridge::getInstance().setRemoteParameters(r_ufrag, r_pwd, iceCandidates);
+    
+    env->ReleaseStringUTFChars(ufrag, r_ufrag);
+    env->ReleaseStringUTFChars(pwd, r_pwd);
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_requestPli(JNIEnv *env, jobject thiz) {
+    NativeIceDtlsSrtpBridge::getInstance().requestPli();
+}
+
+JNIEXPORT void JNICALL
+Java_com_xcloud_godmode_streaming_NativeStreamBridge_requestKeyframe(JNIEnv *env, jobject thiz) {
+    NativeIceDtlsSrtpBridge::getInstance().requestKeyframe();
 }
 
 JNIEXPORT jfloatArray JNICALL

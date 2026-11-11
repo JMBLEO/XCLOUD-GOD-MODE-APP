@@ -10,10 +10,10 @@ private:
 
 public:
     RtpAV1Depacketizer();
-    void processRtpPayload(const uint8_t* rtpPayload, size_t payloadLen, bool markerBit, AMediaCodec* codec) override;
+    void processRtpPayload(const uint8_t* rtpPayload, size_t payloadLen, bool markerBit, IStreamEngine* engine) override;
 
 private:
-    void submitAccessUnitToMediaCodec(AMediaCodec* codec, const uint8_t* data, size_t size);
+    void submitAccessUnitToEngine(IStreamEngine* engine, const uint8_t* data, size_t size);
 };
 
 }

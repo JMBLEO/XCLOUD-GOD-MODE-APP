@@ -264,6 +264,16 @@ object NativeStreamBridge {
     external fun requestKeyframe()
 
     /**
+     * Starts the native transport pipeline by gathering local ICE candidates.
+     */
+    external fun startTransportPipeline(localUfrag: String, localPwd: String)
+
+    /**
+     * Completes the transport handshake with remote credentials and candidates.
+     */
+    external fun setRemoteTransportParameters(ufrag: String, pwd: String, candidates: Array<String>)
+
+    /**
      * Pins the current thread to high-performance cores and elevates priority to SCHED_FIFO.
      */
     external fun pinCurrentThreadToPerformanceTier(coreMask: Int)

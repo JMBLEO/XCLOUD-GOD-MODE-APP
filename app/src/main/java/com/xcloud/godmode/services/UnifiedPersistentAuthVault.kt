@@ -48,7 +48,10 @@ class UnifiedPersistentAuthVault private constructor(private val context: Contex
         val gsToken: String,
         val gsExpiry: Long,
         val regionUri: String,
-        val market: String
+        val market: String,
+        val lptToken: String? = null,
+        val webToken: String? = null,
+        val xhomeToken: String? = null
     )
 
     val sessionState: Flow<AuthProfileState> = context.authDataStore.data.map { prefs ->
@@ -107,7 +110,10 @@ class UnifiedPersistentAuthVault private constructor(private val context: Contex
             gsToken = encrypt(String(envelope.gsStreamToken)),
             gsExpiry = envelope.gsExpiresAtElapsedMs,
             regionUri = envelope.discoveredBaseRegionUri,
-            market = envelope.market
+            market = envelope.market,
+            lptToken = if (envelope.lptTransferToken.isNotEmpty()) encrypt(String(envelope.lptTransferToken)) else null,
+            webToken = if (envelope.xstsWebToken.isNotEmpty()) encrypt(String(envelope.xstsWebToken)) else null,
+            xhomeToken = if (envelope.xhomeGsToken.isNotEmpty()) encrypt(String(envelope.xhomeGsToken)) else null
         )
         
         val json = gson.toJson(stored)
@@ -131,17 +137,33 @@ class UnifiedPersistentAuthVault private constructor(private val context: Contex
         
         return try {
             val stored = gson.fromJson(json, StoredEnvelope::class.java)
+            val lptChars = if (!stored.lptToken.isNullOrEmpty()) {
+                decrypt(stored.lptToken).toCharArray()
+            } else {
+                CharArray(0)
+            }
+            val webChars = if (!stored.webToken.isNullOrEmpty()) {
+                decrypt(stored.webToken).toCharArray()
+            } else {
+                CharArray(0)
+            }
+            val xhomeChars = if (!stored.xhomeToken.isNullOrEmpty()) {
+                decrypt(stored.xhomeToken).toCharArray()
+            } else {
+                CharArray(0)
+            }
             SecureTokenEnvelope(
                 msaAccessToken = decrypt(stored.msaAccess).toCharArray(),
                 msaRefreshToken = decrypt(stored.msaRefresh).toCharArray(),
                 msaExpiresAtElapsedMs = stored.msaExpiry,
-                lptTransferToken = CharArray(0),
+                lptTransferToken = lptChars,
                 xblUserToken = decrypt(stored.xblToken).toCharArray(),
                 userHashUhs = decrypt(stored.uhs).toCharArray(),
-                xstsWebToken = CharArray(0),
+                xstsWebToken = webChars,
                 xstsGssvToken = decrypt(stored.xstsToken).toCharArray(),
                 xstsExpiresAtElapsedMs = stored.msaExpiry,
                 gsStreamToken = decrypt(stored.gsToken).toCharArray(),
+                xhomeGsToken = xhomeChars,
                 gsExpiresAtElapsedMs = stored.gsExpiry,
                 discoveredBaseRegionUri = stored.regionUri,
                 market = stored.market
@@ -154,22 +176,48 @@ class UnifiedPersistentAuthVault private constructor(private val context: Contex
 
     // --- Hardware Encryption Logic ---
 
-    private fun getSecretKey(): SecretKey {
-        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        keyStore.getKey(KEY_ALIAS, null)?.let { return it as SecretKey }
+    private var fallbackJvmSecretKey: SecretKey? = null
 
-        val keyGenerator = KeyGenerator.getInstance("AES", "AndroidKeyStore")
-        val spec = android.security.keystore.KeyGenParameterSpec.Builder(
-            KEY_ALIAS,
-            android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or
-                android.security.keystore.KeyProperties.PURPOSE_DECRYPT
-        )
-            .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
-            .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
-            .setKeySize(256)
-            .build()
-        keyGenerator.init(spec)
-        return keyGenerator.generateKey()
+    private fun getSecretKey(): SecretKey {
+        return try {
+            val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            keyStore.getKey(KEY_ALIAS, null)?.let { return it as SecretKey }
+
+            val keyGenerator = KeyGenerator.getInstance("AES", "AndroidKeyStore")
+            val spec = android.security.keystore.KeyGenParameterSpec.Builder(
+                KEY_ALIAS,
+                android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or
+                    android.security.keystore.KeyProperties.PURPOSE_DECRYPT
+            )
+                .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build()
+            keyGenerator.init(spec)
+            keyGenerator.generateKey()
+        } catch (e: Throwable) {
+            fallbackJvmSecretKey ?: synchronized(this) {
+                fallbackJvmSecretKey ?: KeyGenerator.getInstance("AES").apply { init(256) }.generateKey().also {
+                    fallbackJvmSecretKey = it
+                }
+            }
+        }
+    }
+
+    private fun base64Encode(bytes: ByteArray): String {
+        return try {
+            java.util.Base64.getEncoder().encodeToString(bytes)
+        } catch (e: Throwable) {
+            android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP) ?: ""
+        }
+    }
+
+    private fun base64Decode(encoded: String): ByteArray {
+        return try {
+            java.util.Base64.getDecoder().decode(encoded)
+        } catch (e: Throwable) {
+            android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP) ?: ByteArray(0)
+        }
     }
 
     private fun encrypt(plain: String): String {
@@ -183,16 +231,16 @@ class UnifiedPersistentAuthVault private constructor(private val context: Contex
             combined[0] = iv.size.toByte()
             System.arraycopy(iv, 0, combined, 1, iv.size)
             System.arraycopy(encrypted, 0, combined, 1 + iv.size, encrypted.size)
-            Base64.encodeToString(combined, Base64.NO_WRAP)
+            base64Encode(combined)
         } catch (e: Exception) {
-            Base64.encodeToString(plain.toByteArray(StandardCharsets.UTF_8), Base64.NO_WRAP)
+            base64Encode(plain.toByteArray(StandardCharsets.UTF_8))
         }
     }
 
     private fun decrypt(encoded: String): String {
         if (encoded.isBlank()) return ""
         return try {
-            val combined = Base64.decode(encoded, Base64.NO_WRAP)
+            val combined = base64Decode(encoded)
             val ivSize = combined[0].toInt()
             val iv = combined.copyOfRange(1, 1 + ivSize)
             val encrypted = combined.copyOfRange(1 + ivSize, combined.size)
@@ -200,7 +248,11 @@ class UnifiedPersistentAuthVault private constructor(private val context: Contex
             cipher.init(Cipher.DECRYPT_MODE, getSecretKey(), GCMParameterSpec(128, iv))
             String(cipher.doFinal(encrypted), StandardCharsets.UTF_8)
         } catch (e: Exception) {
-            String(Base64.decode(encoded, Base64.NO_WRAP), StandardCharsets.UTF_8)
+            try {
+                String(base64Decode(encoded), StandardCharsets.UTF_8)
+            } catch (e2: Exception) {
+                ""
+            }
         }
     }
 
@@ -218,7 +270,8 @@ class UnifiedPersistentAuthVault private constructor(private val context: Contex
 
         fun getInstance(context: Context): UnifiedPersistentAuthVault =
             instance ?: synchronized(this) {
-                instance ?: UnifiedPersistentAuthVault(context.applicationContext).also { instance = it }
+                val appContext = runCatching { context.applicationContext }.getOrNull() ?: context
+                instance ?: UnifiedPersistentAuthVault(appContext).also { instance = it }
             }
     }
 }

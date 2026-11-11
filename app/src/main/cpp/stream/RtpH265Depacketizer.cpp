@@ -11,8 +11,8 @@ RtpH265Depacketizer::RtpH265Depacketizer() {
     currentAccessUnit.reserve(512 * 1024);
 }
 
-void RtpH265Depacketizer::processRtpPayload(const uint8_t* rtpPayload, size_t payloadLen, bool markerBit, AMediaCodec* codec) {
-    if (!rtpPayload || payloadLen < 2 || !codec) return;
+void RtpH265Depacketizer::processRtpPayload(const uint8_t* rtpPayload, size_t payloadLen, bool markerBit, IStreamEngine* engine) {
+    if (!rtpPayload || payloadLen < 2 || !engine) return;
 
     uint8_t nalHeader1 = rtpPayload[0];
     uint8_t nalType = (nalHeader1 >> 1) & 0x3F;
@@ -70,11 +70,11 @@ void RtpH265Depacketizer::processRtpPayload(const uint8_t* rtpPayload, size_t pa
     }
 
     if (!hasConfiguredCsd && !cachedVps.empty() && !cachedSps.empty() && !cachedPps.empty()) {
-        submitCodecConfigToMediaCodec(codec);
+        submitCodecConfigToEngine(engine);
     }
 
     if (markerBit && !currentAccessUnit.empty()) {
-        submitAccessUnitToMediaCodec(codec, currentAccessUnit.data(), currentAccessUnit.size());
+        submitAccessUnitToEngine(engine, currentAccessUnit.data(), currentAccessUnit.size());
         currentAccessUnit.clear();
     }
 }
@@ -84,46 +84,33 @@ void RtpH265Depacketizer::appendAnnexBNal(const uint8_t* data, size_t len) {
     currentAccessUnit.insert(currentAccessUnit.end(), data, data + len);
 }
 
-void RtpH265Depacketizer::submitCodecConfigToMediaCodec(AMediaCodec* codec) {
-    ssize_t bufIdx = AMediaCodec_dequeueInputBuffer(codec, 5000);
-    if (bufIdx >= 0) {
-        size_t bufSize = 0;
-        uint8_t* dst = AMediaCodec_getInputBuffer(codec, bufIdx, &bufSize);
-        std::vector<uint8_t> csd;
-        
-        csd.insert(csd.end(), ANNEXB_START_CODE, ANNEXB_START_CODE + 4);
-        csd.insert(csd.end(), cachedVps.begin(), cachedVps.end());
-        csd.insert(csd.end(), ANNEXB_START_CODE, ANNEXB_START_CODE + 4);
-        csd.insert(csd.end(), cachedSps.begin(), cachedSps.end());
-        csd.insert(csd.end(), ANNEXB_START_CODE, ANNEXB_START_CODE + 4);
-        csd.insert(csd.end(), cachedPps.begin(), cachedPps.end());
-
-        if (dst && csd.size() <= bufSize) {
-            std::memcpy(dst, csd.data(), csd.size());
-            AMediaCodec_queueInputBuffer(codec, bufIdx, 0, csd.size(), 0, AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG);
-            hasConfiguredCsd = true;
-            LOGD("HEVC Codec Config (VPS/SPS/PPS) submitted");
-        }
-    }
+void RtpH265Depacketizer::submitCodecConfigToEngine(IStreamEngine* engine) {
+    if (!engine || cachedSps.empty() || cachedPps.empty()) return;
+    
+    // HEVC often expects VPS before SPS/PPS. GodMode injectCodecConfig doesn't strictly take VPS yet,
+    // so we bundle it into the SPS buffer or expect the engine to handle it.
+    std::vector<uint8_t> vpsSps;
+    vpsSps.insert(vpsSps.end(), cachedVps.begin(), cachedVps.end());
+    vpsSps.insert(vpsSps.end(), cachedSps.begin(), cachedSps.end());
+    
+    engine->injectCodecConfig(vpsSps.data(), vpsSps.size(), cachedPps.data(), cachedPps.size());
+    hasConfiguredCsd = true;
+    LOGD("HEVC Codec Config (VPS+SPS, PPS) submitted to engine");
 }
 
-void RtpH265Depacketizer::submitAccessUnitToMediaCodec(AMediaCodec* codec, const uint8_t* data, size_t size) {
-    ssize_t bufIdx = AMediaCodec_dequeueInputBuffer(codec, 2000);
-    if (bufIdx >= 0) {
-        size_t bufSize = 0;
-        uint8_t* dst = AMediaCodec_getInputBuffer(codec, bufIdx, &bufSize);
-        if (dst && size <= bufSize) {
-            std::memcpy(dst, data, size);
-            AMediaCodec_queueInputBuffer(codec, bufIdx, 0, size, 0, 0);
-        }
+void RtpH265Depacketizer::submitAccessUnitToEngine(IStreamEngine* engine, const uint8_t* data, size_t size) {
+    if (!engine || !data || size == 0) return;
+    
+    uint64_t ptsUs = getMonotonicMicros();
+    
+    // HEVC IRAP check (NAL types 16-23)
+    bool isKeyframe = false;
+    if (size > 4) {
+        uint8_t nalType = (data[4] >> 1) & 0x3F;
+        if (nalType >= 16 && nalType <= 21) isKeyframe = true;
     }
 
-    AMediaCodecBufferInfo info;
-    ssize_t outIdx = AMediaCodec_dequeueOutputBuffer(codec, &info, 0);
-    while (outIdx >= 0) {
-        AMediaCodec_releaseOutputBuffer(codec, outIdx, info.size != 0);
-        outIdx = AMediaCodec_dequeueOutputBuffer(codec, &info, 0);
-    }
+    engine->pushAnnexBNalUnit(data, size, ptsUs, isKeyframe);
 }
 
 }

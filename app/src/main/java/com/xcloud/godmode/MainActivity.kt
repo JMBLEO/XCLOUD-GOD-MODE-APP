@@ -100,7 +100,10 @@ class MainActivity : FragmentActivity() {
             val authModalViewModel: com.xcloud.godmode.viewmodels.XboxAuthModalViewModel = viewModel(
                 factory = object : androidx.lifecycle.ViewModelProvider.Factory {
                     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                        return com.xcloud.godmode.viewmodels.XboxAuthModalViewModel(rootContainer.msaAuthEngine) as T
+                        return com.xcloud.godmode.viewmodels.XboxAuthModalViewModel(
+                            rootContainer.msaAuthEngine,
+                            rootContainer.msaDeviceCodeEngine
+                        ) as T
                     }
                 }
             )

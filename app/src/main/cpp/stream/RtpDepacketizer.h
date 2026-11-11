@@ -1,6 +1,5 @@
 #pragma once
-#include <cstdint>
-#include <vector>
+#include "IStreamEngine.h"
 #include <media/NdkMediaCodec.h>
 
 namespace GodMode::Stream {
@@ -8,7 +7,7 @@ namespace GodMode::Stream {
 class RtpDepacketizer {
 public:
     virtual ~RtpDepacketizer() = default;
-    virtual void processRtpPayload(const uint8_t* rtpPayload, size_t payloadLen, bool markerBit, AMediaCodec* codec) = 0;
+    virtual void processRtpPayload(const uint8_t* rtpPayload, size_t payloadLen, bool markerBit, IStreamEngine* engine) = 0;
 };
 
 }

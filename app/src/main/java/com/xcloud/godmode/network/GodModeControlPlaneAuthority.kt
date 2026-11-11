@@ -191,6 +191,7 @@ class SecureTokenEnvelope(
     var xstsGssvToken: CharArray,
     val xstsExpiresAtElapsedMs: Long,
     var gsStreamToken: CharArray,
+    var xhomeGsToken: CharArray = CharArray(0),
     val gsExpiresAtElapsedMs: Long,
     val discoveredBaseRegionUri: String,
     val market: String
@@ -1153,10 +1154,11 @@ class GlobalSessionAuthority(
             append("t=0 0\r\n")
             append("a=group:BUNDLE 0 1 2\r\n")
             append("a=msid-semantic: WMS\r\n")
-            append("m=video 9 UDP/TLS/RTP/SAVPF 96 98")
-            if (enableHevc) append(" 102")
-            append("\r\n")
+            append("m=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99\r\n")
             append("c=IN IP4 0.0.0.0\r\n")
+            append("b=AS:50000\r\n")
+            append("b=TIAS:50000000\r\n")
+            append("a=dscp:34\r\n")
             append("a=ice-ufrag:$ufrag\r\n")
             append("a=ice-pwd:$pwd\r\n")
             append("a=fingerprint:sha-256 $fingerprint\r\n")
@@ -1165,13 +1167,26 @@ class GlobalSessionAuthority(
             append("a=recvonly\r\n")
             append("a=rtcp-mux\r\n")
             append("a=rtcp-rsize\r\n")
-            append("a=rtpmap:96 H264/90000\r\n")
-            append("a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d002a\r\n")
-            append("a=rtpmap:98 H264/90000\r\n")
-            append("a=fmtp:98 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n")
-            if (enableHevc) {
-                append("a=rtpmap:102 H265/90000\r\n")
-            }
+            append("a=rtcp-fb:* nack\r\n")
+            append("a=rtcp-fb:* nack pli\r\n")
+            append("a=rtcp-fb:* goog-remb\r\n")
+            append("a=rtcp-fb:* transport-cc\r\n")
+            append("a=rtpmap:96 AV1/90000\r\n")
+            append("a=fmtp:96 profile=0;level-idx=13;tier=0;x-google-max-bitrate=50000;x-google-min-bitrate=25000;x-google-start-bitrate=37500\r\n")
+            append("a=rtcp-fb:96 nack\r\n")
+            append("a=rtcp-fb:96 nack pli\r\n")
+            append("a=rtcp-fb:96 goog-remb\r\n")
+            append("a=rtcp-fb:96 transport-cc\r\n")
+            append("a=rtpmap:97 rtx/90000\r\n")
+            append("a=fmtp:97 apt=96\r\n")
+            append("a=rtpmap:98 H265/90000\r\n")
+            append("a=fmtp:98 profile-id=2;tier-flag=0;level-id=153;tx-mode=SRST;x-google-max-bitrate=50000;x-google-min-bitrate=25000;x-google-start-bitrate=37500\r\n")
+            append("a=rtcp-fb:98 nack\r\n")
+            append("a=rtcp-fb:98 nack pli\r\n")
+            append("a=rtcp-fb:98 goog-remb\r\n")
+            append("a=rtcp-fb:98 transport-cc\r\n")
+            append("a=rtpmap:99 rtx/90000\r\n")
+            append("a=fmtp:99 apt=98\r\n")
             append("m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n")
             append("c=IN IP4 0.0.0.0\r\n")
             append("a=ice-ufrag:$ufrag\r\n")

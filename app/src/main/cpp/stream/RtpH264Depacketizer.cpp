@@ -8,8 +8,8 @@ RtpH264Depacketizer::RtpH264Depacketizer() {
     currentAccessUnit.reserve(256 * 1024);
 }
 
-void RtpH264Depacketizer::processRtpPayload(const uint8_t* rtpPayload, size_t payloadLen, bool markerBit, AMediaCodec* codec) {
-    if (!rtpPayload || payloadLen < 1 || !codec) return;
+void RtpH264Depacketizer::processRtpPayload(const uint8_t* rtpPayload, size_t payloadLen, bool markerBit, IStreamEngine* engine) {
+    if (!rtpPayload || payloadLen < 1 || !engine) return;
 
     uint8_t nalHeader = rtpPayload[0];
     uint8_t nalType = nalHeader & 0x1F;
@@ -33,7 +33,7 @@ void RtpH264Depacketizer::processRtpPayload(const uint8_t* rtpPayload, size_t pa
             offset += naluSize;
         }
         if (!cachedSps.empty() && !cachedPps.empty() && !hasConfiguredSpsPps) {
-            submitCodecConfigToMediaCodec(codec);
+            submitCodecConfigToEngine(engine);
         }
     } else if (nalType == 28) {
         if (payloadLen < 2) return;
@@ -55,7 +55,7 @@ void RtpH264Depacketizer::processRtpPayload(const uint8_t* rtpPayload, size_t pa
     }
 
     if (markerBit && !currentAccessUnit.empty()) {
-        submitAccessUnitToMediaCodec(codec, currentAccessUnit.data(), currentAccessUnit.size());
+        submitAccessUnitToEngine(engine, currentAccessUnit.data(), currentAccessUnit.size());
         currentAccessUnit.clear();
     }
 }
@@ -65,42 +65,23 @@ void RtpH264Depacketizer::appendAnnexBNal(const uint8_t* data, size_t len) {
     currentAccessUnit.insert(currentAccessUnit.end(), data, data + len);
 }
 
-void RtpH264Depacketizer::submitCodecConfigToMediaCodec(AMediaCodec* codec) {
-    ssize_t bufIdx = AMediaCodec_dequeueInputBuffer(codec, 5000);
-    if (bufIdx >= 0) {
-        size_t bufSize = 0;
-        uint8_t* dst = AMediaCodec_getInputBuffer(codec, bufIdx, &bufSize);
-        std::vector<uint8_t> csd;
-        csd.insert(csd.end(), ANNEXB_START_CODE, ANNEXB_START_CODE + 4);
-        csd.insert(csd.end(), cachedSps.begin(), cachedSps.end());
-        csd.insert(csd.end(), ANNEXB_START_CODE, ANNEXB_START_CODE + 4);
-        csd.insert(csd.end(), cachedPps.begin(), cachedPps.end());
-
-        if (dst && csd.size() <= bufSize) {
-            std::memcpy(dst, csd.data(), csd.size());
-            AMediaCodec_queueInputBuffer(codec, bufIdx, 0, csd.size(), 0, AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG);
-            hasConfiguredSpsPps = true;
-        }
-    }
+void RtpH264Depacketizer::submitCodecConfigToEngine(IStreamEngine* engine) {
+    if (!engine || cachedSps.empty() || cachedPps.empty()) return;
+    engine->injectCodecConfig(cachedSps.data(), cachedSps.size(), cachedPps.data(), cachedPps.size());
+    hasConfiguredSpsPps = true;
 }
 
-void RtpH264Depacketizer::submitAccessUnitToMediaCodec(AMediaCodec* codec, const uint8_t* data, size_t size) {
-    ssize_t bufIdx = AMediaCodec_dequeueInputBuffer(codec, 2000);
-    if (bufIdx >= 0) {
-        size_t bufSize = 0;
-        uint8_t* dst = AMediaCodec_getInputBuffer(codec, bufIdx, &bufSize);
-        if (dst && size <= bufSize) {
-            std::memcpy(dst, data, size);
-            AMediaCodec_queueInputBuffer(codec, bufIdx, 0, size, 0, 0);
-        }
-    }
+void RtpH264Depacketizer::submitAccessUnitToEngine(IStreamEngine* engine, const uint8_t* data, size_t size) {
+    if (!engine || !data || size == 0) return;
+    
+    // In a real scenario, we should get the PTS from the RTP timestamp.
+    // For now, we use current monotonic time if not provided.
+    uint64_t ptsUs = getMonotonicMicros();
+    
+    bool isIdr = false;
+    if (size > 4 && (data[4] & 0x1F) == 5) isIdr = true;
 
-    AMediaCodecBufferInfo info;
-    ssize_t outIdx = AMediaCodec_dequeueOutputBuffer(codec, &info, 0);
-    while (outIdx >= 0) {
-        AMediaCodec_releaseOutputBuffer(codec, outIdx, info.size != 0);
-        outIdx = AMediaCodec_dequeueOutputBuffer(codec, &info, 0);
-    }
+    engine->pushAnnexBNalUnit(data, size, ptsUs, isIdr);
 }
 
 }

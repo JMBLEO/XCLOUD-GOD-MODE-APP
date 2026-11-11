@@ -229,29 +229,98 @@ void UnifiedZeroCopyStreamReactor::processDtlsPacket(const uint8_t* buf, size_t 
 void UnifiedZeroCopyStreamReactor::processRtpPacket(const uint8_t* buf, size_t len) {
     if (!srtpKeysReady) return;
 
+    RtpVideoPacket rtpPacket;
+    bool hasRtp = VideoIngressRtpParser::parseRtp(buf, len, rtpPacket);
     ParsedRtpHeader parsed = stripRtpHeadersAndExtensions(buf, len);
-    if (!parsed.valid) return;
+
+    uint16_t seqNumber = hasRtp ? rtpPacket.seqNum : parsed.sequenceNumber;
 
     // Hot-Key Rotation: Verificar si debemos conmutar a una nueva llave SRTP
-    if (srtpRotator.shouldSwitch(parsed.sequenceNumber)) {
+    if (srtpRotator.shouldSwitch(seqNumber)) {
         srtpRotator.performSwitch();
-        // En un motor real con libsrtp, aquí llamaríamos a srtp_update o similar
     }
 
     // Zero-Trust Security Check
-    if (securityGatekeeper.inspectAndSanitizeIncomingFrame(buf, len, parsed.sequenceNumber) 
+    if (securityGatekeeper.inspectAndSanitizeIncomingFrame(buf, len, seqNumber) 
         != GodMode::Security::ZeroTrustNetworkSecurityGatekeeper::SecurityVerdict::ALLOW_PACKET) {
         return;
     }
 
+    uint32_t rtpTs = hasRtp ? rtpPacket.timestamp : parsed.timestamp;
     uint64_t nowUs = getMonotonicMicros();
-    clockCompensator.updateSync(parsed.timestamp, nowUs);
-    uint64_t adjustedPts = clockCompensator.getAdjustedPresentationTimeUs(parsed.timestamp);
+    clockCompensator.updateSync(rtpTs, nowUs);
+    uint64_t adjustedPts = clockCompensator.getAdjustedPresentationTimeUs(rtpTs);
 
     // Notificar al gobernador de congestión BBR
     networkGovernor.process_packet_sent(len);
 
-    if (parsed.payloadPtr && parsed.payloadSize > 0) {
+    if (hasRtp) {
+        uint8_t pt = rtpPacket.payloadType;
+        reorderBuffer.pushPacket(
+            rtpPacket,
+            activeConfig.clientSsrc,
+            [this, adjustedPts, pt](const uint8_t* payload, size_t payloadLen, uint32_t ts, bool m, bool discontinuous) {
+                uint32_t effectiveTs = (ts > 0) ? ts : static_cast<uint32_t>((adjustedPts * 90000ULL) / 1000000ULL);
+
+                if (pt == 96 || pt == 97) { // AV1 / RTX
+                    av1IngressAssembler.feedRtpPayload(
+                        payload, payloadLen, effectiveTs, m, discontinuous,
+                        activeConfig.clientSsrc, activeConfig.serverVideoSsrc,
+                        [this](const uint8_t* auData, size_t auSize, uint64_t ptsUs, bool isKeyframe) {
+                            if (streamEngine) {
+                                streamEngine->pushAnnexBNalUnit(auData, auSize, ptsUs, isKeyframe);
+                            }
+                        },
+                        [this](const uint8_t* pliData, size_t pliLen) {
+                            if (socket && socket->getFd() >= 0 && remoteServerAddrLen > 0) {
+                                ::sendto(socket->getFd(), pliData, pliLen, MSG_DONTWAIT, reinterpret_cast<const struct sockaddr*>(&remoteServerAddr), remoteServerAddrLen);
+                            }
+                        }
+                    );
+                } else if (pt == 98 || pt == 99) { // HEVC / RTX
+                    hevcIngressAssembler.feedRtpPayload(
+                        payload, payloadLen, effectiveTs, m, discontinuous,
+                        activeConfig.clientSsrc, activeConfig.serverVideoSsrc,
+                        [this](const uint8_t* auData, size_t auSize, uint64_t ptsUs, bool isKeyframe) {
+                            if (streamEngine) {
+                                streamEngine->pushAnnexBNalUnit(auData, auSize, ptsUs, isKeyframe);
+                            }
+                        },
+                        [this](const uint8_t* pliData, size_t pliLen) {
+                            if (socket && socket->getFd() >= 0 && remoteServerAddrLen > 0) {
+                                ::sendto(socket->getFd(), pliData, pliLen, MSG_DONTWAIT, reinterpret_cast<const struct sockaddr*>(&remoteServerAddr), remoteServerAddrLen);
+                            }
+                        }
+                    );
+                } else { // Fallback H.264
+                    h264IngressAssembler.feedRtpPayload(
+                        payload, payloadLen, effectiveTs, m, discontinuous,
+                        activeConfig.clientSsrc, activeConfig.serverVideoSsrc,
+                        [this](const uint8_t* auData, size_t auSize, uint64_t ptsUs, bool isIdr, const H264SpsInfo& spsInfo) {
+                            if (streamEngine) {
+                                if (spsInfo.valid) {
+                                    streamEngine->onResize(spsInfo.width, spsInfo.height);
+                                }
+                                streamEngine->pushAnnexBNalUnit(auData, auSize, ptsUs, isIdr);
+                            }
+                        },
+                        [this](const uint8_t* pliData, size_t pliLen) {
+                            // Enviar RTCP PLI a través del socket UDP
+                            if (socket && socket->getFd() >= 0 && remoteServerAddrLen > 0) {
+                                ::sendto(socket->getFd(), pliData, pliLen, MSG_DONTWAIT, reinterpret_cast<const struct sockaddr*>(&remoteServerAddr), remoteServerAddrLen);
+                            }
+                        }
+                    );
+                }
+            },
+            [this](const uint8_t* nackData, size_t nackLen) {
+                // Enviar RTCP NACK a través del socket UDP
+                if (socket && socket->getFd() >= 0 && remoteServerAddrLen > 0) {
+                    ::sendto(socket->getFd(), nackData, nackLen, MSG_DONTWAIT, reinterpret_cast<const struct sockaddr*>(&remoteServerAddr), remoteServerAddrLen);
+                }
+            }
+        );
+    } else if (parsed.payloadPtr && parsed.payloadSize > 0) {
         auAssembler.feedRtpPayload(
             parsed.payloadPtr,
             parsed.payloadSize,

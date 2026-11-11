@@ -11,8 +11,8 @@ RtpVVCDepacketizer::RtpVVCDepacketizer() {
     currentAccessUnit.reserve(1024 * 1024); // VVC frames can be very large
 }
 
-void RtpVVCDepacketizer::processRtpPayload(const uint8_t* rtpPayload, size_t payloadLen, bool markerBit, AMediaCodec* codec) {
-    if (!rtpPayload || payloadLen < 2 || !codec) return;
+void RtpVVCDepacketizer::processRtpPayload(const uint8_t* rtpPayload, size_t payloadLen, bool markerBit, IStreamEngine* engine) {
+    if (!rtpPayload || payloadLen < 2 || !engine) return;
 
     // VVC RTP Payload Header (RFC 9328)
     // Structure is complex, but often handles single NAL units or FUs.
@@ -24,28 +24,22 @@ void RtpVVCDepacketizer::processRtpPayload(const uint8_t* rtpPayload, size_t pay
     currentAccessUnit.insert(currentAccessUnit.end(), rtpPayload, rtpPayload + payloadLen);
 
     if (markerBit && !currentAccessUnit.empty()) {
-        submitAccessUnitToMediaCodec(codec, currentAccessUnit.data(), currentAccessUnit.size());
+        submitAccessUnitToEngine(engine, currentAccessUnit.data(), currentAccessUnit.size());
         currentAccessUnit.clear();
     }
 }
 
-void RtpVVCDepacketizer::submitAccessUnitToMediaCodec(AMediaCodec* codec, const uint8_t* data, size_t size) {
-    ssize_t bufIdx = AMediaCodec_dequeueInputBuffer(codec, 2000);
-    if (bufIdx >= 0) {
-        size_t bufSize = 0;
-        uint8_t* dst = AMediaCodec_getInputBuffer(codec, bufIdx, &bufSize);
-        if (dst && size <= bufSize) {
-            std::memcpy(dst, data, size);
-            AMediaCodec_queueInputBuffer(codec, bufIdx, 0, size, 0, 0);
-        }
+void RtpVVCDepacketizer::submitAccessUnitToEngine(IStreamEngine* engine, const uint8_t* data, size_t size) {
+    if (!engine || !data || size == 0) return;
+    
+    // VVC keyframe check (NAL types like IDR_W_RADL=7, IDR_N_LP=8, CRA_NUT=9)
+    bool isKeyframe = false;
+    if (size > 4) {
+        uint8_t nalType = (data[4] >> 3) & 0x1F;
+        if (nalType >= 7 && nalType <= 9) isKeyframe = true;
     }
 
-    AMediaCodecBufferInfo info;
-    ssize_t outIdx = AMediaCodec_dequeueOutputBuffer(codec, &info, 0);
-    while (outIdx >= 0) {
-        AMediaCodec_releaseOutputBuffer(codec, outIdx, info.size != 0);
-        outIdx = AMediaCodec_dequeueOutputBuffer(codec, &info, 0);
-    }
+    engine->pushAnnexBNalUnit(data, size, getMonotonicMicros(), isKeyframe);
 }
 
 }

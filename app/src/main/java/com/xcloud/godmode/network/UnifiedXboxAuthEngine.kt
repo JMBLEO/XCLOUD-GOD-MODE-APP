@@ -45,15 +45,18 @@ data class CompleteXboxSession(
     val webXstsToken: String,
     val gssvXstsToken: String,
     val xgpuGsToken: String,
+    val xhomeGsToken: String?,
     val f2pGsToken: String?,
+    val lptToken: String?,
     val preferredBaseUri: String,
     val regionsJson: String,
     val gsTokenExpiresAtEpochMs: Long
 ) {
-    fun isStreamingReady(safetyMarginMs: Long = 300_000L): Boolean {
+    fun isStreamingReady(safetyMarginMs: Long = 900_000L): Boolean {
+        val now = CloudTimeSynchronizer.getCloudEpochMs()
         return xgpuGsToken.isNotBlank() &&
             preferredBaseUri.isNotBlank() &&
-            (System.currentTimeMillis() + safetyMarginMs) < gsTokenExpiresAtEpochMs
+            (now + safetyMarginMs) < gsTokenExpiresAtEpochMs
     }
 }
 
@@ -490,6 +493,43 @@ class UnifiedXboxAuthEngine(
     }
 
     /**
+     * Forzado síncrono de la cadena de tokens para la barrera de frescura pre-stream o silent renewal.
+     */
+    suspend fun forceRefreshTokenChain(
+        spoofedForwardedForIp: String? = null
+    ): CompleteXboxSession? = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            val saved = storage.loadSession() ?: return@withContext null
+            if (saved.msaRefreshToken.isBlank()) return@withContext null
+            try {
+                Log.d(TAG, "Forzando renovación de tokens...")
+                val refreshedJson = postUrlEncoded(
+                    url = "https://login.live.com/oauth20_token.srf",
+                    params = mapOf(
+                        "client_id" to saved.clientIdUsed,
+                        "grant_type" to "refresh_token",
+                        "refresh_token" to saved.msaRefreshToken,
+                        "scope" to MBI_SSL_SCOPE
+                    )
+                )
+                val newAccess = refreshedJson.getString("access_token")
+                val newRefresh = refreshedJson.optString("refresh_token").ifBlank { saved.msaRefreshToken }
+                val rebuilt = buildCompleteTokenPipeline(
+                    msaAccessToken = newAccess,
+                    msaRefreshToken = newRefresh,
+                    clientIdUsed = saved.clientIdUsed,
+                    spoofedIp = spoofedForwardedForIp
+                )
+                storage.saveSession(rebuilt)
+                rebuilt
+            } catch (e: Exception) {
+                Log.w(TAG, "Error en renovación forzada: ${e.message}")
+                null
+            }
+        }
+    }
+
+    /**
      * Ejecuta los Eslabones 2, 3, 4A, 4B, 5A y 5B completos.
      */
     fun buildCompleteTokenPipeline(
@@ -582,6 +622,27 @@ class UnifiedXboxAuthEngine(
             )
         }
 
+        val xhomeGsToken = runCatching {
+            postJsonSigned(
+                url = "https://xhome.gssv-play-prod.xboxlive.com/v2/login/user",
+                body = JSONObject().put("token", gssvToken).put("offeringId", "xhome").toString(),
+                extraHeaders = extraHeaders
+            ).optString("gsToken").takeIf { it.isNotBlank() }
+        }.getOrNull()
+
+        val lptToken = runCatching {
+            val lptResp = postUrlEncoded(
+                url = "https://login.live.com/oauth20_token.srf",
+                params = mapOf(
+                    "client_id" to clientIdUsed,
+                    "grant_type" to "refresh_token",
+                    "refresh_token" to msaRefreshToken,
+                    "scope" to "service::http://Passport.NET/purpose::PURPOSE_XBOX_CLOUD_CONSOLE_TRANSFER_TOKEN"
+                )
+            )
+            lptResp.getString("access_token")
+        }.getOrNull()
+
         val xgpuResp = xgpuResult.getOrNull()
         val f2pResp = f2pResult.getOrNull()
 
@@ -615,7 +676,9 @@ class UnifiedXboxAuthEngine(
             webXstsToken = webToken,
             gssvXstsToken = gssvToken,
             xgpuGsToken = xgpuGsToken,
+            xhomeGsToken = xhomeGsToken,
             f2pGsToken = f2pGsToken,
+            lptToken = lptToken,
             preferredBaseUri = baseUri,
             regionsJson = regions.toString(),
             gsTokenExpiresAtEpochMs = System.currentTimeMillis() + (durationSec * 1000L)

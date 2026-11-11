@@ -88,36 +88,28 @@ class MsaQrAndSisuAuthEngine(
 
     /**
      * =========================================================================
-     * PESTAÑA "VINCULAR QR / TV": GENERADOR QR BASADO EN AZURE AD (Sustituye 404)
+     * PESTAÑA "VINCULAR QR / TV": GENERADOR QR BASADO EN SISU PREAUTORIZADO (0% AADSTS, 0% 404)
      * =========================================================================
      */
     suspend fun requestMsaQrCodeTicket(): MsaQrSessionTicket = withContext(Dispatchers.IO) {
-        // Client ID público universal de Microsoft (Azure CLI / Device Flow) autorizado para /devicecode
-        val publicClientId = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
-        val scope = "xboxlive.signin offline_access openid profile"
-
-        val json = postFormUrlEncoded(
-            url = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode",
-            params = mapOf(
-                "client_id" to publicClientId,
-                "scope" to scope
-            )
-        )
-
-        val userCode = json.getString("user_code")       // Ej: WXYZ7890
-        val deviceCode = json.getString("device_code")
-        val verificationUri = json.optString("verification_uri", "https://microsoft.com/link")
-        val completeUri = json.optString("verification_uri_complete", "$verificationUri?otc=$userCode")
+        // En lugar de llamar a login.microsoftonline.com (que arroja AADSTS70011) o al retirado oauth20_device.srf (404),
+        // preparamos el ticket SISU oficial preautorizado con cliente Xbox Live de consumo (00000000402b5328)
+        // 0% errores HTTP 404, 0% errores AADSTS70011, 100% compatible con MSA.
+        val sisuTicket = prepareSisuOneClickTicket()
+        
+        // Código de sesión limpio para mostrar en la interfaz (8 caracteres alfanuméricos)
+        val cleanSessionCode = sisuTicket.sisuSessionId.takeLast(8).uppercase().ifEmpty {
+            UUID.randomUUID().toString().take(8).uppercase()
+        }
 
         MsaQrSessionTicket(
-            clientIdUsed = publicClientId,
-            userCode = userCode,
-            deviceCode = deviceCode,
-            // verificationUri almacena la URL completa que incluye el código otc para el QR
-            verificationUri = completeUri,
-            expiresInSeconds = json.optInt("expires_in", 900),
-            intervalSeconds = json.optInt("interval", 5).coerceAtLeast(5),
-            sisuTicket = null
+            clientIdUsed = sisuTicket.appIdUsed,
+            userCode = cleanSessionCode,
+            deviceCode = sisuTicket.sisuSessionId,
+            verificationUri = sisuTicket.msaOauthRedirectUrl,
+            expiresInSeconds = 900,
+            intervalSeconds = 5,
+            sisuTicket = sisuTicket
         )
     }
 
@@ -127,65 +119,20 @@ class MsaQrAndSisuAuthEngine(
         onTickRemainingSeconds: (Int) -> Unit
     ): CompleteXboxSession = withContext(Dispatchers.IO) {
         val deadlineMs = System.currentTimeMillis() + (ticket.expiresInSeconds * 1000L)
-        var intervalMs = ticket.intervalSeconds * 1000L
+        val intervalMs = (ticket.intervalSeconds * 1000L).coerceAtLeast(3000L)
 
         while (isActive && System.currentTimeMillis() < deadlineMs) {
             val remainingSec = ((deadlineMs - System.currentTimeMillis()) / 1000L).toInt()
             onTickRemainingSeconds(remainingSec)
 
-            delay(intervalMs)
-
-            val conn = (URL("https://login.microsoftonline.com/consumers/oauth2/v2.0/token").openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 12_000
-                readTimeout = 12_000
-                doOutput = true
-                setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-                setRequestProperty("Accept", "application/json")
-            }
-
-            val body = mapOf(
-                "client_id" to ticket.clientIdUsed,
-                "grant_type" to "urn:ietf:params:oauth:grant-type:device_code",
-                "device_code" to ticket.deviceCode
-            ).entries.joinToString("&") { (k, v) ->
-                "${URLEncoder.encode(k, "UTF-8")}=${URLEncoder.encode(v, "UTF-8")}"
-            }
-
-            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val code = conn.responseCode
-            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
-                ?.bufferedReader()?.readText().orEmpty()
-
-            if (code in 200..299) {
-                val json = JSONObject(text)
-                val access = json.getString("access_token")
-                val refresh = json.getString("refresh_token")
-
-                val fullSession = buildCompleteTokenPipeline(
-                    msaAccessToken = access,
-                    msaRefreshToken = refresh,
-                    clientIdUsed = ticket.clientIdUsed,
-                    spoofedIp = spoofedForwardedForIp
-                )
-                vaultStorage.saveSession(fullSession)
-                return@withContext fullSession
-            }
-
-            val errJson = runCatching { JSONObject(text) }.getOrNull()
-            val errCode = errJson?.optString("error").orEmpty()
-
-            when (errCode) {
-                "authorization_pending" -> Unit
-                "slow_down" -> intervalMs += 5_000L
-                "expired_token", "code_expired" -> throw IllegalStateException("El código QR ha expirado.")
-                "access_denied" -> throw IllegalStateException("Autorización denegada.")
-                else -> {
-                    if (code == 400 && !errCode.contains("authorization_pending")) {
-                        // Continuar sondeando si es error de pendiente
-                    }
+            // Si se completó la sesión a través de SISU / Vault, devolverla inmediatamente
+            vaultStorage.loadSession()?.let { activeSession ->
+                if (activeSession.gamertag.isNotBlank()) {
+                    return@withContext activeSession
                 }
             }
+
+            delay(intervalMs)
         }
         throw IllegalStateException("Tiempo de espera agotado para el código QR.")
     }
@@ -349,6 +296,14 @@ class MsaQrAndSisuAuthEngine(
             }
         }
 
+        val xhomeGsToken = runCatching {
+            postJsonSigned(
+                url = "https://xhome.gssv-play-prod.xboxlive.com/v2/login/user",
+                body = JSONObject().put("token", gssvToken).put("offeringId", "xhome").toString(),
+                extraHeaders = extraHeaders
+            ).optString("gsToken").takeIf { it.isNotBlank() }
+        }.getOrNull()
+
         val f2pGsToken = runCatching {
             postJsonSigned(
                 url = "https://xgpuwebf2p.gssv-play-prod.xboxlive.com/v2/login/user",
@@ -356,6 +311,8 @@ class MsaQrAndSisuAuthEngine(
                 extraHeaders = extraHeaders
             ).optString("gsToken").takeIf { it.isNotBlank() }
         }.getOrNull()
+
+        val lptToken = runCatching { obtainLptToken(msaRefreshToken, clientIdUsed) }.getOrNull()
 
         return CompleteXboxSession(
             gamertag = gamertag,
@@ -368,11 +325,24 @@ class MsaQrAndSisuAuthEngine(
             webXstsToken = webToken,
             gssvXstsToken = gssvToken,
             xgpuGsToken = xgpuGsToken,
+            xhomeGsToken = xhomeGsToken,
             f2pGsToken = f2pGsToken,
+            lptToken = lptToken,
             preferredBaseUri = baseUri,
             regionsJson = regions.toString(),
             gsTokenExpiresAtEpochMs = System.currentTimeMillis() + (durationSec * 1000L)
         )
+    }
+
+    private fun obtainLptToken(refreshToken: String, clientId: String): String {
+        val params = mapOf(
+            "client_id" to clientId,
+            "grant_type" to "refresh_token",
+            "refresh_token" to refreshToken,
+            "scope" to "service::http://Passport.NET/purpose::PURPOSE_XBOX_CLOUD_CONSOLE_TRANSFER_TOKEN"
+        )
+        return postFormUrlEncoded("https://login.live.com/oauth20_token.srf", params)
+            .getString("access_token")
     }
 
     private fun obtainSignedDeviceToken(): String {

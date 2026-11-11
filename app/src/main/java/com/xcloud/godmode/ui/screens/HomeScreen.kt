@@ -104,6 +104,9 @@ fun HomeScreen(
     val launchUiState by streamLaunchViewModel.uiState.collectAsState()
 
     var selectedTab by remember { mutableIntStateOf(0) }
+    var showRegionModal by remember { mutableStateOf(false) }
+    var showSortModal by remember { mutableStateOf(false) }
+    var currentSortKey by remember { mutableStateOf("relevance") }
     val strings = com.xcloud.godmode.ui.theme.AppStrings.get(settings.appLanguage)
     val tabs = listOf(strings.xcloudTab, strings.consolesTab, strings.settingsTab)
 
@@ -191,7 +194,8 @@ fun HomeScreen(
                     onChipClick = { streamLaunchViewModel.onUserChipClicked() },
                     onDismissProfileMenu = { streamLaunchViewModel.dismissProfileMenu() },
                     onRefreshCredentials = { streamLaunchViewModel.refreshSessionOnStartup() },
-                    onForceReLogin = { streamLaunchViewModel.onForceReLoginRequested() }
+                    onForceReLogin = { streamLaunchViewModel.onForceReLoginRequested() },
+                    onOpenRegionModal = { showRegionModal = true }
                 )
             },
             bottomBar = {
@@ -294,7 +298,10 @@ fun HomeScreen(
                             }
                         },
                         settings = settings,
-                        chameleonColor = chameleonColor
+                        chameleonColor = chameleonColor,
+                        currentSortKey = currentSortKey,
+                        onOpenSortModal = { showSortModal = true },
+                        onOpenRegionModal = { showRegionModal = true }
                     )
                     1 -> ConsolesTab(
                         consoles = consoles,
@@ -454,6 +461,27 @@ fun HomeScreen(
             onReAnalyze = { viewModel.getAiTip(selectedGameForDetails?.title ?: "Xbox Game", "Wi-Fi 6") },
             onTestHaptics = { viewModel.testHaptics() }
         )
+
+        CloudRegionSelectModal(
+            visible = showRegionModal,
+            currentRegionId = settings.forceServer,
+            onSelectRegion = { selected ->
+                val updated = settings.copy(
+                    forceServer = selected.id,
+                    bypassIp = selected.ip
+                )
+                viewModel.setSettings(updated)
+                android.widget.Toast.makeText(context, "Servidor: ${selected.flag} ${selected.name}", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showRegionModal = false }
+        )
+
+        SortOptionModal(
+            visible = showSortModal,
+            currentSort = currentSortKey,
+            onSelectSort = { currentSortKey = it },
+            onDismiss = { showSortModal = false }
+        )
     }
 }
 
@@ -479,7 +507,8 @@ fun GodModeCollapsibleTopBar(
     onChipClick: () -> Unit = onLoginClick,
     onDismissProfileMenu: () -> Unit = {},
     onRefreshCredentials: () -> Unit = {},
-    onForceReLogin: () -> Unit = onLoginClick
+    onForceReLogin: () -> Unit = onLoginClick,
+    onOpenRegionModal: () -> Unit = {}
 ) {
     TopAppBar(
         title = {
@@ -491,9 +520,23 @@ fun GodModeCollapsibleTopBar(
                 Badge(containerColor = chameleonColor.copy(alpha = 0.2f)) {
                     Text(deviceType.name, style = MaterialTheme.typography.labelSmall, color = chameleonColor, modifier = Modifier.padding(horizontal = 4.dp))
                 }
+                Spacer(modifier = Modifier.width(8.dp))
+                Badge(
+                    containerColor = Color(0xFF00E676).copy(alpha = 0.20f),
+                    modifier = Modifier.clickable { onOpenRegionModal() }
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
+                        Icon(Icons.Default.Public, null, modifier = Modifier.size(11.dp), tint = Color(0xFF00E676))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(settings.forceServer, style = MaterialTheme.typography.labelSmall, color = Color(0xFF00E676), fontWeight = FontWeight.Bold)
+                    }
+                }
                 if (bestServerSuggestion != null) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Badge(containerColor = Color(0xFF38BDF8).copy(alpha = 0.2f)) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Badge(
+                        containerColor = Color(0xFF38BDF8).copy(alpha = 0.2f),
+                        modifier = Modifier.clickable { onOpenRegionModal() }
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) {
                             Icon(Icons.Default.Speed, null, modifier = Modifier.size(10.dp), tint = Color(0xFF38BDF8))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -504,6 +547,9 @@ fun GodModeCollapsibleTopBar(
             }
         },
         actions = {
+            IconButton(onClick = onOpenRegionModal) {
+                Icon(Icons.Default.Public, "Servidor", tint = chameleonColor)
+            }
             IconButton(onClick = onToggleMute) {
                 Icon(if (isMicMuted) Icons.Default.MicOff else Icons.Default.Mic, "Mute", tint = if (isMicMuted) Color.Red else chameleonColor)
             }
@@ -596,7 +642,10 @@ fun XCloudLibraryTab(
     onGameSelected: (GameModel) -> Unit,
     onLaunchGame: (String, String) -> Unit,
     settings: SettingsModel,
-    chameleonColor: Color
+    chameleonColor: Color,
+    currentSortKey: String = "relevance",
+    onOpenSortModal: () -> Unit = {},
+    onOpenRegionModal: () -> Unit = {}
 ) {
     val games by viewModel.filteredGames.collectAsState()
     val mruGames by viewModel.mruGames.collectAsState()
@@ -607,7 +656,18 @@ fun XCloudLibraryTab(
     val scope = rememberCoroutineScope()
     
     val selectedCategoryIndex by viewModel.selectedCategory.collectAsState()
-    val displayGames = games
+    
+    // Sort logic
+    val sortedGames = remember(games, currentSortKey) {
+        when (currentSortKey) {
+            "az" -> games.sortedBy { it.title }
+            "za" -> games.sortedByDescending { it.title }
+            "newest" -> games.reversed()
+            else -> games
+        }
+    }
+    val displayGames = sortedGames
+    val favoriteGames = remember(displayGames) { displayGames.filter { it.isFavorite } }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(
@@ -653,24 +713,127 @@ fun XCloudLibraryTab(
                 }
             }
 
-            // Search & Filter
+            // Carousel Section: MRU Games (Jump Back In)
+            if (searchQuery.isBlank() && mruGames.isNotEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.History, null, tint = Color(0xFF00E676), modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Jugados Recientemente (Jump Back In)",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = Color.White
+                            )
+                        }
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)
+                        ) {
+                            items(mruGames, key = { "mru_${it.id}" }) { mruGame ->
+                                Box(modifier = Modifier.width(135.dp)) {
+                                    ResilientCoverArt(
+                                        game = mruGame,
+                                        onFavoriteToggle = { viewModel.fav(mruGame.id) },
+                                        onClick = { onGameSelected(mruGame) },
+                                        accentColor = chameleonColor,
+                                        settings = settings
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Carousel Section: Favorites (Starred games)
+            if (searchQuery.isBlank() && favoriteGames.isNotEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Star, null, tint = Color(0xFFFFD700), modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Mis Favoritos (${favoriteGames.size})",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = Color.White
+                                )
+                            }
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)
+                            ) {
+                                items(favoriteGames, key = { "fav_${it.id}" }) { favGame ->
+                                    Box(modifier = Modifier.width(135.dp)) {
+                                        ResilientCoverArt(
+                                            game = favGame,
+                                            onFavoriteToggle = { viewModel.fav(favGame.id) },
+                                            onClick = { onGameSelected(favGame) },
+                                            accentColor = chameleonColor,
+                                            settings = settings
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+            // Search & Filter Header
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    TextField(
-                        value = searchQuery,
-                        onValueChange = { viewModel.search(it) },
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Buscar en la biblioteca de Xbox Cloud...", color = Color.Gray) },
-                        leadingIcon = { Icon(Icons.Default.Search, null, tint = chameleonColor) },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Black.copy(alpha = 0.4f),
-                            unfocusedContainerColor = Color.Black.copy(alpha = 0.4f),
-                            focusedIndicatorColor = chameleonColor,
-                            unfocusedIndicatorColor = Color.Transparent
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextField(
+                            value = searchQuery,
+                            onValueChange = { viewModel.search(it) },
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text("Buscar en la biblioteca de Xbox Cloud...", color = Color.Gray, fontSize = 13.sp) },
+                            leadingIcon = { Icon(Icons.Default.Search, null, tint = chameleonColor) },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Black.copy(alpha = 0.4f),
+                                unfocusedContainerColor = Color.Black.copy(alpha = 0.4f),
+                                focusedIndicatorColor = chameleonColor,
+                                unfocusedIndicatorColor = Color.Transparent
+                            )
                         )
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Quick Sort Button
+                        IconButton(
+                            onClick = onOpenSortModal,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.Black.copy(alpha = 0.4f))
+                        ) {
+                            Icon(Icons.Default.Sort, "Ordenar", tint = chameleonColor)
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
+
+                        // Quick Region Datacenter Button
+                        IconButton(
+                            onClick = onOpenRegionModal,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.Black.copy(alpha = 0.4f))
+                        ) {
+                            Icon(Icons.Default.Public, "Servidor", tint = Color(0xFF00E676))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         val filterCategories = listOf("Todos", "Recientes", "Series X|S", "Mundial", "Chile", "LATAM", "Juegos Propios (BYOG)")
                         this.items(filterCategories.size) { index ->

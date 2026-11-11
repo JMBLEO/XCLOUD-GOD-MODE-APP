@@ -93,15 +93,13 @@ object HardwareCodecCapabilityGuard {
         val caps = inspectCapabilities()
         Log.d(TAG, "Negociación Preemptiva SDP: Códec preferido=$preferredCodec, Caps=$caps")
 
-        // Inyectar / reordenar payload types en el SDP
+        // Inyectar / reordenar payload types en el SDP (AV1 PT 96 / HEVC PT 98)
         var sdp = rawSdp
         if (preferredCodec == "AV1" && caps.supportsHardwareAv1) {
-            sdp = sdp.replace("m=video 9 UDP/TLS/RTP/SAVPF", "m=video 9 UDP/TLS/RTP/SAVPF 98 100 102")
-        } else if (preferredCodec == "HEVC / H.265" && caps.supportsHardwareHevc) {
-            sdp = sdp.replace("m=video 9 UDP/TLS/RTP/SAVPF", "m=video 9 UDP/TLS/RTP/SAVPF 100 98 102")
+            sdp = sdp.replace("m=video 9 UDP/TLS/RTP/SAVPF", "m=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99")
         } else {
-            // Forzar H.264 SVC por hardware
-            sdp = sdp.replace("m=video 9 UDP/TLS/RTP/SAVPF", "m=video 9 UDP/TLS/RTP/SAVPF 102 100 98")
+            // Predeterminado o forzar HEVC Main 10 HDR
+            sdp = sdp.replace("m=video 9 UDP/TLS/RTP/SAVPF", "m=video 9 UDP/TLS/RTP/SAVPF 98 99 96 97")
         }
         return sdp
     }

@@ -29,6 +29,7 @@ data class XCloudTokenBundle(
     val webXstsToken: String,
     val gssvXstsToken: String,
     val xgpuGsToken: String,
+    val xhomeGsToken: String?,
     val f2pGsToken: String?,
     val defaultRegionBaseUri: String,
     val regionsJson: String,
@@ -60,8 +61,7 @@ interface XCloudTokenStorage {
 }
 
 /**
- * XCloudAuthProtocolService: Implements the exact 5-step Xbox Cloud Gaming authentication chain
- * from reference implementations (XStreamingDesktop, greenlight, stratix).
+ * XCloudAuthProtocolService: Implements the exact 5-step native Xbox Cloud Gaming authentication chain.
  *
  * 1 & 2: Device Code Flow RFC 8628 via login.live.com/oauth20_device.srf & /oauth20_token.srf
  * 3a: User Token via user.auth.xboxlive.com/user/authenticate ("RpsTicket": "d=...")
@@ -288,6 +288,19 @@ class XCloudAuthProtocolService(
             f2pResp.optString("gsToken").takeIf { it.isNotBlank() }
         }.getOrNull()
 
+        // PASO 4c: Token de Streaming para Remote Play (xhome)
+        val xhomeGsToken = runCatching {
+            val xhomeResp = postJson(
+                url = "https://xhome.gssv-play-prod.xboxlive.com/v2/login/user",
+                body = JSONObject().apply {
+                    put("token", gssvXstsToken)
+                    put("offeringId", "xhome")
+                },
+                extraHeaders = gssvHeaders
+            )
+            xhomeResp.optString("gsToken").takeIf { it.isNotBlank() }
+        }.getOrNull()
+
         return XCloudTokenBundle(
             gamertag = gamertag,
             xuid = xuid,
@@ -297,6 +310,7 @@ class XCloudAuthProtocolService(
             webXstsToken = webXstsToken,
             gssvXstsToken = gssvXstsToken,
             xgpuGsToken = xgpuGsToken,
+            xhomeGsToken = xhomeGsToken,
             f2pGsToken = f2pGsToken,
             defaultRegionBaseUri = defaultUri,
             regionsJson = regionsArray.toString(),

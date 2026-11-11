@@ -43,7 +43,18 @@ class EncryptedVaultService private constructor(private val context: Context) : 
 
         fun getInstance(context: Context): EncryptedVaultService {
             return instance ?: synchronized(this) {
-                instance ?: EncryptedVaultService(context.applicationContext).also { instance = it }
+                val appContext = runCatching { context.applicationContext }.getOrNull() ?: context
+                instance ?: EncryptedVaultService(appContext).also { instance = it }
+            }
+        }
+
+        internal fun createForTesting(context: Context): EncryptedVaultService {
+            return EncryptedVaultService(context)
+        }
+
+        internal fun resetInstanceForTesting() {
+            synchronized(this) {
+                instance = null
             }
         }
     }
@@ -185,6 +196,7 @@ class EncryptedVaultService private constructor(private val context: Context) : 
                 webXstsToken = json.optString("webXstsToken"),
                 gssvXstsToken = json.optString("gssvXstsToken"),
                 xgpuGsToken = json.optString("xgpuGsToken").ifBlank { json.optString("xCloudGsToken") },
+                xhomeGsToken = json.optString("xhomeGsToken").takeIf { it.isNotBlank() },
                 f2pGsToken = json.optString("f2pGsToken").takeIf { it.isNotBlank() },
                 defaultRegionBaseUri = json.optString("defaultRegionBaseUri").ifBlank { json.optString("xCloudBaseUri") },
                 regionsJson = json.optString("regionsJson", "[]"),
@@ -383,7 +395,9 @@ class EncryptedVaultService private constructor(private val context: Context) : 
                 webXstsToken = json.optString("webXstsToken"),
                 gssvXstsToken = json.optString("gssvXstsToken"),
                 xgpuGsToken = json.optString("xgpuGsToken").ifBlank { json.optString("xCloudGsToken") },
+                xhomeGsToken = json.optString("xhomeGsToken").takeIf { it.isNotBlank() },
                 f2pGsToken = json.optString("f2pGsToken").takeIf { it.isNotBlank() },
+                lptToken = json.optString("lptToken").takeIf { it.isNotBlank() },
                 preferredBaseUri = json.optString("preferredBaseUri").ifBlank { json.optString("defaultRegionBaseUri").ifBlank { json.optString("xCloudBaseUri") } },
                 regionsJson = json.optString("regionsJson", "[]"),
                 gsTokenExpiresAtEpochMs = json.optLong("gsTokenExpiresAtEpochMs", json.optLong("expiresAtEpochMs", 0L))
@@ -410,7 +424,9 @@ class EncryptedVaultService private constructor(private val context: Context) : 
             put("webXstsToken", session.webXstsToken)
             put("gssvXstsToken", session.gssvXstsToken)
             put("xgpuGsToken", session.xgpuGsToken)
+            put("xhomeGsToken", session.xhomeGsToken ?: "")
             put("f2pGsToken", session.f2pGsToken ?: "")
+            put("lptToken", session.lptToken ?: "")
             put("preferredBaseUri", session.preferredBaseUri)
             put("defaultRegionBaseUri", session.preferredBaseUri)
             put("regionsJson", session.regionsJson)

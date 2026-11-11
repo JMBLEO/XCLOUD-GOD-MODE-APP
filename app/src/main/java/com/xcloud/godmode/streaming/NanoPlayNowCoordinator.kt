@@ -68,6 +68,10 @@ class NanoPlayNowCoordinator(
     private val jobMutex = Mutex()
     private val launchMutex = Mutex()
     private var activeJob: Job? = null
+    private var activeKeepaliveJob: Job? = null
+    private var activeSessionTargetUri: String? = null
+    private var activeSessionPath: String? = null
+    private var activeGsToken: CharArray? = null
 
     private var lastLaunchedRecordId: CatalogRecordId? = null
 
@@ -75,6 +79,7 @@ class NanoPlayNowCoordinator(
         lastLaunchedRecordId = recordId
         coordinatorScope.launch {
             jobMutex.withLock {
+                stopActiveSession()
                 activeJob?.cancelAndJoin()
                 activeJob = coordinatorScope.launch {
                     launchMutex.withLock {
@@ -88,6 +93,55 @@ class NanoPlayNowCoordinator(
     fun restartActiveSession() {
         val lastId = lastLaunchedRecordId ?: return
         launchWithCurrentSavedConfig(lastId)
+    }
+
+    /**
+     * Finaliza de forma limpia la sesión activa en los servidores de Xbox GSSV
+     * mediante DELETE en /v5/sessions/cloud/{sessionId} y detiene el latido keepalive.
+     */
+    fun stopActiveSession() {
+        activeKeepaliveJob?.cancel()
+        activeKeepaliveJob = null
+        val targetUri = activeSessionTargetUri
+        val path = activeSessionPath
+        val token = activeGsToken
+        activeSessionTargetUri = null
+        activeSessionPath = null
+        activeGsToken = null
+
+        if (targetUri != null && path != null && token != null) {
+            coordinatorScope.launch(Dispatchers.IO) {
+                runCatching {
+                    val conn = (java.net.URL("${targetUri.trimEnd('/')}/$path").openConnection() as java.net.HttpURLConnection).apply {
+                        requestMethod = "DELETE"
+                        connectTimeout = 4000
+                        readTimeout = 4000
+                        setRequestProperty("Authorization", "Bearer ${String(token)}")
+                    }
+                    conn.responseCode
+                }
+            }
+        }
+    }
+
+    private fun startKeepalive(baseRegionUri: String, sessionPath: String, gsToken: CharArray) {
+        activeKeepaliveJob?.cancel()
+        val keepaliveUrl = "${baseRegionUri.trimEnd('/')}/$sessionPath/keepalive"
+        activeKeepaliveJob = coordinatorScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(20_000L)
+                try {
+                    httpClient.postJson(
+                        url = keepaliveUrl,
+                        bearerToken = gsToken,
+                        body = "{}",
+                        headers = emptyMap()
+                    )
+                } catch (_: Exception) {
+                    // Reintento en el próximo ciclo
+                }
+            }
+        }
     }
 
     private suspend fun executeNanoLaunch(recordId: CatalogRecordId) {
@@ -231,6 +285,10 @@ class NanoPlayNowCoordinator(
 
             startupGates.complete(attemptId, StartupGate.FIRST_FRAME_PRESENTED)
             launchCompleted = true
+            activeSessionTargetUri = targetRegionUri
+            activeSessionPath = sessionPath
+            activeGsToken = envelope.gsStreamToken
+            startKeepalive(targetRegionUri, sessionPath, envelope.gsStreamToken)
             uiController.enterStreaming(attemptId)
 
         } catch (cancelled: CancellationException) {

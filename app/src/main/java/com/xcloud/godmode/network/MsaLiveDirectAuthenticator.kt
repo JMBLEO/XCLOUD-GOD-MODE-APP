@@ -207,6 +207,7 @@ class MsaLiveDirectAuthenticator(
             webXstsToken = webXstsToken,
             gssvXstsToken = gssvXstsToken,
             xgpuGsToken = xgpuGsToken,
+            xhomeGsToken = null,
             f2pGsToken = f2pGsToken,
             defaultRegionBaseUri = defaultUri,
             regionsJson = regions.toString(),

@@ -7,6 +7,7 @@ import androidx.browser.customtabs.CustomTabsIntent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xcloud.godmode.network.CompleteXboxSession
+import com.xcloud.godmode.network.MsaDeviceCodeAuthEngine
 import com.xcloud.godmode.network.MsaQrAndSisuAuthEngine
 import com.xcloud.godmode.network.SisuBrowserRedirectTicket
 import kotlinx.coroutines.Job
@@ -30,7 +31,8 @@ sealed interface QrAndOneClickUiState {
 }
 
 class XboxAuthModalViewModel(
-    private val authEngine: MsaQrAndSisuAuthEngine
+    private val authEngine: MsaQrAndSisuAuthEngine,
+    private val deviceCodeEngine: MsaDeviceCodeAuthEngine
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<QrAndOneClickUiState>(QrAndOneClickUiState.Idle)
@@ -50,26 +52,25 @@ class XboxAuthModalViewModel(
     }
 
     /**
-     * Inicia el flujo MSA QR Login al abrir la pestaña "Vincular QR / TV".
+     * Inicia el flujo MSA Device Code Login al abrir la pestaña "Vincular QR / TV".
+     * Reemplaza el flujo anterior basado en SISU que daba error unauthorized_client.
      */
     fun startMsaQrLoginFlow(spoofedIp: String? = null) {
         qrPollingJob?.cancel()
         qrPollingJob = viewModelScope.launch {
             _uiState.value = QrAndOneClickUiState.LoadingTicket
             try {
-                val ticket = authEngine.requestMsaQrCodeTicket()
-                pendingSisuTicket = ticket.sisuTicket
+                val ticket = deviceCodeEngine.requestDeviceCode()
                 
                 _uiState.value = QrAndOneClickUiState.MsaQrActive(
                     userCode = ticket.userCode,
                     verificationUri = ticket.verificationUri,
-                    remainingSeconds = ticket.expiresInSeconds
+                    remainingSeconds = ticket.expiresIn
                 )
 
-                val session = authEngine.pollMsaQrTicketUntilApproved(
+                val (msaAccess, msaRefresh) = deviceCodeEngine.pollForTokens(
                     ticket = ticket,
-                    spoofedForwardedForIp = spoofedIp,
-                    onTickRemainingSeconds = { remaining ->
+                    onTick = { remaining ->
                         _uiState.value = QrAndOneClickUiState.MsaQrActive(
                             userCode = ticket.userCode,
                             verificationUri = ticket.verificationUri,
@@ -77,10 +78,21 @@ class XboxAuthModalViewModel(
                         )
                     }
                 )
+                
+                _uiState.value = QrAndOneClickUiState.ExchangingSessionTokens
+                
+                // Usamos el motor SISU para completar el pipeline de tokens de Xbox (UHS, XSTS, GSSV)
+                val session = authEngine.buildCompleteTokenPipeline(
+                    msaAccessToken = msaAccess,
+                    msaRefreshToken = msaRefresh,
+                    clientIdUsed = "1f907974-e22b-4810-a9de-d9647380c97e", // Client ID del snippet del usuario
+                    spoofedIp = spoofedIp
+                )
+                
                 _uiState.value = QrAndOneClickUiState.Authenticated(session)
             } catch (e: Exception) {
                 _uiState.value = QrAndOneClickUiState.Error(
-                    e.message ?: "No se pudo generar el código QR de Microsoft."
+                    e.message ?: "No se pudo generar el código de dispositivo de Microsoft."
                 )
             }
         }
